@@ -1011,6 +1011,7 @@ class AnnotationGraphicsItem(QGraphicsPathItem, QObject):
         self.setPath(path)
         self.ann_id = ann.id
         self.ann_type = ann.type
+        self.display_scale = 1.0 # Default display scale for rendering context
         self._pattern_cache = {}
         self._path_version = 0
         self._is_hovered = False
@@ -3925,33 +3926,6 @@ class CanvasView(QGraphicsView):
     def update_scale_bar(self, settings):
         """Updates the scale bar visual representation."""
         self.scale_bar_item.update_settings(settings)
-
-    def set_annotations(self, annotations):
-        """Updates all graphic annotations shown on the canvas."""
-        # 0. Capture Selection State
-        selected_ids = []
-        for ann_id, item in self._ann_items.items():
-            if item.isSelected():
-                selected_ids.append(ann_id)
-
-        # Clear existing
-        for item in self._ann_items.values():
-            self.scene.removeItem(item)
-        self._ann_items = {}
-        
-        # Add new
-        for ann in annotations:
-             item = AnnotationGraphicsItem(ann)
-             self.scene.addItem(item)
-             self._ann_items[ann.id] = item
-             
-             # 3. Restore Selection
-             if ann.id in selected_ids:
-                 item.setSelected(True)
-             
-        # Force redraw - Update viewport to ensure visual refresh
-        self.scene.update()
-        self.viewport().update()
 
     def on_annotation_updated(self, ann: GraphicAnnotation):
         """Updates or adds a single annotation item."""
