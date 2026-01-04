@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FluoQuantPro 专业操作手册 (v3.0)</title>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --accent-color: #3498db;
+            --text-color: #333;
+            --bg-color: #f5f6fa;
+            --sidebar-width: 280px;
+        }
+
+        body {
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            margin: 0;
+            display: flex;
+            background-color: var(--bg-color);
+        }
+
+        /* Sidebar Navigation */
+        nav {
+            width: var(--sidebar-width);
+            background: white;
+            height: 100vh;
+            position: fixed;
+            overflow-y: auto;
+            border-right: 1px solid #e0e0e0;
+            padding: 20px 0;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+        }
+
+        nav h1 {
+            font-size: 1.2rem;
+            padding: 0 20px;
+            color: var(--primary-color);
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--accent-color);
+            padding-bottom: 10px;
+        }
+
+        nav ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        nav li {
+            margin: 0;
+        }
+
+        nav a {
+            display: block;
+            padding: 10px 20px;
+            color: #666;
+            text-decoration: none;
+            transition: all 0.3s;
+            font-size: 0.9rem;
+            border-left: 3px solid transparent;
+        }
+
+        nav a:hover, nav a.active {
+            background-color: #f0f7ff;
+            color: var(--accent-color);
+            border-left-color: var(--accent-color);
+        }
+
+        nav .sub-menu {
+            padding-left: 20px;
+            background: #fafafa;
+            display: none;
+        }
+
+        nav li.active .sub-menu {
+            display: block;
+        }
+
+        /* Main Content */
+        main {
+            margin-left: var(--sidebar-width);
+            padding: 40px 60px;
+            max-width: 1200px;
+            background: white;
+            min-height: 100vh;
+            width: 100%;
+        }
+
+        section {
+            margin-bottom: 60px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 40px;
+        }
+
+        h1, h2, h3 {
+            color: var(--primary-color);
+        }
+
+        h2 {
+            border-left: 5px solid var(--accent-color);
+            padding-left: 15px;
+            margin-top: 40px;
+        }
+
+        .image-placeholder {
+            width: 100%;
+            height: 300px;
+            background-color: #ecf0f1;
+            border: 2px dashed #bdc3c7;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 20px 0;
+            color: #7f8c8d;
+            font-weight: bold;
+            border-radius: 5px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .image-placeholder input[type="file"] {
+            margin-bottom: 10px;
+            z-index: 10;
+        }
+        
+        .image-placeholder img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        
+        .image-placeholder span {
+            z-index: 10;
+            background: rgba(255,255,255,0.7);
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+
+        .tech-note {
+            background-color: #e8f4fd;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 0.9rem;
+        }
+
+        .warning {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+        }
+
+        .step-list {
+            counter-reset: step;
+            list-style: none;
+            padding: 0;
+        }
+
+        .step-list li {
+            position: relative;
+            padding-left: 40px;
+            margin-bottom: 15px;
+        }
+
+        .step-list li::before {
+            counter-increment: step;
+            content: counter(step);
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 28px;
+            height: 28px;
+            background: var(--accent-color);
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 28px;
+            font-weight: bold;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            color: var(--primary-color);
+        }
+
+        footer {
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #999;
+            font-size: 0.8rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <h1>FluoQuantPro</h1>
+    <ul>
+        <li><a href="#intro">1. 引言</a></li>
+        <li>
+            <a href="#features">2. 功能概述与技术原理</a>
+            <ul class="sub-menu">
+                <li><a href="#feat-project">2.1 项目管理系统</a></li>
+                <li><a href="#feat-image">2.2 多维图像引擎</a></li>
+                <li><a href="#feat-roi">2.3 ROI 智能交互</a></li>
+                <li><a href="#feat-measure">2.4 自动化测量分析</a></li>
+                <li><a href="#feat-overlap">2.5 共定位/重叠分析</a></li>
+                <li><a href="#feat-annotation">2.6 专业标注系统</a></li>
+                <li><a href="#feat-enhance">2.7 图像增强与校正</a></li>
+                <li><a href="#feat-result">2.8 数据验证与导出</a></li>
+                <li><a href="#feat-scale">2.9 标尺与校准</a></li>
+                <li><a href="#feat-batch">2.10 批量处理工作流</a></li>
+            </ul>
+        </li>
+        <li>
+            <a href="#guide">3. 操作指南</a>
+            <ul class="sub-menu">
+                <li><a href="#guide-startup">3.1 启动与导入</a></li>
+                <li><a href="#guide-roi">3.2 ROI 绘制与编辑</a></li>
+                <li><a href="#guide-analysis">3.3 执行测量分析</a></li>
+                <li><a href="#guide-export">3.4 结果导出</a></li>
+            </ul>
+        </li>
+        <li><a href="#faq">4. 常见问题与故障排除</a></li>
+        <li><a href="#version">5. 版本历史</a></li>
+        <li><a href="#legal">6. 法律声明</a></li>
+    </ul>
+</nav>
+
+<main>
+    <section id="intro">
+        <h1>1. 引言</h1>
+        <p>FluoQuantPro 是一款专为荧光显微成像设计的专业级定量分析软件。它集成了先进的图像处理算法、灵活的 ROI（感兴趣区域）管理工具以及强大的数据分析引擎，旨在为生命科学研究人员提供从图像导入到数据导出的全流程解决方案。</p>
+        <p>本文档旨在为用户提供详尽的操作指导和技术参考，帮助用户充分利用软件的各项高级功能。</p>
+        <div class="image-placeholder">
+            <input type="file" accept="image/*" onchange="previewImage(this)">
+            <span>在此处上传软件主界面截图</span>
+        </div>
+    </section>
+
+    <section id="features">
+        <h1>2. 功能概述与技术原理</h1>
+        
+        <div id="feat-project">
+            <h2>2.1 项目管理系统 (Project Management)</h2>
+            <p><strong>功能描述：</strong> 支持以文件夹为单位的项目管理，自动扫描目录下的兼容图像文件，并维护项目的持久化状态（包括 ROI、标注、测量结果等）。支持自动保存机制，防止数据丢失。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p>项目管理基于 MVC 架构设计，核心类 <code>ProjectModel</code> 维护项目状态。采用 JSON 格式 (<code>project.json</code>) 进行数据持久化，存储每个样本的元数据、ROI 坐标序列（序列化为点集）、标注属性以及分析结果。系统实现了“零拷贝”加载策略，即在打开项目时仅索引文件路径，图像数据仅在需显示或分析时通过 <code>ImageLoaderWorker</code> 异步加载到内存，显著降低了内存占用并提高了大批量样本的加载速度。自动保存功能通过 <code>QTimer</code> 定时触发，检查 <code>is_dirty</code> 标志位，确保仅在数据变更时写入磁盘。</p>
+            </div>
+            <div class="image-placeholder">
+                <input type="file" accept="image/*" onchange="previewImage(this)">
+                <span>在此处上传项目管理架构图</span>
+            </div>
+        </div>
+
+        <div id="feat-image">
+            <h2>2.2 多维图像引擎 (Multi-dimensional Image Engine)</h2>
+            <p><strong>功能描述：</strong> 支持多通道荧光图像（如 TIFF, CZI, OME-TIFF）的加载、显示与通道融合。提供独立的通道开关、伪彩映射及亮度/对比度调节。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p>图像引擎基于 <code>Bio-Formats</code> 标准（通过 Python 绑定或原生 TiffFile 库）解析多维图像数据。渲染层采用 <code>QtOpenGL</code> 加速的 <code>QGraphicsView</code> 框架。每个通道的数据被加载为 Numpy 数组，通过自定义的着色器或查找表（LUT）实时合成 RGB 图像。为了处理高分辨率图像，系统实现了视口裁剪（Viewport Clipping）和按需渲染。坐标系统统一映射到图像的物理像素空间，确保缩放操作不影响测量精度。<code>CanvasView</code> 类负责处理视图变换矩阵，实现平滑的缩放和平移。</p>
+            </div>
+        </div>
+
+        <div id="feat-roi">
+            <h2>2.3 ROI 智能交互 (ROI Interaction)</h2>
+            <p><strong>功能描述：</strong> 提供矩形、椭圆、多边形、魔棒（自动阈值）等多种 ROI 绘制工具。支持 ROI 的选中、移动、缩放、旋转及布尔运算。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p>ROI 系统基于 <code>QGraphicsItem</code> 体系。每个 ROI 是一个 <code>RoiGraphicsItem</code> 对象，包含形状路径（<code>QPainterPath</code>）和控制手柄（<code>RoiHandleItem</code>）。
+                <br><strong>交互优化：</strong> 实现了“Fat Finger”逻辑，通过 <code>QPainterPathStroker</code> 为细线条生成 4px 宽的点击判定区域，解决了高分辨率屏幕下难以选中的问题。
+                <br><strong>坐标同步：</strong> 实现了双向绑定机制，视图中的几何变换（Transform）会实时映射回底层的 <code>ROI</code> 数据模型，触发 <code>roi_updated</code> 信号，从而联动更新结果表格和其他视图。</p>
+            </div>
+            <div class="image-placeholder">
+                <input type="file" accept="image/*" onchange="previewImage(this)">
+                <span>在此处上传 ROI 绘制与交互示意图</span>
+            </div>
+        </div>
+
+        <div id="feat-measure">
+            <h2>2.4 自动化测量分析 (Automated Measurement)</h2>
+            <p><strong>功能描述：</strong> 实时计算选定 ROI 内的各项统计指标，包括面积、平均荧光强度（Mean）、积分密度（IntDen）、最小/最大值等。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p>测量核心位于 <code>src.core.analysis</code> 模块。当 ROI 发生变化时，系统利用 <code>OpenCV</code> 的 <code>drawContours</code> 函数在内存中生成二值掩膜（Mask）。利用 Numpy 的布尔索引（Boolean Indexing）和广播机制，快速提取原始图像数据中对应 ROI 区域的像素值。
+                <br><strong>性能优化：</strong> 针对多通道图像，分析过程并行化处理。计算结果直接存入结构化字典，并通过信号槽机制推送到 <code>ResultWidget</code>。对于复杂形状（如带孔洞的多边形），算法会自动处理内外轮廓的层级关系。</p>
+            </div>
+        </div>
+
+        <div id="feat-overlap">
+            <h2>2.5 共定位/重叠分析 (Overlap Analysis)</h2>
+            <p><strong>功能描述：</strong> 分析两个不同通道或同一通道内的 ROI 之间的空间重叠关系，计算交集面积、并集面积、IoU（交并比）及重叠系数。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p>重叠分析器（<code>ROIOverlapAnalyzer</code>）通过计算几何算法实现。它将两个 ROI 的 <code>QPainterPath</code> 转换为多边形顶点集合，利用 <code>Shapely</code> 或 Qt 原生的 <code>intersected</code> 方法计算几何交集。
+                <br><strong>动态虚拟行：</strong> 分析结果不直接写入主数据库，而是作为“虚拟行”动态插入到结果表格中。当用户取消选择 ROI 时，虚拟行自动清除。这种非侵入式设计保证了原始数据的纯净性，同时提供了灵活的即时分析能力。</p>
+            </div>
+            <div class="image-placeholder">
+                <input type="file" accept="image/*" onchange="previewImage(this)">
+                <span>在此处上传共定位分析结果展示图</span>
+            </div>
+        </div>
+        
+        <div id="feat-annotation">
+            <h2>2.6 专业标注系统 (Annotation System)</h2>
+            <p><strong>功能描述：</strong> 提供独立于 ROI 的图像标注层，支持箭头、文本、几何图形等。支持自定义样式（实线/虚线/点线）、颜色、箭头形状（实心三角形、菱形等）。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p>标注对象（<code>GraphicAnnotation</code>）与 ROI 分离存储，但支持“同步 ROI 为标注”的联动模式。渲染层重写了 <code>paint</code> 方法，利用 <code>QtRenderEngine</code> 实现高质量矢量绘图。
+                <br><strong>实心箭头实现：</strong> 针对箭头标注，系统构建了包含轴线（Shaft）和箭头头部（Head）的复合路径。对于“三角形”和“菱形”样式，使用 <code>QBrush</code> 进行颜色填充，并使用 <code>closeSubpath</code> 确保闭合，从而实现实心视觉效果。面板控件采用流式布局，移除了固定宽度限制，以适应不同屏幕分辨率。</p>
+            </div>
+        </div>
+
+        <div id="feat-enhance">
+            <h2>2.7 图像增强与校正 (Image Enhancement)</h2>
+            <p><strong>功能描述：</strong> 提供背景扣除（Rolling Ball 算法）、直方图均衡化、高斯平滑等预处理功能。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p>图像处理管线集成于 <code>src.core.enhance</code>。背景扣除算法移植自 ImageJ 的经典 Rolling Ball 算法，通过形态学开运算估算背景底色。所有增强操作均为“非破坏性”（Non-destructive），处理后的图像仅用于显示或临时分析，原始 Raw Data 始终保留在内存中，确保科学数据的严谨性。</p>
+            </div>
+        </div>
+
+        <div id="feat-result">
+            <h2>2.8 数据验证与导出 (Data Validation & Export)</h2>
+            <p><strong>功能描述：</strong> 以树状表格展示测量结果，支持数据的层级展开。提供数据验证标记（通过/拒绝）功能。支持导出为 CSV 格式。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p><code>MeasurementResultTree</code> 继承自 <code>QTreeWidget</code>，实现了 Sample -> ROI -> Channel 的三级数据结构。
+                <br><strong>CSV 导出：</strong> 导出模块遍历树形结构，将其扁平化为二维表格。算法自动扫描所有列头（包括动态生成的重叠分析列），构建 CSV Header，并处理特殊字符编码（UTF-8-SIG），确保在 Excel 中打开不乱码。移除了旧版的 JSON 导出，统一数据交换标准。</p>
+            </div>
+        </div>
+
+        <div id="feat-scale">
+            <h2>2.9 标尺与校准 (Scale Bar & Calibration)</h2>
+            <p><strong>功能描述：</strong> 支持像素与物理单位（微米）的转换。提供可拖拽的交互式标尺，支持位置、颜色、字体大小的自定义。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p><code>ScaleBarItem</code> 是一个置顶的 <code>QGraphicsObject</code>。它监听视图的缩放信号，根据当前的 <code>pixel_size</code>（微米/像素）动态计算标尺线条的屏幕长度。校准功能通过测量已知物理长度的线段，反向计算像素比率并更新全局配置。</p>
+            </div>
+        </div>
+
+        <div id="feat-batch">
+            <h2>2.10 批量处理工作流 (Batch Processing)</h2>
+            <p><strong>功能描述：</strong> 支持将当前的处理参数（ROI 模板、增强设置）批量应用到项目中的其他图像。</p>
+            <div class="tech-note">
+                <strong>技术实现原理：</strong>
+                <p>批量处理器通过遍历 <code>ProjectModel</code> 中的样本列表，复用核心分析函数。为了防止界面冻结，批量任务被封装在 <code>QThread</code> 工作线程中，通过信号槽实时汇报进度。ROI 模板匹配基于图像的几何中心或特征点对齐（未来扩展），目前主要支持同尺寸图像的坐标复用。</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="guide">
+        <h1>3. 操作指南</h1>
+
+        <div id="guide-startup">
+            <h2>3.1 启动与导入</h2>
+            <ol class="step-list">
+                <li>双击桌面图标启动 FluoQuantPro。</li>
+                <li>点击菜单栏 <strong>File -> Open Project Folder</strong>，选择包含图像数据的文件夹。</li>
+                <li>系统将自动扫描文件夹，左侧 "Samples" 面板将显示识别到的图像列表。</li>
+                <li><strong>正常流程：</strong> 双击样本名称，图像加载至中央画布。</li>
+                <li><strong>异常处理：</strong> 若图像无法加载，请检查文件名是否包含特殊字符，或文件格式是否受支持（推荐使用 TIFF）。</li>
+                <li>使用鼠标滚轮缩放图像，按住空格键（Space）拖动平移视图。</li>
+            </ol>
+            <div class="image-placeholder">
+                <input type="file" accept="image/*" onchange="previewImage(this)">
+                <span>在此处上传导入流程截图</span>
+            </div>
+            <div class="warning">注意：首次导入包含大量大文件的文件夹时，建立索引可能需要几秒钟，请耐心等待。</div>
+        </div>
+
+        <div id="guide-roi">
+            <h2>3.2 ROI 绘制与编辑</h2>
+            <ol class="step-list">
+                <li>在右侧工具栏选择绘制工具（如矩形、多边形）。</li>
+                <li><strong>矩形/椭圆：</strong> 在画布上按住左键拖动，松开完成绘制。</li>
+                <li><strong>多边形：</strong> 点击确定顶点，双击或右键完成闭合。</li>
+                <li><strong>选中 ROI：</strong> 点击 ROI 边缘（系统已优化点击判定范围，更易选中）。选中后 ROI 变为红色并显示控制手柄。</li>
+                <li><strong>调整形状：</strong> 拖动白色方形手柄改变大小；拖动顶部圆形手柄旋转 ROI。</li>
+                <li><strong>多选操作：</strong> 按住 Ctrl 键依次点击多个 ROI，或使用鼠标框选。</li>
+                <li><strong>删除：</strong> 选中 ROI 后按 Delete 键。</li>
+            </ol>
+            <div class="image-placeholder">
+                <input type="file" accept="image/*" onchange="previewImage(this)">
+                <span>在此处上传 ROI 编辑演示图</span>
+            </div>
+        </div>
+
+        <div id="guide-analysis">
+            <h2>3.3 执行测量分析</h2>
+            <ol class="step-list">
+                <li>确保已绘制至少一个 ROI。</li>
+                <li>在右侧 "Measurements" 面板勾选需要计算的指标（如 Area, Mean, IntDen）。</li>
+                <li>点击 <strong>"Measure"</strong> 按钮，或使用快捷键（默认 M）。</li>
+                <li>结果将即时显示在底部的 "Results" 表格中。</li>
+                <li><strong>共定位分析：</strong> 同时选中两个 ROI，系统自动触发重叠分析，结果以斜体字显示在表格中。</li>
+                <li><strong>异常处理：</strong> 若结果全为 0，请检查是否在全黑背景区域绘制了 ROI，或通道是否被关闭。</li>
+            </ol>
+            <div class="image-placeholder">
+                <input type="file" accept="image/*" onchange="previewImage(this)">
+                <span>在此处上传测量结果界面图</span>
+            </div>
+        </div>
+
+        <div id="guide-export">
+            <h2>3.4 结果导出</h2>
+            <ol class="step-list">
+                <li>在 "Results" 表格区域点击鼠标右键。</li>
+                <li>在弹出的上下文菜单中选择 <strong>"Export Results (CSV)..."</strong>。</li>
+                <li>在弹出的文件保存对话框中，选择保存路径并输入文件名。</li>
+                <li>点击 "Save"。</li>
+                <li>系统将在状态栏提示 "Result data exported successfully"。</li>
+                <li>使用 Excel 或其他数据分析软件打开生成的 CSV 文件进行后续处理。</li>
+            </ol>
+            <div class="image-placeholder">
+                <input type="file" accept="image/*" onchange="previewImage(this)">
+                <span>在此处上传导出菜单截图</span>
+            </div>
+        </div>
+    </section>
+
+    <section id="faq">
+        <h1>4. 常见问题与故障排除</h1>
+        <table>
+            <tr>
+                <th>问题现象</th>
+                <th>可能原因</th>
+                <th>解决方案</th>
+            </tr>
+            <tr>
+                <td>无法选中 ROI</td>
+                <td>点击位置偏离边缘过远</td>
+                <td>尝试点击 ROI 的边框线条。系统已优化判定范围为 4px，请确保鼠标在边缘附近。</td>
+            </tr>
+            <tr>
+                <td>导出 CSV 乱码</td>
+                <td>Excel 编码识别问题</td>
+                <td>导出模块已强制使用 UTF-8-SIG 编码，Excel 2016+ 应能自动识别。如仍乱码，请尝试用记事本打开另存为 ANSI。</td>
+            </tr>
+            <tr>
+                <td>图像显示过暗</td>
+                <td>显示范围（LUT）设置不当</td>
+                <td>在直方图面板点击 "Auto" 按钮自动调整对比度。</td>
+            </tr>
+        </table>
+    </section>
+
+    <section id="version">
+        <h1>5. 版本历史</h1>
+        <ul>
+            <li><strong>v3.0 (当前版本)</strong>
+                <ul>
+                    <li>新增 CSV 导出功能，移除 JSON 导出。</li>
+                    <li>优化 Annotation 面板布局，移除控件宽度限制。</li>
+                    <li>实现实心箭头标注样式。</li>
+                    <li>优化 ROI 选中算法，解决重叠遮挡问题。</li>
+                </ul>
+            </li>
+            <li><strong>v2.5</strong>
+                <ul>
+                    <li>引入共定位重叠分析模块。</li>
+                    <li>增加批量处理功能。</li>
+                </ul>
+            </li>
+        </ul>
+    </section>
+
+    <section id="legal">
+        <h1>6. 法律声明</h1>
+        <p><strong>免责声明：</strong> 本软件仅供科研用途，严禁用于临床诊断或治疗。开发者不对因使用本软件导致的任何数据丢失或科研结论偏差承担法律责任。用户应定期备份重要数据。</p>
+        <p><strong>版权信息：</strong> Copyright © 2024 FluoQuantPro Team. All Rights Reserved.</p>
+    </section>
+</main>
+
+<script>
+    // Simple script to handle sub-menu toggling via class
+    document.querySelectorAll('nav li a').forEach(link => {
+        link.addEventListener('click', function() {
+            document.querySelectorAll('nav li').forEach(li => li.classList.remove('active'));
+            this.parentElement.classList.add('active');
+        });
+    });
+
+    // Image Upload Preview Script
+    function previewImage(input) {
+        if (input.files && input.files[0]) {
+            var reader = new FileReader();
+            
+            reader.onload = function(e) {
+                // Find parent placeholder div
+                var placeholder = input.parentElement;
+                
+                // Create or update img element
+                var img = placeholder.querySelector('img');
+                if (!img) {
+                    img = document.createElement('img');
+                    placeholder.appendChild(img);
+                }
+                
+                img.src = e.target.result;
+            }
+            
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+</script>
+
+</body>
+</html>

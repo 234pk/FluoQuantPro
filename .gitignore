@@ -1,0 +1,12 @@
+dist/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.dll
+*.exe
+logs/
+.vscode/
+.idea/
+*.log
