@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+import sys
+import os
 
 a = Analysis(
     ['main.py'],
@@ -43,3 +44,11 @@ coll = COLLECT(
     upx_exclude=[],
     name='FluoQuantPro',
 )
+
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name='FluoQuantPro.app',
+        icon='resources/icon.png',
+        bundle_identifier='com.fluoquantpro.app',
+    )

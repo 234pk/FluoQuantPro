@@ -1,0 +1,49 @@
+name: Build and Package Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'win.v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build Windows EXE
+      run: |
+        python build_exe.py
+
+    - name: Zip Artifact
+      run: |
+        Compress-Archive -Path dist/FluoQuantPro -DestinationPath dist/FluoQuantPro-Windows.zip
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: FluoQuantPro-Windows
+        path: dist/FluoQuantPro-Windows.zip
+
+    - name: Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/FluoQuantPro-Windows.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -32,11 +32,12 @@ jobs:
 
     - name: Create DMG
       run: |
-        # Optional: create a DMG for easier distribution
-        mkdir -p dist/dmg
-        cp -R dist/FluoQuantPro.app dist/dmg/
-        # You could use tools like 'create-dmg' here if needed
-        # For now just zip it
+        # Create a DMG for easier distribution
+        mkdir -p dist/dmg_content
+        cp -R dist/FluoQuantPro.app dist/dmg_content/
+        # Use hdiutil to create DMG
+        hdiutil create -volname "FluoQuantPro" -srcfolder dist/dmg_content -ov -format UDZO dist/FluoQuantPro.dmg
+        # Also keep the zip as backup
         cd dist
         zip -r FluoQuantPro-macOS.zip FluoQuantPro.app
 
@@ -44,12 +45,16 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: FluoQuantPro-macOS
-        path: dist/FluoQuantPro-macOS.zip
+        path: |
+          dist/FluoQuantPro.dmg
+          dist/FluoQuantPro-macOS.zip
 
     - name: Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/FluoQuantPro-macOS.zip
+        files: |
+          dist/FluoQuantPro.dmg
+          dist/FluoQuantPro-macOS.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
