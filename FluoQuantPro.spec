@@ -7,7 +7,8 @@ from PyInstaller.utils.hooks import collect_submodules
 hidden_imports = collect_submodules('src')
 hidden_imports += [
     'PySide6', 'numpy', 'cv2', 'tifffile', 'qimage2ndarray', 'skimage', 
-    'scipy', 'pywt', 'matplotlib', 'matplotlib.backends.backend_qtagg'
+    'scipy', 'pywt', 'matplotlib', 'matplotlib.backends.backend_qtagg',
+    'src.gui.export_settings_dialog' # 显式添加之前丢失的模块
 ]
 
 a = Analysis(
@@ -65,8 +66,8 @@ if sys.platform == 'darwin':
     info_plist={
         'NSHighResolutionCapable': 'True',
         'NSRequiresAquaSystemAppearance': 'False',
-        'CFBundleShortVersionString': '1.0.3',
-        'CFBundleVersion': '1.0.3',
+        'CFBundleShortVersionString': '1.0.9',
+        'CFBundleVersion': '1.0.9',
         'CFBundleName': 'FluoQuantPro',
         'CFBundleDisplayName': 'FluoQuantPro',
         'CFBundleExecutable': 'FluoQuantPro',
