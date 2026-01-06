@@ -1674,7 +1674,56 @@ class CropTool(AbstractTool):
     def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         # Override to prevent cleanup
         pass
+
+    def mouse_double_click(self, scene_pos: QPointF):
+        """
+        Double click to execute crop.
+        Creates an ROI from the current selection and triggers crop action.
+        """
+        if not self.start_pos or not self.end_pos:
+            return
+
+        # 1. Coordinate Mapping (Scene -> Image)
+        # This fixes the "offset" issue on packaged/different resolution screens
+        image_start = self.start_pos
+        image_end = self.end_pos
         
+        view = None
+        if hasattr(self.session, 'main_window') and self.session.main_window:
+             view = self.session.main_window.multi_view.get_active_view()
+             
+        if view and hasattr(view, 'get_image_coordinates'):
+             image_start = view.get_image_coordinates(self.start_pos)
+             image_end = view.get_image_coordinates(self.end_pos)
+             Logger.info(f"[CropTool] Mapped Coords: {self.start_pos} -> {image_start}")
+        
+        # 2. Create ROI
+        path = QPainterPath()
+        path.addRect(QRectF(image_start, image_end).normalized())
+        
+        roi = ROI(
+            label=f"Crop_{len(self.session.roi_manager.get_all_rois()) + 1}",
+            path=path,
+            color=QColor(Qt.GlobalColor.white),
+            channel_index=-1
+        )
+        roi.roi_type = "rect" # Treat as rect for crop logic
+        
+        # 3. Add to Manager (Undoable=False because it's a transient action?)
+        # Better to be undoable so user can see what they cropped
+        self.session.roi_manager.add_roi(roi, undoable=True)
+        
+        # 4. Trigger Crop
+        if self.session.main_window:
+            self.session.main_window.crop_to_selection()
+            
+        # 5. Cleanup self (AbstractTool deactivate)
+        self.deactivate()
+        # Also clear the specific tool state
+        self.start_pos = None
+        self.end_pos = None
+        self.current_path = None
+
     def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
         path = QPainterPath()
         if self.start_pos and self.end_pos:

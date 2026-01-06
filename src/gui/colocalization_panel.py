@@ -25,7 +25,7 @@ from src.core.analysis import ColocalizationEngine
 from src.core.language_manager import tr, LanguageManager
 from src.gui.icon_manager import get_icon
 
-from src.core.algorithms import bilinear_interpolate, sample_line_profile
+from src.core.algorithms import bilinear_interpolate_numpy as bilinear_interpolate, sample_line_profile
 
 class LineScanExportDialog(QDialog):
     def __init__(self, data, x_axis, metadata=None, parent=None):

@@ -32,7 +32,7 @@ jobs:
 
     - name: Zip Artifact
       run: |
-        Compress-Archive -Path dist/FluoQuantPro -DestinationPath dist/FluoQuantPro-Windows.zip
+        Compress-Archive -Path dist/FluoQuantPro.exe -DestinationPath dist/FluoQuantPro-Windows.zip
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

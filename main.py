@@ -3373,15 +3373,29 @@ class MainWindow(QMainWindow):
         import numpy as np
         
         # 1. Get ROI Points
-        # Prefer explicit points if available
+        # Prefer explicit points if available and sufficient (>= 3 for polygon/rotated rect)
         points = []
-        if roi.points:
+        if roi.points and len(roi.points) >= 3:
             points = [[p.x(), p.y()] for p in roi.points]
-        elif roi.path:
+            
+        # If points are insufficient (e.g. 2 points for Rect), try extracting from Path
+        # This handles rotated rectangles where roi.points might only be [TL, BR] but path is rotated.
+        if len(points) < 3 and roi.path:
+            path_points = []
             for i in range(roi.path.elementCount()):
                 e = roi.path.elementAt(i)
+                # Check for MoveTo or LineTo to get vertices
                 if e.isMoveTo() or e.isLineTo():
-                    points.append([e.x, e.y])
+                    # Check if point is already in list (to avoid duplicates from closed loops)
+                    pt = [e.x, e.y]
+                    if not path_points or (abs(path_points[-1][0] - pt[0]) > 0.01 or abs(path_points[-1][1] - pt[1]) > 0.01):
+                        path_points.append(pt)
+            
+            # Use path points if they define a shape (>= 3 points)
+            if len(path_points) >= 3:
+                points = path_points
+                print(f"DEBUG: [Main] Extracted {len(points)} points from ROI path (overriding insufficient roi.points).")
+        
         
         src_pts_ordered = None
         dst_pts = None
