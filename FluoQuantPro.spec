@@ -1,13 +1,29 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 import os
+from PyInstaller.utils.hooks import collect_submodules
+
+# 动态收集 src 下的所有子模块，防止 ModuleNotFoundError
+hidden_imports = collect_submodules('src')
+hidden_imports += [
+    'PySide6', 'numpy', 'cv2', 'tifffile', 'qimage2ndarray', 'skimage', 
+    'scipy', 'pywt', 'matplotlib', 'matplotlib.backends.backend_qtagg'
+]
 
 a = Analysis(
     ['main.py'],
-    pathex=['src'],
+    pathex=['.'], # 设置为根目录
     binaries=[],
-    datas=[('resources', 'resources'), ('src/resources/translations.json', 'src/resources'), ('FluoQuantPro_User_Manual.html', '.'), ('manual.html', '.'), ('change_log.md', '.'), ('docs', 'docs'), ('project.json', '.')],
-    hiddenimports=['PySide6', 'numpy', 'cv2', 'tifffile', 'qimage2ndarray', 'skimage', 'scipy', 'skimage.feature._orb_descriptor_positions', 'skimage.filters.rank.core_cy_3d', 'skimage.morphology._max_tree', 'skimage.morphology.disk_decompositions', 'skimage.morphology.ball_decompositions', 'pywt', 'scipy.special.cython_special', 'scipy.linalg.cython_blas', 'scipy.linalg.cython_lapack', 'sklearn.utils._cython_blas', 'sklearn.neighbors._partition_nodes', 'sklearn.tree._utils', 'src.gui.export_settings_dialog'],
+    datas=[
+        ('resources', 'resources'), 
+        ('src/resources/translations.json', 'src/resources'), 
+        ('FluoQuantPro_User_Manual.html', '.'), 
+        ('manual.html', '.'), 
+        ('change_log.md', '.'), 
+        ('docs', 'docs'), 
+        ('project.json', '.')
+    ],
+    hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
