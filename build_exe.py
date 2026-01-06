@@ -3,10 +3,16 @@ import os
 import shutil
 import sys
 import time
+import io
+
+# 强制设置输出编码为 UTF-8，解决 Windows CI 环境下的 UnicodeEncodeError
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 def check_pre_build():
-    """打包前全面检查"""
-    print("\n[1/3] 执行打包前检查...")
+    """打包前全面检查 / Pre-build comprehensive check"""
+    print("\n[1/3] 执行打包前检查 / Executing pre-build checks...")
     
     # 1. 验证关键目录和文件
     required_paths = [
@@ -34,8 +40,8 @@ def check_pre_build():
     return True
 
 def build():
-    """执行打包"""
-    print("\n[2/3] 开始生产环境模式打包...")
+    """执行打包 / Execute Build"""
+    print("\n[2/3] 开始生产环境模式打包 / Starting production build...")
     start_time = time.time()
     
     if os.path.exists('dist'): shutil.rmtree('dist')
@@ -49,33 +55,33 @@ def build():
         ])
         
         duration = time.time() - start_time
-        print(f"  ✅ 打包完成，耗时: {duration:.2f}秒")
+        print(f"  ✅ 打包完成 / Build completed, Time: {duration:.2f}s")
         return True
     except Exception as e:
-        print(f"  ❌ 打包过程出错: {e}")
+        print(f"  ❌ 打包过程出错 / Error during build: {e}")
         return False
 
 def verify_post_build():
-    """打包后验证"""
-    print("\n[3/3] 执行打包后验证...")
+    """打包后验证 / Post-build verification"""
+    print("\n[3/3] 执行打包后验证 / Executing post-build verification...")
     
     exe_path = 'dist/FluoQuantPro.exe'
     if sys.platform == 'darwin':
         exe_path = 'dist/FluoQuantPro.app'
         
     if not os.path.exists(exe_path):
-        print(f"  ❌ 验证失败: 找不到生成的目标文件 {exe_path}")
+        print(f"  ❌ 验证失败 / Verification failed: {exe_path} not found")
         return False
         
     size_mb = os.path.getsize(exe_path) / (1024 * 1024) if os.path.isfile(exe_path) else 0
-    print(f"  ✅ 目标文件存在: {exe_path} (大小: {size_mb:.2f} MB)")
+    print(f"  ✅ 目标文件存在 / Target exists: {exe_path} ({size_mb:.2f} MB)")
     
-    print("\n✨ 所有检查通过！打包产物已准备就绪。")
+    print("\n✨ 所有检查通过！打包产物已准备就绪 / All checks passed! Build ready.")
     return True
 
 if __name__ == "__main__":
     print("="*50)
-    print(" FluoQuantPro 标准化打包流程 ")
+    print(" FluoQuantPro 标准化打包流程 / Standardized Build Process ")
     print("="*50)
     
     if check_pre_build():
