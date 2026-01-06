@@ -15,8 +15,9 @@ class HistogramWidget(QWidget):
         self.setMinimumHeight(100)
         # Allow width to shrink (remove implicit constraints)
         self.setMinimumWidth(0) 
-        self.hist_data = None
-        self.hist_color = QColor("#888888")
+        # Theme-aware default histogram color
+        palette = QApplication.palette()
+        self.hist_color = palette.color(QPalette.ColorRole.Mid)
         self.min_val = 0      
         self.max_val = 65535  
         self.data_max_range = 65535 # The logical maximum value of the x-axis (e.g. image max)
@@ -208,9 +209,9 @@ class HistogramWidget(QWidget):
         if outline_color.lightness() > 150:
              outline_color = outline_color.darker(150) # Make it darker
         
-        # Fallback if still too light
+        # Fallback if still too light (Use Palette Mid)
         if outline_color.lightness() > 200:
-            outline_color = QColor("#666666")
+            outline_color = QApplication.palette().color(QPalette.ColorRole.Mid)
             
         pen = QPen(outline_color)
         pen.setWidth(1)
@@ -232,22 +233,18 @@ class HistogramWidget(QWidget):
         # Let's highlight inside with very subtle color or just rely on markers
         
         # Draw Lines (Distinguish Min and Max)
+        highlight_color = palette.color(QPalette.ColorRole.Highlight)
         
         # Min Line
-        palette = QApplication.palette()
-        is_dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
-        
-        # Min Line (Cyan-ish)
-        min_line_color = QColor("#00FFFF") if is_dark else QColor("#008B8B")
-        pen_min = QPen(min_line_color)
+        pen_min = QPen(highlight_color)
         pen_min.setWidth(2)
         pen_min.setStyle(Qt.PenStyle.SolidLine)
         painter.setPen(pen_min)
         painter.drawLine(int(x_min), 0, int(x_min), h)
         
-        # Max Line (Orange-ish)
-        max_line_color = QColor("#FF4500") if is_dark else QColor("#CC3300")
-        pen_max = QPen(max_line_color)
+        # Max Line (Slightly different or same with different style?)
+        # For now, use the same highlight color but maybe a different dash pattern or just same
+        pen_max = QPen(highlight_color)
         pen_max.setWidth(2)
         pen_max.setStyle(Qt.PenStyle.SolidLine)
         painter.setPen(pen_max)
@@ -260,10 +257,7 @@ class HistogramWidget(QWidget):
         painter.setFont(font)
         
         # Min Label
-        if is_dark_bg:
-            painter.setPen(QColor("#00FFFF")) # Cyan for dark bg
-        else:
-            painter.setPen(QColor("#008B8B")) # Dark Cyan for light bg
+        painter.setPen(highlight_color)
         # Check if near left edge
         if x_min < 25:
             align_flag = Qt.AlignLeft
@@ -274,10 +268,7 @@ class HistogramWidget(QWidget):
         painter.drawText(pos_x, 15, "Min")
 
         # Max Label
-        if is_dark_bg:
-            painter.setPen(QColor("#FF7F50")) # Coral for dark bg
-        else:
-            painter.setPen(QColor("#CC3300")) # Dark Red for light bg
+        painter.setPen(highlight_color)
         # Check if near right edge
         if x_max > w - 25:
             align_flag = Qt.AlignRight

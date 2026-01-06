@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QInputDialog, QMessageBox, QScrollArea, QCheckBox, QSizePolicy,
                                QApplication, QGridLayout)
 from PySide6.QtCore import Qt, Signal, QTimer, QSize
-from PySide6.QtGui import QFont, QPalette
+from PySide6.QtGui import QIcon
 from src.core.data_model import Session
 from src.core.enhance import EnhanceProcessor
 from src.gui.histogram_panel import HistogramPanel
@@ -39,19 +39,16 @@ class PercentageControlWidget(QWidget):
         # Header: Name and Value
         h_header = QHBoxLayout()
         self.lbl_name = QLabel(tr(self.param_name))
-        self.lbl_name.setFont(QFont("Arial", 10, QFont.Bold))
+        self.lbl_name.setProperty("role", "subtitle")
         h_header.addWidget(self.lbl_name)
         
         h_header.addStretch()
         
         self.lbl_value = QLabel("0%")
-        self.lbl_value.setFont(QFont("Arial", 10, QFont.Bold))
+        self.lbl_value.setProperty("role", "accent")
         self.lbl_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.lbl_value.setFixedWidth(60)
         
-        palette = QApplication.palette()
-        accent_color = palette.color(QPalette.ColorRole.Highlight).name()
-        self.lbl_value.setStyleSheet(f"color: {accent_color};") # Default Accent
         # Make double-clickable for input? Implement event filter or custom label
         self.lbl_value.mouseDoubleClickEvent = self.on_value_double_click
         h_header.addWidget(self.lbl_value)
@@ -73,7 +70,7 @@ class PercentageControlWidget(QWidget):
             btn.setText(f"{step:+d}")
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-            btn.setFixedHeight(24)
+            btn.setFixedSize(28, 28)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _, s=step: self.adjust_value(s))
             
@@ -87,17 +84,12 @@ class PercentageControlWidget(QWidget):
         # Max Button integrated into grid
         self.btn_auto = QToolButton()
         self.btn_auto.setIcon(get_icon("auto"))
-        self.btn_auto.setIconSize(QSize(16, 16))
-        self.btn_auto.setText("Max")
-        self.btn_auto.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.btn_auto.setIconSize(QSize(20, 20))
+        self.btn_auto.setFixedSize(28, 60) # Spans 2 rows (28*2 + 4 spacing)
+        self.btn_auto.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_auto.setToolTip(tr("Set to Recommended Maximum Value"))
-        self.btn_auto.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        self.btn_auto.setFixedHeight(52) # Height of 2 rows + spacing (24*2 + 4 = 52)
         self.btn_auto.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        palette = QApplication.palette()
-        accent_color = palette.color(QPalette.ColorRole.Highlight).name()
-        self.btn_auto.setStyleSheet(f"font-weight: bold; color: {accent_color};")
+        self.btn_auto.setProperty("role", "accent")
         self.btn_auto.clicked.connect(self.reset_to_auto)
         
         # Add to row 0, col 3, span 2 rows
@@ -137,23 +129,21 @@ class PercentageControlWidget(QWidget):
         if self.min_val < 0:
              self.lbl_value.setText(f"{pct:+d}%") # Use sign for bipolar controls
         
-        # Safety Colors
-        palette = QApplication.palette()
-        accent_color = palette.color(QPalette.ColorRole.Highlight).name()
-        text_color = palette.color(QPalette.ColorRole.WindowText).name()
-        is_dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
-        
+        # Use role properties instead of hardcoded styles
         abs_pct = abs(pct)
         if abs_pct > 150:
-            self.lbl_value.setStyleSheet("color: #e74c3c; font-weight: bold;") # Reddish
+            self.lbl_value.setProperty("role", "error")
         elif abs_pct > 100:
-            self.lbl_value.setStyleSheet("color: #f39c12; font-weight: bold;") # Orange/Amber
+            self.lbl_value.setProperty("role", "warning")
         elif pct == 0 and self.min_val >= 0:
-             gray_color = "#888888" if not is_dark else "#aaaaaa"
-             self.lbl_value.setStyleSheet(f"color: {gray_color}; font-weight: bold;") # Gray for 0% (OFF)
+            self.lbl_value.setProperty("role", "status")
         else:
-            self.lbl_value.setStyleSheet(f"color: {accent_color};")
+            self.lbl_value.setProperty("role", "accent")
             
+        # Refresh style
+        self.lbl_value.style().unpolish(self.lbl_value)
+        self.lbl_value.style().polish(self.lbl_value)
+        
     def on_value_double_click(self, event):
         val, ok = QInputDialog.getInt(self, tr("Set {0} %").format(tr(self.param_name)), 
                                       tr("Percentage ({0} to {1}):").format(int(self.min_val*100), int(self.max_val*100)), 
@@ -211,6 +201,7 @@ class EnhancePanel(QWidget):
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
         
     def setup_ui(self):
+        self.setObjectName("card")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(10)
@@ -271,14 +262,16 @@ class EnhancePanel(QWidget):
         self.btn_export = QToolButton()
         self.btn_export.setIcon(get_icon("export_params", "document-save"))
         self.btn_export.setIconSize(QSize(20, 20))
-        self.btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_export.setText(tr("Apply"))
-        self.btn_export.setToolTip(tr("Export current enhancement parameters to a file"))
-        self.btn_export.setMinimumHeight(40)
-        # self.btn_export.setMinimumWidth(200) # Removed fixed width to allow resizing
-        self.btn_export.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_export.setToolTip(tr("Apply current enhancement parameters"))
+        self.btn_export.setFixedSize(28, 28)
+        self.btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_export.clicked.connect(self.export_params)
-        vbox.addWidget(self.btn_export)
+        
+        h_export = QHBoxLayout()
+        h_export.addWidget(self.btn_export)
+        h_export.addStretch()
+        vbox.addLayout(h_export)
         
         vbox.addStretch()
         # scroll.setWidget(content) # Move this to the end to ensure content is fully initialized? No, setWidget is fine.
@@ -288,18 +281,12 @@ class EnhancePanel(QWidget):
         scroll.setWidget(content)
 
     def resizeEvent(self, event):
-        """Handle resize to switch button style for compactness."""
-        if self.width() < 180:
-            self.btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        else:
-            self.btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         super().resizeEvent(event)
 
     def retranslate_ui(self):
         self.chk_lock.setText(tr("Lock enhancement parameters for all images (freeze auto-calculation)"))
         self.chk_lock.setToolTip(tr("Lock enhancement parameters for all images (freeze auto-calculation)"))
-        self.btn_export.setText(tr("Apply"))
-        self.btn_export.setToolTip(tr("Export current enhancement parameters to a file"))
+        self.btn_export.setToolTip(tr("Apply current enhancement parameters"))
         
     def set_active_channel(self, index: int):
         self.active_channel_index = index

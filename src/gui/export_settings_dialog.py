@@ -29,7 +29,7 @@ class ExportSettingsWidget(QWidget):
         vbox_content.addWidget(self.chk_channels)
         
         self.lbl_channels_desc = QLabel(f"<i>{tr('Generates separate files for each channel.')}</i>")
-        self.lbl_channels_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
+        self.lbl_channels_desc.setProperty("role", "description")
         vbox_content.addWidget(self.lbl_channels_desc)
         
         self.chk_merge = QCheckBox(tr("Export Merge Image (Composite)"))
@@ -37,7 +37,7 @@ class ExportSettingsWidget(QWidget):
         vbox_content.addWidget(self.chk_merge)
         
         self.lbl_merge_desc = QLabel(f"<i>{tr('Generates a single composite image of all visible channels.')}</i>")
-        self.lbl_merge_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
+        self.lbl_merge_desc.setProperty("role", "description")
         vbox_content.addWidget(self.lbl_merge_desc)
         
         self.gb_content.setLayout(vbox_content)
@@ -52,7 +52,7 @@ class ExportSettingsWidget(QWidget):
         vbox_mode.addWidget(self.chk_raw)
         
         self.lbl_raw_desc = QLabel(f"<b>{tr('Format:')}</b> 16-bit Grayscale TIFF<br><b>{tr('Use for:')}</b> Analysis, Quantification (ImageJ/Fiji)<br><i>{tr('Note: Ignores display adjustments.')}</i>")
-        self.lbl_raw_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
+        self.lbl_raw_desc.setProperty("role", "description")
         self.lbl_raw_desc.setTextFormat(Qt.TextFormat.RichText)
         vbox_mode.addWidget(self.lbl_raw_desc)
         
@@ -63,7 +63,7 @@ class ExportSettingsWidget(QWidget):
         vbox_mode.addWidget(self.chk_rendered)
         
         self.lbl_rend_desc = QLabel(f"<b>{tr('Format:')}</b> RGB TIFF (Full Color)<br><b>{tr('Use for:')}</b> Publications, Presentations, Visual Inspection<br><i>{tr('Note: \'What You See Is What You Get\'.')}</i>")
-        self.lbl_rend_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
+        self.lbl_rend_desc.setProperty("role", "description")
         self.lbl_rend_desc.setTextFormat(Qt.TextFormat.RichText)
         vbox_mode.addWidget(self.lbl_rend_desc)
         
@@ -123,7 +123,7 @@ class ExportSettingsWidget(QWidget):
         vbox_ann.addWidget(self.chk_include_ann)
         
         self.lbl_ann_desc = QLabel(f"<i>{tr('Includes user-drawn annotations and synchronized ROIs.')}</i>")
-        self.lbl_ann_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
+        self.lbl_ann_desc.setProperty("role", "description")
         vbox_ann.addWidget(self.lbl_ann_desc)
         
         self.gb_ann.setLayout(vbox_ann)
@@ -138,7 +138,9 @@ class ExportSettingsWidget(QWidget):
         
         self.btn_browse = QToolButton()
         self.btn_browse.setIcon(get_icon("folder", "folder-open"))
-        self.btn_browse.setIconSize(QSize(16, 16))
+        self.btn_browse.setIconSize(QSize(20, 20))
+        self.btn_browse.setFixedSize(28, 28)
+        self.btn_browse.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_browse.setToolTip(tr("Browse for export folder"))
         self.btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_browse.clicked.connect(self.browse_folder)

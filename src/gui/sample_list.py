@@ -20,13 +20,6 @@ class PreviewPopup(QLabel):
         super().__init__(parent)
         self.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        
-        palette = QApplication.palette()
-        bg_color = palette.color(QPalette.ColorRole.ToolTipBase).name()
-        text_color = palette.color(QPalette.ColorRole.ToolTipText).name()
-        border_color = palette.color(QPalette.ColorRole.Mid).name()
-        
-        self.setStyleSheet(f"border: 1px solid {border_color}; background-color: {bg_color}; color: {text_color};")
         self.setFixedSize(256, 256)
         self.setAlignment(Qt.AlignCenter)
         self.setScaledContents(True)
@@ -216,6 +209,7 @@ class SampleListWidget(QWidget):
 
     def __init__(self, project_model: ProjectModel, parent=None):
         super().__init__(parent)
+        self.setObjectName("card")
         self.project_model = project_model
         self._drag_hint_last_key = None
         
@@ -246,7 +240,7 @@ class SampleListWidget(QWidget):
         header_layout.setContentsMargins(8, 4, 8, 4) # Tighter header margins
         
         self.lbl_title = QLabel(tr("Project Samples") + " (0)")
-        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        self.lbl_title.setProperty("role", "title")
         header_layout.addWidget(self.lbl_title)
         
         header_layout.addStretch()
@@ -256,10 +250,11 @@ class SampleListWidget(QWidget):
         # Use our generated icon (it will fallback to internal generation if png is missing)
         self.btn_sort_samples.setIcon(get_icon("sort"))
         self.btn_sort_samples.setIconSize(QSize(20, 20))
+        self.btn_sort_samples.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_sort_samples.setFixedSize(28, 28)
         self.btn_sort_samples.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_sort_samples.setToolTip(tr("Sort Samples A-Z"))
-        self.btn_sort_samples.setAutoRaise(True)
+        # self.btn_sort_samples.setAutoRaise(True) # Disabled for consistent global styling
         self.btn_sort_samples.clicked.connect(self.sort_samples)
         header_layout.addWidget(self.btn_sort_samples)
 
@@ -268,10 +263,11 @@ class SampleListWidget(QWidget):
         # Use our generated icon for expand
         self.btn_expand_all.setIcon(get_icon("expand")) 
         self.btn_expand_all.setIconSize(QSize(20, 20))
+        self.btn_expand_all.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_expand_all.setFixedSize(28, 28)
         self.btn_expand_all.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_expand_all.setToolTip(tr("Expand/Collapse All Channels"))
-        self.btn_expand_all.setAutoRaise(True)
+        # self.btn_expand_all.setAutoRaise(True) # Disabled for consistent global styling
         self.btn_expand_all.setCheckable(True)
         self.btn_expand_all.setChecked(True) # Default expanded
         self.btn_expand_all.toggled.connect(self.toggle_expand_all)
@@ -280,10 +276,11 @@ class SampleListWidget(QWidget):
         self.btn_add_sample_header = QToolButton()
         self.btn_add_sample_header.setIcon(get_icon("add", "list-add"))
         self.btn_add_sample_header.setIconSize(QSize(20, 20))
+        self.btn_add_sample_header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_add_sample_header.setFixedSize(28, 28)
         self.btn_add_sample_header.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_add_sample_header.setToolTip(tr("Quick Add Blank Sample (Alt+N)"))
-        self.btn_add_sample_header.setAutoRaise(True)
+        # self.btn_add_sample_header.setAutoRaise(True) # Disabled for consistent global styling
         self.btn_add_sample_header.clicked.connect(self.quick_add_sample)
         header_layout.addWidget(self.btn_add_sample_header)
         
@@ -291,13 +288,13 @@ class SampleListWidget(QWidget):
         self.btn_delete_selected = QToolButton()
         self.btn_delete_selected.setIcon(get_icon("delete", "edit-delete"))
         self.btn_delete_selected.setIconSize(QSize(20, 20))
+        self.btn_delete_selected.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_delete_selected.setFixedSize(28, 28)
         self.btn_delete_selected.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_delete_selected.setToolTip(tr("Delete Selected Samples"))
-        self.btn_delete_selected.setAutoRaise(True)
+        # self.btn_delete_selected.setAutoRaise(True) # Disabled for consistent global styling
         self.btn_delete_selected.clicked.connect(self.on_delete_button_clicked)
         self.btn_delete_selected.setEnabled(False) # Disabled by default
-        self.btn_delete_selected.setStyleSheet("QToolButton:disabled { opacity: 0.3; }")
         header_layout.addWidget(self.btn_delete_selected)
         
         top_layout.addLayout(header_layout)
@@ -349,15 +346,16 @@ class SampleListWidget(QWidget):
         pool_header = QHBoxLayout()
         pool_header.setContentsMargins(5, 5, 5, 0) # Keep header margin
         self.lbl_pool = QLabel(tr("Unassigned Images") + " (0)")
-        palette = QApplication.palette()
-        mid_color = palette.color(QPalette.ColorRole.Mid).name()
-        self.lbl_pool.setStyleSheet(f"font-weight: bold; font-size: 14px; color: {mid_color};")
+        self.lbl_pool.setProperty("role", "title")
         pool_header.addWidget(self.lbl_pool)
         pool_header.addStretch()
 
         # Select All and Create Samples Button
         self.btn_pool_auto_group = QToolButton()
         self.btn_pool_auto_group.setIcon(get_icon("add", "list-add"))
+        self.btn_pool_auto_group.setIconSize(QSize(20, 20))
+        self.btn_pool_auto_group.setFixedSize(28, 28)
+        self.btn_pool_auto_group.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_pool_auto_group.setToolTip(tr("Auto-group selected (or all if none selected) into samples"))
         self.btn_pool_auto_group.clicked.connect(self.auto_group_from_pool)
         pool_header.addWidget(self.btn_pool_auto_group)
@@ -398,29 +396,26 @@ class SampleListWidget(QWidget):
         self.btn_auto_group = QToolButton()
         self.btn_auto_group.setIcon(get_icon("add", "list-add"))
         self.btn_auto_group.setIconSize(QSize(20, 20))
-        self.btn_auto_group.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_auto_group.setText(tr("Auto Group Import Folder"))
+        self.btn_auto_group.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_auto_group.setFixedSize(28, 28)
         self.btn_auto_group.setToolTip(tr("Import a folder of images and automatically group them into samples"))
-        self.btn_auto_group.setMinimumHeight(36)
-        self.btn_auto_group.setMinimumWidth(0)
         self.btn_auto_group.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_auto_group.setAutoRaise(True)
+        # self.btn_auto_group.setAutoRaise(True) # Disabled for consistent global styling
         self.btn_auto_group.clicked.connect(self.import_folder_auto)
         btn_layout.addWidget(self.btn_auto_group)
  
         self.btn_load_pool = QToolButton()
         self.btn_load_pool.setIcon(get_icon("folder", "folder-open"))
         self.btn_load_pool.setIconSize(QSize(20, 20))
-        self.btn_load_pool.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_load_pool.setText(tr("Load Images"))
+        self.btn_load_pool.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_load_pool.setFixedSize(28, 28)
         self.btn_load_pool.setToolTip(tr("Import images into the unassigned pool"))
-        self.btn_load_pool.setMinimumHeight(36)
-        self.btn_load_pool.setMinimumWidth(0)
-        self.btn_load_pool.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.btn_load_pool.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_load_pool.setAutoRaise(True)
+        # self.btn_load_pool.setAutoRaise(True) # Disabled for consistent global styling
         self.btn_load_pool.clicked.connect(self.load_images_to_pool)
         btn_layout.addWidget(self.btn_load_pool)
+        
+        btn_layout.addStretch()
 
         # self.btn_new_sample = QPushButton("New Sample (with Channels)")
         # self.btn_new_sample.clicked.connect(self.create_manual_sample)
@@ -443,9 +438,7 @@ class SampleListWidget(QWidget):
         self.search_pool.setPlaceholderText(tr("Search pool files..."))
         
         # Bottom Buttons
-        self.btn_auto_group.setText(tr("Auto Group Import Folder"))
         self.btn_auto_group.setToolTip(tr("Import a folder of images and automatically group them into samples"))
-        self.btn_load_pool.setText(tr("Load Images"))
         self.btn_load_pool.setToolTip(tr("Import images into the unassigned pool"))
         
         # Refresh the tree to update item tooltips if needed
@@ -763,11 +756,16 @@ class SampleListWidget(QWidget):
             status_text = tr("Measured") if scene.status == "Measured" else ""
             scene_item.setText(1, status_text)
             if scene.status == "Measured":
+                # Use role property for global styling
+                scene_item.setData(1, Qt.ItemDataRole.ForegroundRole, None) # Clear inline
+                scene_item.setData(1, Qt.ItemDataRole.UserRole + 3, "success") # Custom role for delegate
+                # For QTreeWidget items, we can't easily set properties that QSS picks up on the text itself
+                # unless we use a custom delegate. But we can set the foreground color from palette/theme.
                 palette = QApplication.palette()
-                # Use a nice green that works in both themes
-                is_dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
-                status_color = QColor("#00FF00") if is_dark else QColor("#008000")
-                scene_item.setForeground(1, status_color)
+                success_color = QColor("#27ae60") # Default green
+                if palette.color(QPalette.ColorRole.Window).lightness() < 128:
+                    success_color = QColor("#2ecc71") # Brighter green for dark theme
+                scene_item.setForeground(1, success_color)
             
             scene_item.setData(0, Qt.ItemDataRole.UserRole, scene.id)
             scene_item.setData(0, Qt.ItemDataRole.UserRole + 1, "Scene")
@@ -796,7 +794,7 @@ class SampleListWidget(QWidget):
                     btn_clear.setIconSize(QSize(16, 16))
                     btn_clear.setFixedSize(22, 22)
                     btn_clear.setToolTip(tr("Remove Image from Channel"))
-                    btn_clear.setAutoRaise(True)
+                    # btn_clear.setAutoRaise(True) # Disabled for consistent global styling
                     btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
                     btn_clear.clicked.connect(lambda _, s_id=scene.id, c_idx=i: self.clear_channel(s_id, c_idx))
                     actions_layout.addWidget(btn_clear)
@@ -807,7 +805,7 @@ class SampleListWidget(QWidget):
                 btn_delete.setIconSize(QSize(16, 16))
                 btn_delete.setFixedSize(22, 22)
                 btn_delete.setToolTip(tr("Delete Channel Slot"))
-                btn_delete.setAutoRaise(True)
+                # btn_delete.setAutoRaise(True) # Disabled for consistent global styling
                 btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn_delete.clicked.connect(lambda _, s_id=scene.id, c_idx=i: self.on_remove_channel_clicked(s_id, c_idx))
                 actions_layout.addWidget(btn_delete)
@@ -824,9 +822,10 @@ class SampleListWidget(QWidget):
                     # Empty Slot
                     ch_item.setText(0, tr("{0}: [{1}]").format(ch.channel_type, tr("Empty")))
                     palette = QApplication.palette()
-                    is_dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
-                    empty_color = QColor("#FF5555") if is_dark else QColor("#CC0000")
-                    ch_item.setForeground(0, empty_color) # Reddish for empty
+                    error_color = QColor("#e74c3c") # Default red
+                    if palette.color(QPalette.ColorRole.Window).lightness() < 128:
+                        error_color = QColor("#ff5555") # Brighter red for dark theme
+                    ch_item.setForeground(0, error_color) # Reddish for empty
                     
                     # For empty slots, we might also want to show the color indicator? 
                     # Yes, per user request (DAPI is blue even if empty)
@@ -849,24 +848,8 @@ class SampleListWidget(QWidget):
             btn_add.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             btn_add.setToolTip(tr("Add new empty channel slot"))
             btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_add.setProperty("role", "subtle")
             
-            # Professional, integrated style with theme-aware hover
-            palette = QApplication.palette()
-            mid_color = palette.color(QPalette.ColorRole.Mid).name()
-            btn_add.setStyleSheet(f"""
-                QToolButton {{
-                    border: none;
-                    background: transparent;
-                    color: {mid_color};
-                    font-size: 11px;
-                    padding: 2px 5px;
-                    border-radius: 4px;
-                }}
-                QToolButton:hover {{
-                    background-color: rgba(128, 128, 128, 0.2);
-                    color: palette(window-text);
-                }}
-            """)
             btn_add.clicked.connect(lambda _, s_id=scene.id: self.on_add_channel_clicked(s_id))
             
             widget_container = QWidget()

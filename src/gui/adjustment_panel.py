@@ -34,19 +34,16 @@ class AdjustmentPanel(QWidget):
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
         
     def setup_ui(self):
+        self.setObjectName("card")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(10)
         
         # Use a splitter for Histogram vs Controls
         from PySide6.QtWidgets import QSplitter, QApplication
-        from PySide6.QtGui import QPalette
-        palette = QApplication.palette()
-        handle_color = palette.color(QPalette.ColorRole.Mid).name()
         
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setHandleWidth(4)
-        self.splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {handle_color}; }}")
         
         # 1. Histogram (Embedded)
         self.histogram_panel = HistogramPanel(self.session)
@@ -83,13 +80,17 @@ class AdjustmentPanel(QWidget):
         self.btn_reset = QToolButton()
         self.btn_reset.setIcon(get_icon("refresh", "view-refresh"))
         self.btn_reset.setIconSize(QSize(20, 20))
-        self.btn_reset.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_reset.setText(tr("Reset"))
+        self.btn_reset.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_reset.setFixedSize(28, 28)
         self.btn_reset.setToolTip(tr("Reset brightness/contrast to default"))
-        self.btn_reset.setFixedHeight(32)
-        self.btn_reset.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.btn_reset.clicked.connect(self.reset_current_channel)
-        adjustment_vbox.addWidget(self.btn_reset)
+        
+        # Style reset button specifically for this panel if needed, but the global style might handle it
+        # Let's add a layout to center it or just add it to the vbox
+        h_reset = QHBoxLayout()
+        h_reset.addWidget(self.btn_reset)
+        h_reset.addStretch()
+        adjustment_vbox.addLayout(h_reset)
         adjustment_vbox.addStretch()
         
         self.splitter.addWidget(adjustment_widget)
@@ -104,13 +105,13 @@ class AdjustmentPanel(QWidget):
         self.lbl_min.setText(tr("Min (Black Point)"))
         self.lbl_max.setText(tr("Max (White Point)"))
         self.lbl_gamma.setText(tr("Gamma"))
-        self.btn_reset.setText(tr("Reset"))
         self.btn_reset.setToolTip(tr("Reset brightness/contrast to default"))
 
     def create_fine_control(self, label_text, min_val, max_val, init_val, callback, scale=1.0):
         layout_container = QVBoxLayout()
         layout_container.setSpacing(2)
         lbl = QLabel(label_text)
+        lbl.setProperty("role", "subtitle")
         layout_container.addWidget(lbl)
         
         slider = QSlider(Qt.Orientation.Horizontal)

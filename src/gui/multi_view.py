@@ -1,6 +1,8 @@
 import time
+import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, 
-                               QSplitter, QLabel, QApplication, QPushButton, QFrame)
+                               QSplitter, QLabel, QApplication, QPushButton, QFrame, QMenu,
+                               QListWidget, QListWidgetItem)
 from PySide6.QtCore import Qt, Signal, QSettings, QRectF, QSize, QPointF
 from PySide6.QtGui import QPalette
 import numpy as np
@@ -8,6 +10,7 @@ from typing import Dict
 
 from src.core.data_model import Session
 from src.core.renderer import Renderer
+from src.core.logger import Logger
 from src.gui.canvas_view import CanvasView
 from src.gui.sync_manager import SyncManager
 from src.gui.icon_manager import get_icon
@@ -33,13 +36,13 @@ class EmptyStateWidget(QWidget):
         
         # Title
         title = QLabel(tr("No Sample Selected"))
-        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #888888;")
+        title.setProperty("role", "title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
         # Subtitle
         subtitle = QLabel(tr("Start by creating a new project or opening an existing one."))
-        subtitle.setStyleSheet("font-size: 16px; color: #AAAAAA;")
+        subtitle.setProperty("role", "subtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
         
@@ -48,33 +51,13 @@ class EmptyStateWidget(QWidget):
         btn_layout = QVBoxLayout(btn_container)
         btn_layout.setSpacing(10)
         layout.addWidget(btn_container)
-
-        # Style for buttons
-        btn_style = """
-            QPushButton {
-                background-color: #4285F4;
-                color: white;
-                border-radius: 6px;
-                padding: 10px 24px;
-                font-size: 14px;
-                font-weight: bold;
-                border: none;
-                min-width: 200px;
-            }
-            QPushButton:hover {
-                background-color: #3b78e7;
-            }
-            QPushButton:pressed {
-                background-color: #3367d6;
-            }
-        """
         
         # New Project
         self.btn_new = QPushButton(tr("New Project"))
         self.btn_new.setIcon(get_icon("new", "document-new"))
         self.btn_new.setIconSize(QSize(24, 24))
         self.btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_new.setStyleSheet(btn_style)
+        self.btn_new.setProperty("role", "hero")
         btn_layout.addWidget(self.btn_new)
 
         # Open Project
@@ -82,7 +65,7 @@ class EmptyStateWidget(QWidget):
         self.btn_open.setIcon(get_icon("open", "document-open"))
         self.btn_open.setIconSize(QSize(24, 24))
         self.btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_open.setStyleSheet(btn_style)
+        self.btn_open.setProperty("role", "hero")
         btn_layout.addWidget(self.btn_open)
 
         # Import Images (Secondary)
@@ -90,7 +73,7 @@ class EmptyStateWidget(QWidget):
         self.btn_import.setIcon(get_icon("import", "document-import")) # Changed icon key to match action
         self.btn_import.setIconSize(QSize(24, 24))
         self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_import.setStyleSheet(btn_style)
+        self.btn_import.setProperty("role", "hero")
         btn_layout.addWidget(self.btn_import)
         
         # Import Folder
@@ -98,7 +81,7 @@ class EmptyStateWidget(QWidget):
         self.btn_import_folder.setIcon(get_icon("folder", "folder-open"))
         self.btn_import_folder.setIconSize(QSize(24, 24))
         self.btn_import_folder.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_import_folder.setStyleSheet(btn_style)
+        self.btn_import_folder.setProperty("role", "hero")
         btn_layout.addWidget(self.btn_import_folder)
         
         # Import Merge
@@ -106,45 +89,76 @@ class EmptyStateWidget(QWidget):
         self.btn_import_merge.setIcon(get_icon("import", "document-import"))
         self.btn_import_merge.setIconSize(QSize(24, 24))
         self.btn_import_merge.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_import_merge.setStyleSheet(btn_style)
+        self.btn_import_merge.setProperty("role", "hero")
         btn_layout.addWidget(self.btn_import_merge)
         
-        # --- Recent Projects Section ---
+        # Recent Projects Button
+        self.btn_recent = QPushButton(tr("Recent Projects"))
+        self.btn_recent.setIcon(get_icon("open", "document-open-recent"))
+        self.btn_recent.setIconSize(QSize(24, 24))
+        self.btn_recent.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_recent.setProperty("role", "hero")
+        btn_layout.addWidget(self.btn_recent)
+        
+        # Recent Projects List Section (Keep for quick access)
         self.lbl_recent = QLabel(tr("Recent Projects:"))
-        self.lbl_recent.setStyleSheet("font-size: 14px; font-weight: bold; color: #666666; margin-top: 20px;")
+        self.lbl_recent.setProperty("role", "title")
         self.lbl_recent.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_recent.hide() # Hidden by default
         btn_layout.addWidget(self.lbl_recent)
         
-        from PySide6.QtWidgets import QListWidget, QListWidgetItem
         self.list_recent = QListWidget()
-        self.list_recent.setStyleSheet("""
-            QListWidget {
-                background-color: transparent;
-                border: 1px solid #DDDDDD;
-                border-radius: 4px;
-                color: #555555;
-            }
-            QListWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #EEEEEE;
-            }
-            QListWidget::item:hover {
-                background-color: #F0F8FF;
-                color: #4285F4;
-            }
-        """)
+        self.list_recent.setProperty("role", "recent")
         self.list_recent.setFixedHeight(150)
         self.list_recent.hide()
-        self.list_recent.itemClicked.connect(self._on_recent_clicked)
+        # Connected in MultiViewWidget instead
         btn_layout.addWidget(self.list_recent)
         
         self._load_recent_projects()
         
+        # Connect button to show menu
+        self.btn_recent.clicked.connect(self._show_recent_menu)
+        
+    def _show_recent_menu(self):
+        """Shows the recent projects menu at the button location."""
+        menu = QMenu(self)
+        
+        settings = QSettings("FluoQuantPro", "AppSettings")
+        recent = settings.value("recentProjects", [])
+        if not isinstance(recent, list):
+            recent = [recent] if recent else []
+            
+        if not recent:
+            action = menu.addAction(tr("No Recent Projects"))
+            action.setEnabled(False)
+        else:
+            for path in recent:
+                if os.path.exists(path):
+                    action = menu.addAction(os.path.basename(path))
+                    action.setData(path)
+                    action.setToolTip(path)
+                    # Correctly emit the signal via parent (MultiViewWidget)
+                    action.triggered.connect(lambda checked=False, p=path: self.parent().open_recent_requested.emit(p))
+            
+            menu.addSeparator()
+            clear_action = menu.addAction(tr("Clear Recent Projects"))
+            clear_action.triggered.connect(self._clear_recent)
+            
+        # Show menu below the button
+        menu.exec(self.btn_recent.mapToGlobal(self.btn_recent.rect().bottomLeft()))
+
+    def _clear_recent(self):
+        """Clears recent projects list and refreshes UI."""
+        settings = QSettings("FluoQuantPro", "AppSettings")
+        settings.setValue("recentProjects", [])
+        self._load_recent_projects()
+        # Also notify main window to update its menu if possible
+        # But for now, just refreshing local state is enough
+
     def _load_recent_projects(self):
         settings = QSettings("FluoQuantPro", "AppSettings")
         # Load as list of strings
-        recent = settings.value("recent_projects", [])
+        recent = settings.value("recentProjects", [])
         # Ensure it's a list (QSettings can return single string if only one item)
         if not isinstance(recent, list):
             recent = [recent] if recent else []
@@ -154,26 +168,13 @@ class EmptyStateWidget(QWidget):
             self.list_recent.show()
             self.list_recent.clear()
             for path in recent:
-                if path and isinstance(path, str):
+                if path and isinstance(path, str) and os.path.exists(path):
                     item = QListWidgetItem(path)
                     item.setToolTip(path)
                     self.list_recent.addItem(item)
         else:
             self.lbl_recent.hide()
             self.list_recent.hide()
-            
-    def _on_recent_clicked(self, item):
-        path = item.text()
-        if path:
-            # We need to signal to open this project
-            # But the signal 'open_project_requested' takes no args usually?
-            # Wait, MultiViewWidget.open_project_requested is defined as Signal()
-            # We need a new signal or modify the existing one.
-            # Let's add a custom signal or use a hack.
-            # Actually, let's modify MultiViewWidget to handle this.
-            # For now, we emit a signal that MultiViewWidget can catch.
-            # But EmptyStateWidget is a child.
-            pass
 
 class MultiViewWidget(QWidget):
     """
@@ -227,14 +228,7 @@ class MultiViewWidget(QWidget):
         # Loading Overlay (initially hidden)
         self.loading_overlay = QLabel("Loading...", self)
         self.loading_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        palette = QApplication.palette()
-        bg_color = palette.color(QPalette.ColorRole.Window).name()
-        text_color = palette.color(QPalette.ColorRole.WindowText).name()
-        
-        # Use semi-transparent background derived from theme
-        self.loading_overlay.setStyleSheet(f"background-color: rgba(0, 0, 0, 180); color: white; font-size: 24px; font-weight: bold;")
-        # Keep loading overlay dark/bold for visibility regardless of theme, but maybe adjust border?
+        self.loading_overlay.setProperty("role", "overlay")
         self.loading_overlay.hide()
         
         # Container for views
@@ -264,6 +258,7 @@ class MultiViewWidget(QWidget):
     def update_view_state(self):
         """Updates visibility of empty state vs view container."""
         if not self.session.channels:
+            self.empty_state._load_recent_projects() # Refresh recent list when shown
             self.empty_state.show()
             self.view_container.hide()
         else:
@@ -308,7 +303,6 @@ class MultiViewWidget(QWidget):
             # Connect mouse move for status bar
             # We need to capture i for the lambda
             view.mouse_moved.connect(lambda x, y, idx=i: self.on_mouse_moved(x, y, idx))
-            view.annotation_created.connect(self.annotation_created.emit)
             self.views[view_id] = view
             self.sync_manager.add_view(view)
             
@@ -394,7 +388,7 @@ class MultiViewWidget(QWidget):
     def fit_views(self):
         """Fits all views to their content."""
         for view in self.views.values():
-            view.fitInView(view.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            view.fitInView(view.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def render_all(self, preview=False):
         """Renders content for all views. If preview=True, downsamples for performance."""
@@ -588,10 +582,6 @@ class MultiViewWidget(QWidget):
         v_splitter = QSplitter(Qt.Orientation.Vertical)
         v_splitter.setHandleWidth(4)
         
-        palette = QApplication.palette()
-        handle_color = palette.color(QPalette.ColorRole.Mid).name()
-        v_splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {handle_color}; }}")
-        
         # --- NEW LAYOUT LOGIC (2-Column Grid with special Merge handling) ---
         # Rule: 
         # N=1: Ch1 / Merge (Vertical)
@@ -640,7 +630,6 @@ class MultiViewWidget(QWidget):
             for r in range(rows):
                 h_splitter = QSplitter(Qt.Orientation.Horizontal)
                 h_splitter.setHandleWidth(4)
-                h_splitter.setStyleSheet(f"QSplitter::handle {{ background-color: {handle_color}; }}")
                 
                 # Check if this is the last row and it has only 1 item (Center case)
                 items_in_row = min(cols, len(views_to_layout) - r * cols)
@@ -733,15 +722,10 @@ class MultiViewWidget(QWidget):
         for view in self.views.values():
             view.set_annotation_mode(mode)
             
-    def set_annotation_fixed_size_mode(self, enabled):
-        """Sets the annotation fixed size mode for all views."""
-        for view in self.views.values():
-            view.annotation_fixed_size_mode = enabled
-
     def update_all_previews(self):
         """Force update of all views (e.g. during tool usage)."""
         for view in self.views.values():
-            view.scene.update()
+            view.scene().update()
 
     def update_scale_bar(self, settings):
         """Propagate scale bar settings to all views."""
@@ -759,9 +743,19 @@ class MultiViewWidget(QWidget):
             # should remain connected to the main window.
 
     def sync_annotation(self, annotation):
-        """Updates a single annotation across all views."""
+        """Updates a single annotation across all views with batch rendering optimization."""
+        t_start = time.time()
+        # Update all views without immediate repaint
         for view in self.views.values():
-            view.update_single_annotation(annotation)
+            view.update_single_annotation(annotation, repaint=False)
+        
+        # Trigger a single update for each view after all processing is done
+        for view in self.views.values():
+            view.scene().update()
+        
+        dt = time.time() - t_start
+        if getattr(annotation, 'is_dragging', False):
+            Logger.debug(f"[Performance] Multi-channel sync for {annotation.id} took {dt*1000:.2f}ms (Batch Rendered)")
 
     def connect_signals(self, main_window):
         """Connect view signals to main window slots."""

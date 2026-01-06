@@ -136,11 +136,10 @@ class ImportDialog(QDialog):
         self.btn_add_files = QToolButton()
         self.btn_add_files.setIcon(get_icon("add", "list-add"))
         self.btn_add_files.setIconSize(QSize(20, 20))
-        self.btn_add_files.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_add_files.setText(tr(" Add Files..."))
+        self.btn_add_files.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_add_files.setFixedSize(28, 28)
         self.btn_add_files.setToolTip(tr("Select image files to import"))
         self.btn_add_files.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_add_files.setFixedHeight(32)
         self.btn_add_files.clicked.connect(self.browse_files)
         top_layout.addWidget(self.btn_add_files)
         top_layout.addStretch()
@@ -156,18 +155,14 @@ class ImportDialog(QDialog):
         
         # Bottom: Dialog Buttons
         btn_layout = QHBoxLayout()
-        self.btn_cancel = QToolButton()
-        self.btn_cancel.setText(tr(" Cancel"))
+        self.btn_cancel = QPushButton(tr("Cancel"))
         self.btn_cancel.setIcon(get_icon("cancel", "process-stop"))
-        self.btn_cancel.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.btn_cancel.setFixedSize(100, 32)
         self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cancel.clicked.connect(self.reject)
         
-        self.btn_import = QToolButton()
-        self.btn_import.setText(tr(" Import"))
+        self.btn_import = QPushButton(tr("Import"))
         self.btn_import.setIcon(get_icon("import", "document-import"))
-        self.btn_import.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.btn_import.setFixedSize(100, 32)
         self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_import.setObjectName("action_btn") # For special styling
@@ -180,11 +175,10 @@ class ImportDialog(QDialog):
 
     def retranslate_ui(self):
         self.setWindowTitle(tr("Import Images"))
-        self.btn_add_files.setText(tr(" Add Files..."))
         self.btn_add_files.setToolTip(tr("Select image files to import"))
         self.table.setHorizontalHeaderLabels([tr("Filename"), tr("Path"), tr("Channel Type"), tr("Color")])
-        self.btn_cancel.setText(tr(" Cancel"))
-        self.btn_import.setText(tr(" Import"))
+        self.btn_cancel.setText(tr("Cancel"))
+        self.btn_import.setText(tr("Import"))
         
     def browse_files(self):
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -250,23 +244,9 @@ class ImportDialog(QDialog):
 
     def set_button_color(self, button, color_hex):
         button.setText(color_hex)
-        # Determine text color based on background brightness for readability
-        bg_color = QColor(color_hex)
-        text_color = "black" if bg_color.lightness() > 128 else "white"
-        
-        button.setStyleSheet(f"""
-            QToolButton {{
-                background-color: {color_hex};
-                color: {text_color};
-                border: 1px solid #555;
-                border-radius: 2px;
-                font-weight: bold;
-                font-family: monospace;
-            }}
-            QToolButton:hover {{
-                border: 1px solid white;
-            }}
-        """)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setProperty("role", "color_picker")
+        button.setStyleSheet(f"background-color: {color_hex};")
         button.setProperty("color_hex", color_hex) # Store data
 
     def pick_color(self, row):

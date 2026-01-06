@@ -2,6 +2,7 @@ import numpy as np
 import tifffile
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict
 
@@ -51,6 +52,7 @@ class GraphicAnnotation:
     export_only: bool = False # If true, only shows up in export
     style: str = "solid" # solid, dashed, dotted
     selectable: bool = True # Whether the annotation can be selected/edited
+    is_dragging: bool = False # Temporary state for performance optimization
     properties: Dict = field(default_factory=dict) # Custom properties (arrow_head_size, etc.)
 
 # Biological Fluorescence Channel Mappings Reference:
@@ -405,6 +407,17 @@ class Session(QObject):
         self.annotations.clear() # USER REQUEST: Ensure annotations are cleared
         self.project_changed.emit()
 
+    def load_project(self, folder: str):
+        """
+        USER REQUEST: Compatibility method for loading projects.
+        This allows MainWindow to call session.load_project if needed,
+        though MainWindow.load_project is the primary entry point.
+        """
+        # Usually we would delegate to a project loader here
+        # For now, this is a placeholder to prevent crashes if called
+        print(f"[Session] Request to load project from: {folder}")
+        pass
+
     def add_existing_channel(self, channel: ImageChannel):
         """
         Adds an already instantiated ImageChannel object to the session.
@@ -442,6 +455,59 @@ class Session(QObject):
             except Exception as e:
                 print(f"Error restoring annotation: {e}")
         self.project_changed.emit()
+
+    def sync_existing_rois_to_annotations(self):
+        """
+        USER REQUEST: Converts all current ROIs into graphic annotations 
+        if they don't already have one. This is triggered when 'Sync ROIs as Annotations'
+        is toggled ON in the ROI Toolbox.
+        """
+        existing_roi_ids = {ann.roi_id for ann in self.annotations if ann.roi_id}
+        
+        added_count = 0
+        for roi in self.roi_manager.get_all_rois():
+            if roi.id in existing_roi_ids:
+                continue
+                
+            # Map ROI type to GraphicAnnotation type
+            ann_type = roi.roi_type
+            if ann_type == "rectangle":
+                ann_type = "rect"
+            elif ann_type == "point":
+                ann_type = "circle"
+            # polygon, line, arrow, ellipse usually match or are handled by fallback
+                
+            # Convert QPointF list to List[Tuple[float, float]]
+            points = [(p.x(), p.y()) for p in roi.points]
+            
+            # Fallback for ROI types that might not have points list populated (e.g. Magic Wand)
+            if not points and not roi.path.isEmpty():
+                rect = roi.path.boundingRect()
+                if ann_type in ["rect", "rectangle", "ellipse"]:
+                    points = [(rect.left(), rect.top()), (rect.right(), rect.bottom())]
+                else:
+                    # For complex paths without points, we'd need path-to-points conversion
+                    # For now, use bounds as a basic placeholder
+                    points = [(rect.left(), rect.top()), (rect.right(), rect.bottom())]
+
+            if not points:
+                continue
+
+            ann = GraphicAnnotation(
+                id=str(uuid.uuid4()),
+                type=ann_type,
+                points=points,
+                color=roi.color.name(),
+                thickness=2,
+                roi_id=roi.id,
+                selectable=True
+            )
+            self.annotations.append(ann)
+            added_count += 1
+            
+        if added_count > 0:
+            print(f"[Session] Synced {added_count} existing ROIs to annotations.")
+            self.project_changed.emit()
 
     def add_channel(self, file_path: str, color: str = "#FFFFFF", name: Optional[str] = None, data: Optional[np.ndarray] = None) -> ImageChannel:
         """

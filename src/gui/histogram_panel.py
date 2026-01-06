@@ -63,21 +63,20 @@ class HistogramPanel(QWidget):
         self.btn_log_scale.setIcon(get_icon("log", "format-list-unordered"))
         self.btn_log_scale.setCheckable(True)
         self.btn_log_scale.setChecked(True)
-        self.btn_log_scale.setText(tr("Log"))
         self.btn_log_scale.setToolTip(tr("Toggle Log Scale"))
-        self.btn_log_scale.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_log_scale.setFixedHeight(24)
+        self.btn_log_scale.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_log_scale.setIconSize(QSize(20, 20))
+        self.btn_log_scale.setFixedSize(28, 28)
         self.btn_log_scale.toggled.connect(self.histogram.set_log_scale)
         h_hist_ctrl.addWidget(self.btn_log_scale)
         
         self.btn_auto = QToolButton()
         self.btn_auto.setIcon(get_icon("auto", "view-fullscreen"))
-        self.btn_auto.setIconSize(QSize(16, 16))
-        self.btn_auto.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_auto.setText(tr("Auto"))
+        self.btn_auto.setIconSize(QSize(20, 20))
+        self.btn_auto.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_auto.setFixedSize(28, 28)
         self.btn_auto.setToolTip(tr("Auto-adjust Min/Max based on 0.1% - 99.9% percentiles"))
         self.btn_auto.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_auto.setFixedHeight(24)
         self.btn_auto.clicked.connect(self.apply_auto_contrast)
         h_hist_ctrl.addWidget(self.btn_auto)
         
@@ -86,9 +85,7 @@ class HistogramPanel(QWidget):
 
     def retranslate_ui(self):
         self.lbl_active_channel.setText(tr("Active Channel:"))
-        self.btn_log_scale.setText(tr("Log"))
         self.btn_log_scale.setToolTip(tr("Toggle Log Scale"))
-        self.btn_auto.setText(tr("Auto Contrast (Max)"))
         self.btn_auto.setToolTip(tr("Auto-adjust Min/Max based on 0.1% - 99.9% percentiles"))
         self.refresh_channel_list()
 

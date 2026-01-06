@@ -76,17 +76,32 @@ class MeasureEngine:
         Returns:
             Dictionary of stats.
         """
+        from src.core.logger import Logger
+        
+        # --- Performance Optimization: Skip during drag ---
+        if getattr(roi, 'is_dragging', False):
+            Logger.debug(f"[MeasureEngine] SKIPPING measure_roi for ROI {roi.id} (is_dragging=True)")
+            return {'Area': 0.0} # Return minimal data
+
+        Logger.debug(f"[MeasureEngine] measure_roi for ROI {roi.id} ({roi.label})")
+        
         if not channels:
+            Logger.warning("[MeasureEngine] No channels provided for measurement")
             return {}
             
         # 1. Rasterize ROI to Mask
         # Assume all channels have same shape
         ref_shape = channels[0].shape
-        mask = qpath_to_mask(roi.path, ref_shape)
+        try:
+            mask = qpath_to_mask(roi.path, ref_shape)
+        except Exception as e:
+            Logger.error(f"[MeasureEngine] Failed to rasterize mask for ROI {roi.id}: {e}")
+            return {'Area': 0.0}
         
         # Count pixels
         pixel_count = np.sum(mask)
         if pixel_count == 0:
+            Logger.debug(f"[MeasureEngine] ROI {roi.id} has 0 pixels")
             return {'Area': 0.0}
             
         stats = {
@@ -97,29 +112,37 @@ class MeasureEngine:
         # 2. Prepare Background Mask (if needed)
         bg_mask = None
         if bg_method == 'local_ring':
-            bg_mask = self._create_ring_mask(mask, bg_ring_width)
+            try:
+                bg_mask = self._create_ring_mask(mask, bg_ring_width)
+            except Exception as e:
+                Logger.error(f"[MeasureEngine] Failed to create ring mask: {e}")
             
         # 3. Iterate channels
         for i, ch in enumerate(channels):
             # Extract ROI pixels (Raw Data)
             # Ensure grayscale for RGB inputs to get consistent intensity
-            data = ColocalizationEngine._ensure_grayscale(ch.raw_data)
+            try:
+                data = ColocalizationEngine._ensure_grayscale(ch.raw_data)
+            except Exception as e:
+                Logger.error(f"[MeasureEngine] Failed to ensure grayscale for channel {ch.name}: {e}")
+                continue
             
             # Check if mask shape matches data shape (handle RGB vs Gray mismatch)
             # Use a local mask variable to avoid polluting the loop or causing issues
             current_mask = mask
             if current_mask.shape != data.shape:
+                Logger.debug(f"[MeasureEngine] Mask shape {current_mask.shape} != data shape {data.shape}, regenerating...")
                 # Regenerate mask for this specific data shape
                 try:
                     current_mask = qpath_to_mask(roi.path, data.shape)
                 except Exception as e:
-                    print(f"Error regenerating mask for shape {data.shape}: {e}")
+                    Logger.error(f"[MeasureEngine] Error regenerating mask for shape {data.shape}: {e}")
                     # Fallback: if regeneration fails, we might crash next line, but better to log
             
             try:
                 roi_pixels = data[current_mask]
             except IndexError:
-                 print(f"IndexError in measure_roi: data {data.shape}, mask {current_mask.shape}")
+                 Logger.error(f"[MeasureEngine] IndexError: data {data.shape}, mask {current_mask.shape}")
                  # Last resort fallback: resize mask (slow/inaccurate but prevents crash)
                  if current_mask.shape != data.shape:
                      import cv2
@@ -129,10 +152,15 @@ class MeasureEngine:
                      current_mask = m_resized > 127
                      roi_pixels = data[current_mask]
                  else:
-                     raise
+                     continue
+            except Exception as e:
+                 Logger.error(f"[MeasureEngine] Unexpected error during ROI pixel extraction: {e}")
+                 continue
 
+            ch_name = ch.name if ch.name else f"Ch{i+1}"
+            
             if roi_pixels.size == 0:
-                print(f"Warning: Empty ROI pixels for channel {ch_name}")
+                Logger.warning(f"[MeasureEngine] Empty ROI pixels for channel {ch_name}")
                 stats[f"{ch_name}_Mean"] = 0.0
                 stats[f"{ch_name}_IntDen"] = 0.0
                 stats[f"{ch_name}_Min"] = 0.0
@@ -140,8 +168,6 @@ class MeasureEngine:
                 stats[f"{ch_name}_BgMean"] = 0.0
                 stats[f"{ch_name}_CorrectedMean"] = 0.0
                 continue
-            
-            ch_name = ch.name if ch.name else f"Ch{i+1}"
             
             # Simple stats
             stats[f"{ch_name}_Mean"] = float(np.mean(roi_pixels))
@@ -156,8 +182,8 @@ class MeasureEngine:
                      bg_pixels = data[bg_mask]
                      if bg_pixels.size > 0:
                          bg_val = np.mean(bg_pixels)
-                except:
-                     pass
+                except Exception as e:
+                     Logger.debug(f"[MeasureEngine] Background calculation failed for {ch_name}: {e}")
             
             stats[f"{ch_name}_BgMean"] = float(bg_val)
             stats[f"{ch_name}_CorrectedMean"] = float(stats[f"{ch_name}_Mean"] - bg_val)

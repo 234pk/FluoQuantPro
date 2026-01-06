@@ -10,3 +10,30 @@ logs/
 .vscode/
 .idea/
 *.log
+
+# Data and large files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.h5
+*.npy
+*.npz
+*.csv
+*.xlsx
+*.tif
+*.tiff
+
+# Environment
+.venv/
+venv/
+env/
+bin/
+lib/
+share/
+Include/
+Scripts/
+
+# OS files
+.DS_Store
+Thumbs.db

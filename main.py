@@ -40,6 +40,7 @@ from src.gui.icon_manager import IconManager, get_icon
 from src.core.language_manager import LanguageManager, tr
 
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QPointF
 
 import os
 import sys
@@ -259,69 +260,26 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QTabWidget, QStyle
         self.control_tabs = QTabWidget()
         # USER REQUEST: Use Corner Widgets for Tab Navigation (Previous/Next)
-        # Revert QSS to standard for tabs, but style the corner buttons
-        self.control_tabs.setUsesScrollButtons(True) # Enable scrolling for shrinking, but hide buttons via CSS
+        self.control_tabs.setUsesScrollButtons(True) # Enable scrolling for shrinking
         Logger.debug("[Main] Control Tabs configured to allow scrolling (shrinkable)")
-        self.control_tabs.setStyleSheet("""
-            QTabWidget::pane { border-top: 1px solid #C2C7CB; }
-            QTabBar::tab {
-                background: #F0F0F0;
-                border: 1px solid #C4C4C3;
-                padding: 1px 2px; /* Extremely compressed padding */
-                min-width: 1px; /* Allow shrinking to almost nothing */
-                border-bottom: none;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-                font-size: 8pt; /* Tiny font */
-                margin-right: 1px;
-                height: 18px; /* Force small height */
-            }
-            QTabBar::tab:selected {
-                background: #FFFFFF;
-                border-bottom: 2px solid #4285F4;
-                font-weight: bold;
-                color: #4285F4;
-            }
-        """)
 
         # Create Navigation Buttons
         self.btn_tab_prev = QToolButton(self.control_tabs)
+        self.btn_tab_prev.setObjectName("nav_btn")
         # Use Standard Icon to ensure visibility (Red Circle fix)
         self.btn_tab_prev.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowLeft)) 
         self.btn_tab_prev.setToolTip(tr("Previous Tab"))
-        # Adaptive: Remove fixed size to allow shrinking if needed, but provide reasonable default via style
         self.btn_tab_prev.setIconSize(QSize(12, 12)) 
-        self.btn_tab_prev.setAutoRaise(True)
         self.btn_tab_prev.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_tab_prev.setStyleSheet("""
-            QToolButton {
-                border: 1px solid #D0D0D0;
-                border-radius: 3px;
-                background-color: #FFFFFF;
-                margin: 1px;
-                padding: 2px; /* Add padding instead of fixed size */
-            }
-            QToolButton:hover {
-                background-color: #E8F0FE;
-                border: 1px solid #4285F4;
-                border-radius: 11px; /* Circular hover effect */
-            }
-            QToolButton:pressed {
-                background-color: #D2E3FC;
-                border-style: inset;
-            }
-        """)
         self.btn_tab_prev.clicked.connect(self._on_prev_tab_clicked)
 
         self.btn_tab_next = QToolButton(self.control_tabs)
+        self.btn_tab_next.setObjectName("nav_btn")
         # Use Standard Icon for consistency
         self.btn_tab_next.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
         self.btn_tab_next.setToolTip(tr("Next Tab"))
-        # Adaptive: Remove fixed size
         self.btn_tab_next.setIconSize(QSize(12, 12)) 
-        self.btn_tab_next.setAutoRaise(True)
         self.btn_tab_next.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_tab_next.setStyleSheet(self.btn_tab_prev.styleSheet())
         self.btn_tab_next.clicked.connect(self._on_next_tab_clicked)
 
         # Set as Corner Widgets
@@ -384,9 +342,6 @@ class MainWindow(QMainWindow):
         # Connect OverlayPanel to session changes
         self.session.data_changed.connect(self.annotation_panel.refresh_from_session)
         self.session.project_changed.connect(self.annotation_panel.refresh_from_session)
-        
-        # Connect Fixed Size Signal from OverlayPanel
-        self.annotation_panel.annotation_fixed_size_toggled.connect(self.on_annotation_fixed_size_toggled)
         
         # Wrap in ScrollArea for visibility on small screens (Toolbox)
         toolbox_scroll = QScrollArea()
@@ -629,6 +584,13 @@ class MainWindow(QMainWindow):
         if not self.main_toolbar:
             self.main_toolbar = self.addToolBar(tr("Main Toolbar"))
             self.main_toolbar.setObjectName("MainToolBar")
+        
+        # UI OPTIMIZATION: Icon only, fixed size, and move to left
+        self.main_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.main_toolbar.setIconSize(QSize(20, 20))
+        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.main_toolbar)
+        self.main_toolbar.setMovable(False)
+        self.main_toolbar.setFloatable(False)
             
         # Add Undo/Redo/Export to Toolbar
         # Check if already added to avoid duplicates
@@ -774,47 +736,22 @@ class MainWindow(QMainWindow):
 
             # Map annotation mode to ROI tools (The "Nuclear Option")
             tool_to_use = None
-            ann_fixed = False
-            try:
-                if hasattr(self, 'annotation_panel') and hasattr(self.annotation_panel, 'chk_ann_fixed_size'):
-                    ann_fixed = self.annotation_panel.chk_ann_fixed_size.isChecked()
-                elif hasattr(self, 'roi_toolbox') and hasattr(self.roi_toolbox, 'chk_fixed_size'):
-                    ann_fixed = self.roi_toolbox.chk_fixed_size.isChecked()
-            except Exception:
-                ann_fixed = False
             
             if mode == 'rect':
                 tool_to_use = self.rect_tool
-                # Sync fixed size state
-                if hasattr(self, 'rect_tool') and hasattr(self.rect_tool, 'set_fixed_size_mode'):
-                    self.rect_tool.set_fixed_size_mode(ann_fixed)
-                    print(f"DEBUG: [Main] Syncing RectTool fixed_size={ann_fixed} (Annotation Panel)")
             elif mode == 'ellipse' or mode == 'circle':
                  tool_to_use = self.ellipse_tool
-                 # Sync fixed size state
-                 if hasattr(self, 'ellipse_tool') and hasattr(self.ellipse_tool, 'set_fixed_size_mode'):
-                     self.ellipse_tool.set_fixed_size_mode(ann_fixed)
-                     print(f"DEBUG: [Main] Syncing EllipseTool fixed_size={ann_fixed} (Annotation Panel)")
             elif mode == 'polygon':
                  tool_to_use = self.polygon_tool
-                 # Sync fixed size state
-                 if hasattr(self, 'polygon_tool') and hasattr(self.polygon_tool, 'set_fixed_size_mode'):
-                     self.polygon_tool.set_fixed_size_mode(ann_fixed)
-                     print(f"DEBUG: [Main] Syncing PolygonTool fixed_size={ann_fixed} (Annotation Panel)")
             elif mode == 'arrow' or mode == 'line':
                  # Use LineScanTool for lines and arrows
                  if hasattr(self, 'line_scan_tool'):
                      tool_to_use = self.line_scan_tool
-                     # Sync fixed size state
-                     if hasattr(self.line_scan_tool, 'set_fixed_size_mode'):
-                         self.line_scan_tool.set_fixed_size_mode(ann_fixed)
-                         print(f"DEBUG: [Main] Syncing LineScanTool fixed_size={ann_fixed} (Annotation Panel)")
                  else:
                      print("ERROR: [Main] line_scan_tool not found!")
             elif mode == 'text':
                  # Fallback to TextTool for text (no ROI equivalent)
                  tool_to_use = self.text_tool
-                 # self.text_tool.set_annotation_type('text') # TextTool is only for text now
             
             elif mode == 'batch_select':
                  # Use BatchSelectionTool
@@ -930,37 +867,26 @@ class MainWindow(QMainWindow):
             
             # Add to annotations
             
-            # User Request: "Only one-way conversion from ROI to Annotation"
-            # Policy: 
-            # - Annotation Tool (Pending Mode) -> Pure Annotation -> Remove temporary ROI.
-            # - ROI Tool -> ROI. If Sync is ON -> ROI + Annotation (Dual).
-            
-            keep_roi = False # Always remove ROI for Annotation Tools
-            
-            if keep_roi:
-                 ann.roi_id = roi.id
-            else:
-                 ann.roi_id = None # Pure annotation
+            # 【核心修复】避免重影：隐藏原始 ROI 并建立关联，而不是直接删除
+            # 这样可以保持 ROI 数据，但在 Canvas 上只显示 Annotation
+            roi.visible = False
+            ann.roi_id = roi.id
+            ann.roi = roi # 建立内存中的直接引用 (AnnotationGraphicsItem 会用到)
             
             self.session.annotations.append(ann)
             self.annotation_panel.update_annotation_list()
             self.multi_view.set_annotations(self.session.annotations)
             
-            if not keep_roi:
-                # Remove the temporary ROI used for drawing
-                QTimer.singleShot(0, lambda: self.session.roi_manager.remove_roi(roi.id))
+            # 触发 ROI 状态更新信号，确保 Canvas 刷新 (RoiGraphicsItem 会根据 visible 隐藏)
+            self.session.roi_manager.roi_updated.emit(roi.id)
             
-            # Reset pending mode? 
-            # If we want continuous drawing, keep it. 
-            # But the tool button might stay checked.
-            # Let's keep it for now.
             return
 
         if getattr(self, '_suppress_roi_annotation_sync', False):
             return
 
         # 2. Normal ROI Sync (if enabled)
-        if self.annotation_panel.chk_sync_rois.isChecked():
+        if self.roi_toolbox.chk_sync_rois.isChecked():
             # Convert ROI points to annotation points
             points = [(p.x(), p.y()) for p in roi.points]
             if not points and roi.line_points:
@@ -971,8 +897,17 @@ class MainWindow(QMainWindow):
             ann_type = 'roi_ref'
             if roi.roi_type == 'rectangle': ann_type = 'rect'
             elif roi.roi_type == 'ellipse': ann_type = 'ellipse'
-            elif roi.roi_type == 'line_scan': ann_type = 'line'
+            elif roi.roi_type == 'line_scan' or roi.roi_type == 'line': ann_type = 'line'
             elif roi.roi_type == 'polygon': ann_type = 'polygon'
+            elif roi.roi_type == 'arrow': ann_type = 'arrow'
+            elif roi.roi_type == 'point': ann_type = 'circle' # Points are circles in annotations
+            elif roi.roi_type == 'circle': ann_type = 'circle'
+            
+            # Special handling for points to ensure they have a default size
+            if roi.roi_type == 'point' and len(points) == 1:
+                # Add a second point to define a small radius
+                p1 = points[0]
+                points = [p1, (p1[0] + 5, p1[1] + 5)]
             
             ann = GraphicAnnotation(
                 id=f"ann_{roi.id}",
@@ -982,8 +917,15 @@ class MainWindow(QMainWindow):
                 thickness=2,
                 roi_id=roi.id
             )
+            ann.roi = roi # 【核心修复】建立内存引用，确保 AnnotationGraphicsItem 能访问 ROI 的 display_style
+            
+            # Transfer properties if any
+            if hasattr(roi, 'properties'):
+                ann.properties.update(roi.properties)
+            
             self.session.annotations.append(ann)
             self.annotation_panel.update_annotation_list()
+            self.multi_view.set_annotations(self.session.annotations)
         
     def on_roi_removed(self, roi_id):
         """Remove linked annotation if ROI is removed."""
@@ -991,18 +933,47 @@ class MainWindow(QMainWindow):
         self.annotation_panel.update_annotation_list()
         self.multi_view.update_all_previews()
 
-    def on_roi_updated(self, roi):
+    def on_roi_updated(self, roi_or_id):
         """Update linked annotation if ROI is updated."""
+        # 修复：区分传入的是对象还是 ID 字符串
+        if isinstance(roi_or_id, str):
+            roi_id = roi_or_id
+            roi = self.session.roi_manager.get_roi(roi_id)
+            if not roi:
+                return # 没找到，忽略
+        else:
+            roi = roi_or_id # 假设它是对象
+            
         if getattr(self, '_suppress_roi_annotation_sync', False):
              return
              
         for ann in self.session.annotations:
             if ann.roi_id == roi.id:
+                # 【核心修复】确保内存引用始终有效
+                ann.roi = roi 
+                
                 # Update geometry
-                ann.points = [(p.x(), p.y()) for p in roi.points]
-                if not ann.points and roi.line_points:
+                # 修复循环更新：检查坐标误差
+                new_points = [(p.x(), p.y()) for p in roi.points]
+                if not new_points and roi.line_points:
                     p1, p2 = roi.line_points
-                    ann.points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
+                    new_points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
+                
+                # 计算差异
+                has_changed = False
+                if len(ann.points) != len(new_points):
+                    has_changed = True
+                else:
+                    for p1, p2 in zip(ann.points, new_points):
+                        if abs(p1[0] - p2[0]) > 0.1 or abs(p1[1] - p2[1]) > 0.1:
+                            has_changed = True
+                            break
+                
+                if not has_changed:
+                    # 坐标未变，无需触发后续更新循环
+                    continue
+                    
+                ann.points = new_points
                 
                 # Update color
                 ann.color = roi.color.name()
@@ -1011,10 +982,21 @@ class MainWindow(QMainWindow):
                 ann_type = 'roi_ref'
                 if roi.roi_type == 'rectangle': ann_type = 'rect'
                 elif roi.roi_type == 'ellipse': ann_type = 'ellipse'
-                elif roi.roi_type == 'line_scan': ann_type = 'line'
+                elif roi.roi_type == 'line_scan' or roi.roi_type == 'line': ann_type = 'line'
                 elif roi.roi_type == 'polygon': ann_type = 'polygon'
                 elif roi.roi_type == 'arrow': ann_type = 'arrow' # Support arrow
+                elif roi.roi_type == 'point': ann_type = 'circle'
+                elif roi.roi_type == 'circle': ann_type = 'circle'
                 ann.type = ann_type
+                
+                # Special handling for points
+                if roi.roi_type == 'point' and len(ann.points) == 1:
+                    p1 = ann.points[0]
+                    ann.points = [p1, (p1[0] + 5, p1[1] + 5)]
+                
+                # Update properties
+                if hasattr(roi, 'properties'):
+                    ann.properties.update(roi.properties)
                 
                 self.annotation_panel.update_annotation_list()
                 # Optimized sync: Update single annotation instead of full reload
@@ -1111,6 +1093,9 @@ class MainWindow(QMainWindow):
                 # If we had properties to update
                 if 'properties' in update_data:
                     ann.properties.update(update_data['properties'])
+                
+                # Update dragging state for performance optimization
+                ann.is_dragging = update_data.get('is_dragging', False)
                     
                 # If linked to ROI, should we update ROI?
                 # Ideally yes, but ROI model is strict about shape.
@@ -1152,7 +1137,7 @@ class MainWindow(QMainWindow):
                             # We need to suppress the loop.
                             # We can set a flag on main_window?
                             self._suppress_roi_annotation_sync = True
-                            self.session.roi_manager.update_roi(roi)
+                            self.session.roi_manager.roi_updated.emit(roi)
                             self._suppress_roi_annotation_sync = False
                             
                     except Exception as e:
@@ -1439,26 +1424,6 @@ class MainWindow(QMainWindow):
             self.roi_toolbox.spin_width.setEnabled(checked)
             self.roi_toolbox.spin_height.setEnabled(checked)
 
-    def on_annotation_fixed_size_toggled(self, checked):
-        """Callback for Annotation fixed size checkbox."""
-        # Propagate to CanvasView
-        self.multi_view.set_annotation_fixed_size_mode(checked)
-        try:
-            if hasattr(self, 'line_scan_tool') and hasattr(self.line_scan_tool, 'set_fixed_size_mode'):
-                self.line_scan_tool.set_fixed_size_mode(checked)
-                print(f"DEBUG: [Main] Syncing LineScanTool fixed_size={checked} (Annotation Panel)")
-            if hasattr(self, 'rect_tool') and hasattr(self.rect_tool, 'set_fixed_size_mode'):
-                self.rect_tool.set_fixed_size_mode(checked)
-                print(f"DEBUG: [Main] Syncing RectTool fixed_size={checked} (Annotation Panel)")
-            if hasattr(self, 'ellipse_tool') and hasattr(self.ellipse_tool, 'set_fixed_size_mode'):
-                self.ellipse_tool.set_fixed_size_mode(checked)
-                print(f"DEBUG: [Main] Syncing EllipseTool fixed_size={checked} (Annotation Panel)")
-            if hasattr(self, 'polygon_tool') and hasattr(self.polygon_tool, 'set_fixed_size_mode'):
-                self.polygon_tool.set_fixed_size_mode(checked)
-                print(f"DEBUG: [Main] Syncing PolygonTool fixed_size={checked} (Annotation Panel)")
-        except Exception as e:
-            print(f"WARNING: [Main] Failed to sync fixed size to annotation hijacked tools: {e}")
-
     def _on_prev_tab_clicked(self):
         """Switch to previous tab."""
         count = self.control_tabs.count()
@@ -1582,6 +1547,7 @@ class MainWindow(QMainWindow):
         btn_undo.setDefaultAction(self.action_undo)
         btn_undo.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn_undo.setIconSize(QSize(20, 20))
+        btn_undo.setFixedSize(28, 28)
         menu_actions_layout.addWidget(btn_undo)
 
         btn_redo = QToolButton()
@@ -1589,6 +1555,7 @@ class MainWindow(QMainWindow):
         btn_redo.setDefaultAction(self.action_redo)
         btn_redo.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn_redo.setIconSize(QSize(20, 20))
+        btn_redo.setFixedSize(28, 28)
         menu_actions_layout.addWidget(btn_redo)
         
         # Export Button (Requested by User)
@@ -1597,6 +1564,7 @@ class MainWindow(QMainWindow):
         btn_export.setDefaultAction(self.action_export_images)
         btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn_export.setIconSize(QSize(20, 20))
+        btn_export.setFixedSize(28, 28)
         menu_actions_layout.addWidget(btn_export)
         
         # Add a small vertical separator
@@ -1612,7 +1580,8 @@ class MainWindow(QMainWindow):
         btn_save.setObjectName("save_btn")
         btn_save.setDefaultAction(self.action_save_project)
         btn_save.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_save.setIconSize(QSize(18, 18))
+        btn_save.setIconSize(QSize(20, 20))
+        btn_save.setFixedSize(28, 28)
         menu_actions_layout.addWidget(btn_save)
 
         # Settings Button
@@ -1620,7 +1589,8 @@ class MainWindow(QMainWindow):
         btn_settings.setObjectName("settings_btn")
         btn_settings.setDefaultAction(self.action_settings)
         btn_settings.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_settings.setIconSize(QSize(18, 18))
+        btn_settings.setIconSize(QSize(20, 20))
+        btn_settings.setFixedSize(28, 28)
         menu_actions_layout.addWidget(btn_settings)
 
         # Add to MenuBar as a Corner Widget (Right side)
@@ -1753,160 +1723,191 @@ class MainWindow(QMainWindow):
 
         qss = f"""
         /* Main Window and General */
-        QMainWindow, QDialog, QWidget {{
+        QMainWindow, QDialog, QWidget {{{{
             background-color: {bg_color};
             color: {text_color};
             font-family: "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
-        }}
+        }}}}
         
         /* Modern Border for Main Window */
-        QMainWindow {{
+        QMainWindow {{{{
             border: 1px solid {border_color};
-        }}
+        }}}}
         
-        QLabel {{
+        QLabel {{{{
             background-color: transparent; /* Remove background shading from text */
-        }}
+        }}}}
         
         /* Menu Bar */
-        QMenuBar {{
+        QMenuBar {{{{
             background-color: {header_bg};
             color: {header_text};
             border-bottom: none;
             padding: 4px;
-        }}
-        QMenuBar::item {{
+        }}}}
+        QMenuBar::item {{{{
             background-color: transparent;
             padding: 6px 12px;
             border-radius: 4px;
             color: {header_text};
-        }}
-        QMenuBar::item:selected {{
+        }}}}
+        QMenuBar::item:selected {{{{
             background-color: rgba(255, 255, 255, 0.2);
             color: {header_text};
-        }}
-        QMenuBar::item:pressed {{
+        }}}}
+        QMenuBar::item:pressed {{{{
             background-color: rgba(0, 0, 0, 0.1);
             color: {header_text};
-        }}
+        }}}}
 
         /* Menu dropdown */
-        QMenu {{
+        QMenu {{{{
             background-color: {bg_color};
             border: 1px solid {border_color};
             padding: 4px;
-        }}
-        QMenu::item {{
+        }}}}
+        QMenu::item {{{{
             padding: 6px 28px 6px 28px;
             border-radius: 4px;
             color: {text_color};
-        }}
-        QMenu::item:selected {{
+        }}}}
+        QMenu::item:selected {{{{
             background-color: {accent_color};
             color: white;
-        }}
-        QMenu::separator {{
+        }}}}
+        QMenu::separator {{{{
             height: 1px;
             background-color: {border_color};
             margin: 4px 8px;
-        }}
-        QMenu::icon {{
+        }}}}
+        QMenu::icon {{{{
             padding-left: 10px;
-        }}
+        }}}}
         
         /* ToolBar */
-        QToolBar {{
+        QToolBar {{{{
             background-color: {toolbar_bg};
             border-bottom: 1px solid {border_color};
-            spacing: 6px;
+            border-right: 1px solid {border_color};
+            spacing: 8px;
             padding: 4px;
-        }}
-        QToolBar QToolButton {{
+        }}}}
+        QToolBar QToolButton {{{{
             background-color: transparent;
             border: 1px solid transparent;
             border-radius: 4px;
-            padding: 4px;
+            width: 28px;
+            height: 28px;
+            padding: 0px;
             color: {text_color};
-        }}
-        QToolBar QToolButton:hover {{
+        }}}}
+        QToolBar QToolButton:hover {{{{
             background-color: {item_hover};
             border: 1px solid {accent_color};
-        }}
-        QToolBar QToolButton:checked {{
+        }}}}
+        QToolBar QToolButton:checked {{{{
             background-color: {accent_color};
             border: 1px solid {accent_color};
             color: white;
-        }}
-        QToolBar QToolButton:pressed {{
+        }}}}
+        QToolBar QToolButton:pressed {{{{
             background-color: {border_color};
-        }}
+        }}}}
         
         /* Dock Widgets */
-        QDockWidget {{
+        QDockWidget {{{{
             color: {text_color};
             font-weight: bold;
             border: none;
-        }}
-        QDockWidget::title {{
+        }}}}
+        QDockWidget::title {{{{
             background-color: {bg_color};
             padding: 6px 8px;
             text-align: left;
             border-bottom: 1px solid {border_color};
             color: {accent_color}; /* Brand color for dock titles */
-        }}
+        }}}}
         
         /* Splitter */
-        QSplitter::handle {{
+        QSplitter::handle {{{{
             background-color: {border_color};
             margin: 1px;
-        }}
-        QSplitter::handle:horizontal {{ width: 1px; }}
-        QSplitter::handle:vertical {{ height: 1px; }}
-        QSplitter::handle:hover {{ background-color: {accent_color}; }}
+        }}}}
+        QSplitter::handle:horizontal {{{{ width: 1px; }}}}
+        QSplitter::handle:vertical {{{{ height: 1px; }}}}
+        QSplitter::handle:hover {{{{ background-color: {accent_color}; }}}}
 
         /* Tool Buttons (General) */
-        QToolButton {{
+        QToolButton {{{{
             background-color: {button_bg};
             border: 1px solid {group_border};
             border-radius: 4px;
-            padding: 4px;
+            width: 28px;
+            height: 28px;
+            padding: 0px;
             margin: 1px;
             color: {text_color};
-        }}
-        QToolButton:hover {{
+        }}}}
+        QToolButton:hover {{{{
             background-color: {button_hover};
             border: 1px solid {accent_color};
-        }}
-        QToolButton:pressed {{
+        }}}}
+        QToolButton:pressed {{{{
             background-color: {border_color};
-        }}
-        QToolButton:checked {{
+        }}}}
+        QToolButton:checked {{{{
             background-color: {accent_color};
             color: white;
             border: 1px solid {accent_color};
-        }}
+        }}}}
+        QToolButton:disabled {{{{
+            opacity: 0.3;
+        }}}}
         
         /* Specific Tool Button IDs for corner actions - Cleaner look */
-        #undo_btn, #redo_btn, #save_btn, #settings_btn, #theme_btn {{
+        #undo_btn, #redo_btn, #save_btn, #settings_btn, #theme_btn, #action_btn {{{{
             border: none;
             padding: 4px;
             background: transparent;
             min-width: 28px;
             min-height: 28px;
             border-radius: 4px;
-        }}
-        #undo_btn:hover, #redo_btn:hover, #save_btn:hover, #settings_btn:hover, #theme_btn:hover {{
+        }}}}
+        #undo_btn:hover, #redo_btn:hover, #save_btn:hover, #settings_btn:hover, #theme_btn:hover, #action_btn:hover {{{{
             background-color: {item_hover};
-        }}
+        }}}}
+        
+        /* Specialized Hero/Action Button (High Emphasis) */
+        QPushButton#action_btn {{{{
+            background-color: {accent_color};
+            color: white;
+            border: 1px solid {accent_color};
+            border-radius: 4px;
+            padding: 6px 16px;
+            font-weight: bold;
+        }}}}
+        QPushButton#action_btn:hover {{{{
+            background-color: {accent_color};
+            border: 1px solid {accent_color};
+            opacity: 0.85;
+        }}}}
+        QPushButton#action_btn:pressed {{{{
+            background-color: {border_color};
+        }}}}
+        QPushButton#action_btn:disabled {{{{
+            background-color: {border_color};
+            color: {group_border};
+            border: 1px solid {border_color};
+        }}}}
         
         /* Tab Widget */
-        QTabWidget::pane {{
+        QTabWidget::pane {{{{
             border: 1px solid {border_color};
             background-color: {bg_color};
             border-radius: 4px;
             top: -1px;
-        }}
-        QTabBar::tab {{
+        }}}}
+        QTabBar::tab {{{{
             background-color: {tab_bg};
             color: {text_color};
             padding: 8px 16px;
@@ -1915,145 +1916,384 @@ class MainWindow(QMainWindow):
             border-top-left-radius: 4px;
             border-top-right-radius: 4px;
             margin-right: 2px;
-        }}
-        QTabBar::tab:selected {{
+        }}}}
+        QTabBar::tab:selected {{{{
             background-color: {bg_color};
             border-bottom: 2px solid {accent_color};
             font-weight: bold;
             color: {accent_color};
-        }}
-        QTabBar::tab:hover:!selected {{
+        }}}}
+        QTabBar::tab:hover:!selected {{{{
             background-color: {item_hover};
-        }}
+        }}}}
         /* Hide default scroll buttons */
-        QTabBar::scroller {{
+        QTabBar::scroller {{{{
             width: 0px;
             height: 0px;
-        }}
+        }}}}
 
         /* Tooltip */
-        QToolTip {{
+        QToolTip {{{{
             background-color: {bg_color};
             color: {text_color};
             border: 1px solid {accent_color};
             padding: 4px;
             border-radius: 4px;
-        }}
+        }}}}
 
         /* Tree and List Widgets */
-        QTreeWidget, QListWidget {{
+        QTreeWidget, QListWidget {{{{
             background-color: {input_bg};
             border: 1px solid {border_color};
             border-radius: 4px;
             outline: none;
-        }}
-        QTreeWidget::item, QListWidget::item {{
+        }}}}
+        QTreeWidget::item, QListWidget::item {{{{
             padding: 4px;
             border: none;
             color: {text_color};
-        }}
-        QTreeWidget::item:hover, QListWidget::item:hover {{
+        }}}}
+        QTreeWidget::item:hover, QListWidget::item:hover {{{{
             background-color: {item_hover};
-        }}
-        QTreeWidget::item:selected, QListWidget::item:selected {{
+        }}}}
+        QTreeWidget::item:selected, QListWidget::item:selected {{{{
             background-color: {accent_color};
             color: white;
-        }}
+        }}}}
 
         /* ScrollBar - Minimalist */
-        QScrollBar:vertical {{
+        QScrollBar:vertical {{{{
             border: none;
             background: {bg_color};
             width: 10px;
             margin: 0px;
-        }}
-        QScrollBar::handle:vertical {{
+        }}}}
+        QScrollBar::handle:vertical {{{{
             background: {group_border};
             min-height: 20px;
             border-radius: 5px;
-        }}
-        QScrollBar::handle:vertical:hover {{
+        }}}}
+        QScrollBar::handle:vertical:hover {{{{
             background: {accent_color};
-        }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+        }}}}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{{{
             height: 0px;
-        }}
-        QScrollBar:horizontal {{
+        }}}}
+        QScrollBar:horizontal {{{{
             border: none;
             background: {bg_color};
             height: 10px;
             margin: 0px;
-        }}
-        QScrollBar::handle:horizontal {{
+        }}}}
+        QScrollBar::handle:horizontal {{{{
             background: {group_border};
             min-width: 20px;
             border-radius: 5px;
-        }}
-        QScrollBar::handle:horizontal:hover {{
+        }}}}
+        QScrollBar::handle:horizontal:hover {{{{
             background: {accent_color};
-        }}
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+        }}}}
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{{{
             width: 0px;
-        }}
+        }}}}
         
-        QFrame#menu_sep {{
+        QFrame#menu_sep {{{{
             background-color: {border_color};
             margin: 6px 4px;
             width: 1px;
-        }}
+        }}}}
 
         /* Input Fields */
-        QDoubleSpinBox, QSpinBox, QLineEdit, QComboBox, QPushButton {{
+        QDoubleSpinBox, QSpinBox, QLineEdit, QComboBox, QPushButton {{{{
             background-color: {input_bg};
             border: 1px solid {group_border};
             border-radius: 4px;
             padding: 6px;
             color: {text_color};
-        }}
-        QPushButton:hover {{
+        }}}}
+        QPushButton:hover {{{{
             background-color: {button_hover};
             border: 1px solid {accent_color};
-        }}
-        QPushButton:pressed {{
+        }}}}
+        QPushButton:pressed {{{{
             background-color: {border_color};
-        }}
-        QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus, QComboBox:focus, QPushButton:focus {{
+        }}}}
+        QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus, QComboBox:focus, QPushButton:focus {{{{
             border: 1px solid {accent_color};
-        }}
+        }}}}
         
         /* Sliders */
-        QSlider::groove:horizontal {{
+        QSlider::groove:horizontal {{{{
             border: 1px solid {border_color};
             height: 4px;
             background: {group_border};
             margin: 2px 0;
             border-radius: 2px;
-        }}
-        QSlider::handle:horizontal {{
+        }}}}
+        QSlider::handle:horizontal {{{{
             background: {accent_color};
             border: 1px solid {accent_color};
             width: 14px;
             height: 14px;
             margin: -6px 0;
             border-radius: 7px;
-        }}
+        }}}}
 
-        /* Group Boxes - Card Style */
-        QGroupBox {{
+        /* Group Boxes - Refined Style */
+        QGroupBox {{{{
             border: 1px solid {group_border};
             border-radius: 6px;
-            margin-top: 12px;
-            font-weight: bold;
+            margin-top: 4px;
+            padding: 4px;
+            font-weight: normal;
             color: {accent_color};
             background-color: {bg_color};
-        }}
-        QGroupBox::title {{
+        }}}}
+        QGroupBox::title {{{{
             subcontrol-origin: margin;
             subcontrol-position: top left;
             padding: 0 5px;
-            left: 10px;
-            background-color: {bg_color}; /* Ensure title is readable over border */
-        }}
+            left: 6px;
+            font-size: 12px;
+            font-weight: normal;
+            background-color: {bg_color};
+        }}}}
+
+        /* Card Style for Panels */
+        QWidget#card, QWidget[role="card"] {{{{
+            background-color: {bg_color};
+            border: 1px solid {border_color};
+            border-radius: 8px;
+            padding: 10px;
+        }}}}
+
+        /* Label Roles */
+        QLabel[role="title"] {{{{
+            font-weight: bold;
+            font-size: 14px;
+            color: {accent_color};
+        }}}}
+        QLabel[role="subtitle"] {{{{
+            font-weight: bold;
+            font-size: 12px;
+            color: {text_color};
+            opacity: 0.8;
+        }}}}
+
+        /* Status Indicators */
+        QLabel[role="status"] {{{{
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            background-color: {input_bg};
+            border: 1px solid {border_color};
+        }}}}
+        QLabel[role="success"] {{{{
+            color: #27ae60;
+            background-color: rgba(46, 204, 113, 0.15);
+            border: 1px solid #2ecc71;
+        }}}}
+        QLabel[role="warning"] {{{{
+            color: #e67e22;
+            background-color: rgba(230, 126, 34, 0.15);
+            border: 1px solid #e67e22;
+        }}}}
+        QLabel[role="error"] {{{{
+            color: #e74c3c;
+            background-color: rgba(231, 76, 60, 0.15);
+            border: 1px solid #e74c3c;
+        }}}}
+
+        /* Hero Buttons (Large Action Buttons) */
+        QPushButton[role="hero"] {{{{
+            background-color: {accent_color};
+            color: white;
+            border-radius: 8px;
+            padding: 12px 24px;
+            font-size: 15px;
+            font-weight: bold;
+            border: none;
+            min-width: 220px;
+        }}}}
+        QPushButton[role="hero"]:hover {{{{
+            background-color: {button_hover};
+            border: 1px solid {accent_color};
+        }}}}
+
+        /* Recent Projects List */
+        QListWidget[role="recent"] {{{{
+            background-color: transparent;
+            border: 1px solid {border_color};
+            border-radius: 4px;
+            color: {text_color};
+        }}}}
+        QListWidget[role="recent"]::item {{{{
+            padding: 8px;
+            border-bottom: 1px solid {border_color};
+        }}}}
+        QListWidget[role="recent"]::item:hover {{{{
+            background-color: {input_bg};
+            color: {accent_color};
+        }}}}
+
+        /* Loading Overlay */
+        QLabel[role="overlay"] {{{{
+            background-color: rgba(0, 0, 0, 180);
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }}}}
+        
+        /* Preview Overlay */
+        QLabel[role="preview"] {{{{
+            border: 2px solid {accent_color};
+            background-color: black;
+        }}}}
+        QPushButton[role="hero"]:pressed {{{{
+            background-color: {border_color};
+        }}}}
+
+        /* Tabs Style */
+        QTabWidget::pane {{{{
+            border: 1px solid {border_color};
+            background-color: {bg_color};
+            border-radius: 4px;
+        }}}}
+        QTabBar::tab {{{{
+            background: {input_bg};
+            border: 1px solid {border_color};
+            border-bottom-color: {border_color};
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            padding: 4px 10px;
+            min-width: 60px;
+            color: {text_color};
+        }}}}
+        QTabBar::tab:hover {{{{
+            background: {button_hover};
+        }}}}
+        QTabBar::tab:selected {{{{
+            background: {bg_color};
+            border-bottom-color: {bg_color};
+            font-weight: bold;
+            color: {accent_color};
+        }}}}
+
+        /* Tool Buttons */
+        QToolButton {{{{
+            border: 1px solid {border_color};
+            border-radius: 4px;
+            background-color: {input_bg};
+            padding: 2px;
+        }}}}
+        QToolButton:hover {{{{
+            background-color: {button_hover};
+            border: 1px solid {accent_color};
+        }}}}
+        QToolButton:pressed {{{{
+            background-color: {border_color};
+        }}}}
+        QToolButton#nav_btn {{{{
+            border: 1px solid {border_color};
+            border-radius: 4px;
+            background-color: {input_bg};
+            padding: 2px;
+        }}}}
+        QToolButton#nav_btn:hover {{{{
+            background-color: {button_hover};
+            border: 1px solid {accent_color};
+        }}}}
+
+        /* Splitter Style */
+        QSplitter::handle {{{{
+            background-color: {border_color};
+        }}}}
+
+        /* Label Roles */
+        QLabel[role="accent"] {{{{
+            color: {accent_color};
+            font-weight: bold;
+        }}}}
+        QLabel[role="description"] {{{{
+            color: {text_color};
+            opacity: 0.6;
+            font-size: 11px;
+            padding-left: 20px;
+        }}}}
+
+        /* Color Pickers / Color Indicator Buttons */
+        QPushButton[role="color_picker"], QToolButton[role="color_picker"] {{{{
+            border: 1px solid {border_color};
+            border-radius: 4px;
+            min-width: 20px;
+            min-height: 20px;
+            max-width: 20px;
+            max-height: 20px;
+        }}}}
+        QPushButton[role="color_picker"]:hover, QToolButton[role="color_picker"]:hover {{{{
+            border: 1px solid {accent_color};
+        }}}}
+        
+        /* Separator */
+        QFrame[frameShape="4"], QFrame[frameShape="5"] {{{{
+            color: {border_color};
+            background-color: {border_color};
+            max-height: 1px;
+            opacity: 0.3;
+        }}}}
+
+        /* Navigation Toolbar (Matplotlib) */
+        [class*="NavigationToolbar"] {{{{
+            background-color: transparent;
+            border: none;
+        }}}}
+
+        /* Tooltips */
+        QToolTip, PreviewPopup {{{{
+            background-color: {input_bg};
+            color: {text_color};
+            border: 1px solid {border_color};
+            padding: 4px;
+            border-radius: 4px;
+        }}}}
+
+        /* Tree Widget */
+        QTreeWidget {{{{
+            border: 1px solid {border_color};
+            background-color: {bg_color};
+            border-radius: 4px;
+        }}}}
+        QTreeWidget::item {{{{
+            padding: 4px;
+            border-bottom: 1px solid {group_border};
+        }}}}
+        QTreeWidget::item:selected {{{{
+            background-color: {button_hover};
+            color: {accent_color};
+        }}}}
+
+        /* Specific Tool Button Roles */
+        QToolButton[role="subtle"] {{{{
+            border: none;
+            background: transparent;
+            color: {text_color};
+            font-size: 11px;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }}}}
+        QToolButton[role="subtle"]:hover {{{{
+            background-color: {button_hover};
+            color: {accent_color};
+        }}}}
+        QToolButton[role="accent"] {{{{
+            color: {accent_color};
+            font-weight: bold;
+        }}}}
+        QToolButton:checked {{{{
+            background-color: {accent_color};
+            color: white;
+            border: 1px solid {accent_color};
+        }}}}
         """
         self.setStyleSheet(qss)
         if hasattr(self, 'menu_actions_widget'):
@@ -2259,21 +2499,6 @@ class MainWindow(QMainWindow):
         """Clears the recent projects list."""
         self.settings.setValue("recentProjects", [])
         self.update_recent_projects_menu()
-
-    def load_project(self, fpath):
-        """Internal helper to load a project file."""
-        if not fpath or not os.path.exists(fpath):
-            return
-            
-        try:
-            self.session.load_project(fpath)
-            self.current_project_path = fpath
-            self.add_to_recent_projects(fpath)
-            self.update_ui_after_load()
-            print(f"Project loaded: {fpath}")
-        except Exception as e:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, tr("Load Error"), tr("Failed to load project:\n{0}").format(str(e)))
 
     def update_ui_after_load(self):
         """Updates all UI components after a project is loaded."""

@@ -141,6 +141,7 @@ class ColocalizationPanel(QWidget):
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
         
     def init_ui(self):
+        self.setObjectName("card")
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(4)
         main_layout.setContentsMargins(6, 6, 6, 6)
@@ -150,125 +151,48 @@ class ColocalizationPanel(QWidget):
         tool_layout = QGridLayout()
         tool_layout.setSpacing(4)
         
-        # Results styling
-        palette = QApplication.palette()
-        text_color = palette.color(QPalette.ColorRole.WindowText).name()
-        bg_color = palette.color(QPalette.ColorRole.Window).name()
-        border_color = palette.color(QPalette.ColorRole.Mid).name()
-        hover_bg = palette.color(QPalette.ColorRole.Button).name()
-        accent_color = "#3498db" # Keep some accents for UI feel
-        
         # Line Scan Button
         self.btn_line_scan = QToolButton()
-        self.btn_line_scan.setText(tr("Line Scan"))
-        self.btn_line_scan.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_line_scan.setFixedHeight(32)
-        self.btn_line_scan.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed) # Allow width to shrink/grow
+        self.btn_line_scan.setIcon(get_icon("coloc"))
+        self.btn_line_scan.setIconSize(QSize(20, 20))
+        self.btn_line_scan.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_line_scan.setFixedSize(28, 28)
         self.btn_line_scan.setCheckable(True)
         self.btn_line_scan.setToolTip(tr("Click here then draw a line on the image to see intensity profiles"))
-        self.btn_line_scan.setStyleSheet(f"""
-            QToolButton {{
-                font-weight: bold;
-                background-color: {bg_color};
-                color: {text_color};
-                border: 1px solid {border_color};
-                border-radius: 4px;
-                padding: 0 4px; /* Reduced padding */
-            }}
-            QToolButton:checked {{
-                background-color: {accent_color};
-                color: white;
-                border: 1px solid {accent_color};
-            }}
-            QToolButton:hover:!checked {{
-                background-color: {hover_bg};
-            }}
-        """)
+        self.btn_line_scan.setProperty("role", "accent")
         tool_layout.addWidget(self.btn_line_scan, 0, 0)
         
         # Clear Line Button
-        self.btn_clear_line = QPushButton()
+        self.btn_clear_line = QToolButton() # Changed from QPushButton to QToolButton for consistency
         self.btn_clear_line.setIcon(get_icon("clear", "edit-clear"))
-        self.btn_clear_line.setIconSize(QSize(18, 18))
-        self.btn_clear_line.setMinimumWidth(32)
-        self.btn_clear_line.setFixedHeight(32)
-        self.btn_clear_line.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.btn_clear_line.setIconSize(QSize(20, 20))
+        self.btn_clear_line.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_clear_line.setFixedSize(28, 28)
         self.btn_clear_line.setToolTip(tr("Clear current line and plot"))
-        self.btn_clear_line.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {bg_color};
-                border: 1px solid {border_color};
-                border-radius: 4px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_bg};
-                border: 1px solid {accent_color};
-            }}
-        """)
         self.btn_clear_line.clicked.connect(self.clear_line)
         tool_layout.addWidget(self.btn_clear_line, 0, 1)
         
         # Global Colocalization Button
         self.btn_global_coloc = QPushButton(tr("Global Analysis"))
-        self.btn_global_coloc.setFixedHeight(32)
         self.btn_global_coloc.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_global_coloc.setToolTip(tr("Calculate Pearson's Correlation (PCC) and Manders' Coefficients (M1/M2) for the entire image."))
-        self.btn_global_coloc.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {bg_color};
-                color: {text_color};
-                border: 1px solid {border_color};
-                border-radius: 4px;
-                padding: 0 4px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_bg};
-            }}
-        """)
         self.btn_global_coloc.clicked.connect(self.on_global_analysis_clicked)
         tool_layout.addWidget(self.btn_global_coloc, 1, 0)
         
         # Export Data Button
         self.btn_export_data = QPushButton(tr("Export Data"))
-        self.btn_export_data.setFixedHeight(32)
         self.btn_export_data.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.btn_export_data.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {bg_color};
-                color: {text_color};
-                border: 1px solid {border_color};
-                border-radius: 4px;
-                padding: 0 4px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_bg};
-            }}
-        """)
         self.btn_export_data.clicked.connect(self.on_export_data_clicked)
         tool_layout.addWidget(self.btn_export_data, 1, 1)
         
         # Help Button
-        self.btn_help = QPushButton()
+        self.btn_help = QToolButton()
         self.btn_help.setIcon(get_icon("help", "help-browser"))
-        self.btn_help.setIconSize(QSize(18, 18))
-        self.btn_help.setFixedSize(32, 32) # Small square button is fine for help
+        self.btn_help.setIconSize(QSize(20, 20))
+        self.btn_help.setFixedSize(28, 28)
+        self.btn_help.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_help.setToolTip(tr("Show Analysis Guide"))
-        self.btn_help.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {bg_color};
-                border: 1px solid {border_color};
-                border-radius: 16px;
-            }}
-            QPushButton:hover {{
-                background-color: {hover_bg};
-                border: 1px solid {accent_color};
-            }}
-        """)
         self.btn_help.clicked.connect(self.show_help)
-        # Add to row 0, col 2 (new column) or squeeze somewhere?
-        # Let's add it to the top right of the main layout or next to export.
-        # Adding to grid might mess up alignment if not careful.
-        # Let's put it next to 'Clear Line' in row 0?
         tool_layout.addWidget(self.btn_help, 0, 2)
         
         main_layout.addLayout(tool_layout)
@@ -345,7 +269,6 @@ class ColocalizationPanel(QWidget):
         
         # Add Navigation Toolbar for Zoom/Pan
         self.toolbar = NavigationToolbar(self.canvas, self)
-        self.toolbar.setStyleSheet("background-color: transparent; border: none;")
         self.toolbar.setFixedHeight(30) # Compact
         # Allow toolbar to shrink below its minimum size hint to prevent panel width locking
         self.toolbar.setMinimumWidth(0)
@@ -359,7 +282,7 @@ class ColocalizationPanel(QWidget):
         # Result Label
         self.lbl_pearson = QLabel(tr("Pearson r: --"))
         self.lbl_pearson.setAlignment(Qt.AlignCenter)
-        self.lbl_pearson.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {text_color}; padding: 4px;")
+        self.lbl_pearson.setProperty("role", "status")
         main_layout.addWidget(self.lbl_pearson)
 
         self.roi_group = QGroupBox(tr("Saved Line Scans"))
@@ -404,7 +327,6 @@ class ColocalizationPanel(QWidget):
 
     def retranslate_ui(self):
         """Updates UI text based on current language."""
-        self.btn_line_scan.setText(tr("Line Scan"))
         self.btn_line_scan.setToolTip(tr("Click here then draw a line on the image to see intensity profiles"))
         self.btn_clear_line.setToolTip(tr("Clear current line and plot"))
         self.btn_global_coloc.setText(tr("Global Analysis"))
@@ -442,9 +364,10 @@ class ColocalizationPanel(QWidget):
     def set_line_scan_action(self, action):
         """Connects the internal button to the global line scan action."""
         self.btn_line_scan.setDefaultAction(action)
-        # Re-apply text and icon settings because setDefaultAction might override them
-        self.btn_line_scan.setText("Line Scan")
-        self.btn_line_scan.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        # Re-apply icon only settings because setDefaultAction might override them
+        self.btn_line_scan.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_line_scan.setIconSize(QSize(20, 20))
+        self.btn_line_scan.setFixedSize(28, 28)
 
     def on_global_analysis_clicked(self):
         """Performs full-image colocalization analysis and displays results."""
@@ -493,19 +416,10 @@ class ColocalizationPanel(QWidget):
             self.lbl_pearson.setText(result_text)
             
             # Theme-aware success style
-            palette = QApplication.palette()
-            is_dark = palette.color(QPalette.ColorRole.Window).lightness() < 128
-            
-            if is_dark:
-                success_bg = "#1a3a3a"
-                success_text = "#2ecc71"
-                success_border = "#27ae60"
-            else:
-                success_bg = "#f0fdf4"
-                success_text = "#16a085"
-                success_border = "#27ae60"
-                
-            self.lbl_pearson.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {success_text}; background-color: {success_bg}; padding: 10px; border-radius: 5px; border: 1px solid {success_border};")
+            # Update label style using global roles
+            self.lbl_pearson.setProperty("role", "success")
+            self.lbl_pearson.style().unpolish(self.lbl_pearson)
+            self.lbl_pearson.style().polish(self.lbl_pearson)
             
             # --- USER REQUEST: Display Intensity Scatter Plot (Global Analysis) ---
             self.ax.clear()
@@ -725,17 +639,8 @@ class ColocalizationPanel(QWidget):
                 
                 # Dynamic style based on channel color
                 color = self.channel_colors[i % len(self.channel_colors)]
-                palette = QApplication.palette()
-                border_color = palette.color(QPalette.ColorRole.Mid).name()
-                bg_color = palette.color(QPalette.ColorRole.Button).name()
                 
                 btn.setStyleSheet(f"""
-                    QPushButton {{
-                        padding: 4px 8px;
-                        border: 1px solid {border_color};
-                        border-radius: 4px;
-                        background-color: {bg_color};
-                    }}
                     QPushButton:checked {{
                         background-color: {color};
                         color: white;

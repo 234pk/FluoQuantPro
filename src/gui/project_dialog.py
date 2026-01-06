@@ -54,14 +54,12 @@ class ProjectSetupDialog(QDialog):
         self.btn_add = QToolButton()
         self.btn_add.setIcon(get_icon("add", "list-add"))
         self.btn_add.setIconSize(QSize(20, 20))
-        self.btn_add.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.btn_add.setText(tr(" Add Custom Channel"))
+        self.btn_add.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_add.setFixedSize(28, 28)
         self.btn_add.setToolTip(tr("Add a new custom channel to the project"))
-        self.btn_add.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.btn_add.setFixedHeight(32)
         self.btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_add.clicked.connect(lambda: self.add_channel_row("Custom", "#FFFFFF", checked=True))
-        self.layout.addWidget(self.btn_add)
+        self.layout.addWidget(self.btn_add, 0, Qt.AlignmentFlag.AlignCenter)
         
         # Buttons
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -75,7 +73,6 @@ class ProjectSetupDialog(QDialog):
     def retranslate_ui(self):
         self.setWindowTitle(tr("New Project Setup"))
         self.lbl_title.setText(tr("Select channels to include in this project:"))
-        self.btn_add.setText(tr(" Add Custom Channel"))
         self.btn_add.setToolTip(tr("Add a new custom channel to the project"))
         # We don't retranslate preset names as they are technical terms (DAPI, GFP etc)
         # But we could if needed.
@@ -97,7 +94,8 @@ class ProjectSetupDialog(QDialog):
         
         # Color
         color_btn = QToolButton()
-        color_btn.setFixedSize(24, 24)
+        color_btn.setProperty("role", "color_picker")
+        color_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         color_btn.setToolTip(tr("Pick channel color"))
         color = QColor(color_hex)
         self.set_btn_color(color_btn, color)
@@ -114,7 +112,7 @@ class ProjectSetupDialog(QDialog):
         self.channel_rows.append((cb, name_edit, color_btn))
         
     def set_btn_color(self, btn, color):
-        btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555;")
+        btn.setStyleSheet(f"background-color: {color.name()};")
         btn.setProperty("color_data", color)
         
     def pick_color(self, btn):

@@ -31,13 +31,13 @@ class DisplaySettingsWidget(QWidget):
         quality_layout.addWidget(self.quality_combo)
         
         self.lbl_recommendation = QLabel(tr("System Analysis: Detecting..."))
-        self.lbl_recommendation.setStyleSheet("color: #666; font-style: italic;")
+        self.lbl_recommendation.setProperty("role", "description")
         quality_layout.addWidget(self.lbl_recommendation)
         
         self.desc = QLabel(tr("Higher quality requires more RAM and GPU resources. ") + 
                       tr("Performance mode is recommended for datasets > 2GB."))
         self.desc.setWordWrap(True)
-        self.desc.setStyleSheet("font-size: 11px; color: #888;")
+        self.desc.setProperty("role", "description")
         quality_layout.addWidget(self.desc)
         
         layout.addWidget(self.quality_group)
@@ -66,7 +66,7 @@ class DisplaySettingsWidget(QWidget):
 
         self.lbl_gpu_info = QLabel(tr("Detecting GPU..."))
         self.lbl_gpu_info.setWordWrap(True)
-        self.lbl_gpu_info.setStyleSheet("font-size: 11px; color: #666; font-style: italic;")
+        self.lbl_gpu_info.setProperty("role", "description")
         gpu_layout.addWidget(self.lbl_gpu_info)
 
         layout.addWidget(self.gpu_group)

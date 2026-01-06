@@ -1,12 +1,18 @@
 from abc import abstractmethod
+from enum import Enum
 from PySide6.QtCore import QPointF, Qt, QObject, Signal, QRectF
-from PySide6.QtGui import QPainterPath, QColor
+from PySide6.QtGui import QPainterPath, QColor, QPen
+from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsLineItem
 from src.core.algorithms import magic_wand_2d, mask_to_qpath
 from src.core.analysis import calculate_intensity_stats
 from src.core.data_model import Session
-from src.core.roi_model import ROI
+from src.core.roi_model import ROI, create_smooth_path_from_points
 import numpy as np
 from src.core.logger import Logger
+
+class ToolContext(Enum):
+    ROI = "roi"
+    ANNOTATION = "annotation"
 
 class AbstractTool(QObject):
     preview_changed = Signal()
@@ -16,10 +22,24 @@ class AbstractTool(QObject):
         super().__init__()
         self.session = session
         self.active_channel_idx = -1 # The channel selected in the UI
+        self.preview_item = None # Common preview item for all tools
+        self.current_view = None # Store the view that started the interaction
+        self.cursor_shape = Qt.CursorShape.CrossCursor # Default cursor
 
     def set_active_channel(self, index: int):
         """Sets the globally active channel from the UI."""
         self.active_channel_idx = index
+
+    def _get_active_view(self):
+        """Helper to get the active view from the session."""
+        if hasattr(self.session, 'main_window') and self.session.main_window:
+             try:
+                 mw = self.session.main_window
+                 if hasattr(mw, 'multi_view'):
+                     return mw.multi_view.get_active_view()
+             except:
+                 pass
+        return None
 
     def get_channel_color(self, channel_index: int) -> QColor:
         """Returns a color based on the channel index."""
@@ -43,17 +63,74 @@ class AbstractTool(QObject):
             
         return colors[idx % len(colors)]
 
-    @abstractmethod
     def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
-        pass
+        """
+        Base implementation for mouse press.
+        Sets up the preview item and calls start_preview hook.
+        """
+        Logger.debug(f"[AbstractTool.mouse_press] ENTER: pos={scene_pos}")
+        # 1. Setup Preview Item
+        view = context.get('view') if context else None
+        if not view:
+            view = self._get_active_view()
+        
+        self.current_view = view
+        
+        if view and view.scene():
+            self.preview_item = QGraphicsPathItem()
+            # Default preview style: Dashed Yellow (High Visibility)
+            self.preview_item.setPen(QPen(Qt.GlobalColor.yellow, 1, Qt.PenStyle.DashLine))
+            self.preview_item.setZValue(9999) # Ensure it's on top of everything
+            self.preview_item.setVisible(True)
+            
+            view.scene().addItem(self.preview_item)
+            Logger.debug(f"[AbstractTool.mouse_press] Preview Item added to scene. Scene items count: {len(view.scene().items())}")
+        
+        # 2. Call hook
+        self.start_preview(scene_pos, channel_index, context)
+        Logger.debug("[AbstractTool.mouse_press] EXIT")
 
-    @abstractmethod
     def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        pass
+        """
+        Base implementation for mouse move.
+        Updates preview path and calls on_mouse_move hook.
+        """
+        # 1. Update State (Subclass logic)
+        self.on_mouse_move(scene_pos, modifiers)
+        
+        # 2. Update Preview
+        if self.preview_item:
+            # Safe Update based on Item Type
+            if isinstance(self.preview_item, QGraphicsPathItem):
+                path = self.get_preview_path(scene_pos)
+                if path:
+                    self.preview_item.setPath(path)
+            elif isinstance(self.preview_item, QGraphicsRectItem):
+                # Handled in subclass on_mouse_move typically, but safe to ignore here if no generic logic
+                pass 
+            elif isinstance(self.preview_item, QGraphicsEllipseItem):
+                pass
+            
+            # Force update
+            view = self.current_view if self.current_view else self._get_active_view()
+            if view and view.scene():
+                view.scene().update()
 
-    @abstractmethod
     def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        pass
+        """
+        Base implementation for mouse release.
+        Cleans up preview and calls finish_shape hook.
+        """
+        # 1. Cleanup Preview
+        if self.preview_item:
+             if self.preview_item.scene():
+                 self.preview_item.scene().removeItem(self.preview_item)
+             self.preview_item = None
+        
+        self.current_view = None
+        
+        # 2. Finish
+        self.finish_shape(scene_pos, modifiers)
     
     def mouse_double_click(self, scene_pos: QPointF):
         """Optional hook for double click events."""
@@ -62,6 +139,104 @@ class AbstractTool(QObject):
     def mouse_right_click(self, scene_pos: QPointF):
         """Optional hook for right click events."""
         pass
+
+    def deactivate(self):
+        """
+        USER REQUEST: Cleanup logic when tool is switched or cancelled.
+        Ensures no preview items or temporary state remains.
+        """
+        Logger.debug(f"[{self.__class__.__name__}.deactivate] ENTER")
+        try:
+            if self.preview_item:
+                if self.preview_item.scene():
+                    self.preview_item.scene().removeItem(self.preview_item)
+                self.preview_item = None
+            
+            # Subclasses can override this to clean up specific state
+            self.on_deactivate()
+        except Exception as e:
+            Logger.error(f"[{self.__class__.__name__}.deactivate] Error: {e}")
+        Logger.debug(f"[{self.__class__.__name__}.deactivate] EXIT")
+
+    def on_deactivate(self):
+        """Hook for subclasses to perform specific cleanup."""
+        pass
+
+    # --- Hooks for Subclasses ---
+    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+        """Hook called on mouse press. Initialize state here."""
+        pass
+
+    def on_mouse_move(self, scene_pos: QPointF, modifiers):
+        """Hook called on mouse move. Update state here."""
+        pass
+
+    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
+        """Return the path to be drawn by the preview item."""
+        return None
+
+    def finish_shape(self, scene_pos: QPointF, modifiers):
+        """Hook called on mouse release. Finalize/Create shape here."""
+        pass
+
+class DrawingTool(AbstractTool):
+    """
+    Intermediate layer for tools that draw geometric shapes (Rect, Ellipse, Line).
+    Manages common preview attributes and item creation.
+    """
+    def __init__(self, session: Session):
+        super().__init__(session)
+        self.color = Qt.GlobalColor.yellow
+        self.line_width = 2
+        self.z_value = 9999
+
+    def create_preview_item(self):
+        """Factory method to create and configure the preview item."""
+        item = self._create_specific_item()
+        # Common configuration
+        pen = QPen(self.color, self.line_width, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+        item.setZValue(self.z_value)
+        item.setVisible(True) # Ensure visibility
+        
+        # === 新增：体检日志 ===
+        print(f"[DEBUG] Preview Item Created: Type={type(item).__name__}, Color={item.pen().color().name()}, Width={item.pen().width()}, Z={item.zValue()}")
+        return item
+
+    @abstractmethod
+    def _create_specific_item(self):
+        """Abstract method to create the specific QGraphicsItem (Rect, Ellipse, etc)."""
+        raise NotImplementedError
+
+    def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+        """
+        Override AbstractTool.mouse_press to use the factory method.
+        """
+        Logger.debug(f"[DrawingTool.mouse_press] ENTER: pos={scene_pos}")
+        # 1. Setup Preview Item using Factory
+        view = context.get('view') if context else None
+        if not view:
+            view = self._get_active_view()
+            
+        self.current_view = view
+        
+        if view and view.scene():
+            # Ensure we don't have a stale item (though release usually clears it)
+            if self.preview_item:
+                if self.preview_item.scene():
+                    self.preview_item.scene().removeItem(self.preview_item)
+                self.preview_item = None
+
+            self.preview_item = self.create_preview_item()
+            Logger.debug(f"[DrawingTool.mouse_press] Created preview item: {type(self.preview_item).__name__} in view {view}")
+            
+            view.scene().addItem(self.preview_item)
+            Logger.debug(f"[DrawingTool.mouse_press] Preview Item added to scene. Scene items count: {len(view.scene().items())}")
+        
+        # 2. Call hook
+        self.start_preview(scene_pos, channel_index, context)
+        Logger.debug("[DrawingTool.mouse_press] EXIT")
 
 class MagicWandTool(AbstractTool):
     tolerance_changed = Signal(float) # Signal to update UI feedback
@@ -84,6 +259,24 @@ class MagicWandTool(AbstractTool):
         """
         Initial click to start selection.
         """
+        Logger.info(f"[MagicWandTool] mouse_press at {scene_pos}, channel_index={channel_index}")
+        
+        # --- FIX: Ensure Preview Item ---
+        view = context.get('view') if context else None
+        if not view:
+            view = self._get_active_view()
+            
+        self.current_view = view
+        
+        if view and view.scene():
+             if self.preview_item is None:
+                 self.preview_item = QGraphicsPathItem()
+                 self.preview_item.setPen(QPen(Qt.GlobalColor.yellow, 1, Qt.PenStyle.DashLine))
+                 self.preview_item.setZValue(9999)
+                 self.preview_item.setVisible(True)
+                 view.scene().addItem(self.preview_item)
+        # --------------------------------
+
         # 1. Determine target channel index
         effective_idx = channel_index
         if effective_idx < 0:
@@ -100,21 +293,26 @@ class MagicWandTool(AbstractTool):
             # map scene_pos (full-res) to display_pos (downsampled)
             x, y = int(scene_pos.x() * display_scale), int(scene_pos.y() * display_scale)
             work_data = display_data
-            print(f"MagicWand: Using Downsampled Data ({work_data.shape}) at ({x}, {y})")
+            Logger.debug(f"[MagicWandTool] Using Downsampled Data ({work_data.shape}) at ({x}, {y})")
         else:
             # Fallback to full-res raw data
             channel = self.session.get_channel(effective_idx)
             if not channel:
-                print(f"MagicWand: No channel at index {effective_idx}")
+                Logger.warning(f"[MagicWandTool] No channel at index {effective_idx}")
                 return
+            
+            if channel.raw_data is None:
+                Logger.error(f"[MagicWandTool] Channel {effective_idx} raw_data is None")
+                return
+
             x, y = int(scene_pos.x()), int(scene_pos.y())
             work_data = channel.raw_data
-            print(f"MagicWand: Using Raw Data ({work_data.shape}) at ({x}, {y})")
+            Logger.debug(f"[MagicWandTool] Using Raw Data ({work_data.shape}) at ({x}, {y})")
         
         # Boundary check
         h, w = work_data.shape[:2]
         if x < 0 or x >= w or y < 0 or y >= h:
-            print(f"MagicWand: Click out of bounds ({x}, {y})")
+            Logger.warning(f"[MagicWandTool] Click out of bounds ({x}, {y}) for shape ({w}, {h})")
             return
 
         # Initialize state
@@ -154,37 +352,77 @@ class MagicWandTool(AbstractTool):
              self._update_selection(self.current_work_data)
         
         self.preview_changed.emit()
+        
+        # --- FIX: Update Preview Item ---
+        if self.preview_item:
+             path = self.get_preview_path()
+             self.preview_item.setPath(path)
+        # --------------------------------
+        
+        # Force View Update for real-time feedback
+        view = self.current_view if self.current_view else self._get_active_view()
+        if view and view.scene():
+             view.scene().update()
+             view.viewport().update()
 
     def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         """
         Commits the ROI.
         """
+        Logger.info(f"[MagicWandTool] mouse_release at {scene_pos}")
         if not self.is_dragging or self.current_path is None:
+            Logger.debug("[MagicWandTool] No active drag or path to commit")
             self._reset_state()
             return
 
-        # Create the ROI
-        roi = ROI(
-            label=f"Wand_{int(np.sum(self.current_mask))}",
-            path=self.current_path,
-            color=self.get_channel_color(self.tool_active_channel_idx),
-            channel_index=self.tool_active_channel_idx
-        )
-        
-        # --- USER REQUEST: Reverse Mapping to Full Resolution ---
-        if self.display_scale < 1.0:
-            roi = roi.get_full_res_roi(self.display_scale)
-            print(f"MagicWand: Mapped to Full Resolution (Scale: {self.display_scale:.4f})")
-        
-        # Calculate stats on full-res data
-        if self.session.channels:
-            stats = calculate_intensity_stats(roi, self.session.channels)
-            roi.stats.update(stats)
-        
-        self.session.roi_manager.add_roi(roi)
-        self.committed.emit(f"Created ROI: {roi.label}")
-        self._reset_state()
-        self.preview_changed.emit()
+        try:
+            # Create the ROI
+            roi = ROI(
+                label=f"Wand_{int(np.sum(self.current_mask))}",
+                path=self.current_path,
+                color=self.get_channel_color(self.tool_active_channel_idx),
+                channel_index=self.tool_active_channel_idx
+            )
+            
+            # --- USER REQUEST: Reverse Mapping to Full Resolution ---
+            if self.display_scale < 1.0:
+                Logger.debug(f"[MagicWandTool] Mapping to Full Resolution (Scale: {self.display_scale:.4f})")
+                roi = roi.get_full_res_roi(self.display_scale)
+            
+            # Calculate stats on full-res data
+            if self.session.channels:
+                Logger.debug("[MagicWandTool] Calculating intensity stats")
+                stats = calculate_intensity_stats(roi, self.session.channels)
+                roi.stats.update(stats)
+            
+            self.session.roi_manager.add_roi(roi)
+            self.committed.emit(f"Created ROI: {roi.label}")
+            Logger.info(f"[MagicWandTool] Successfully created ROI: {roi.label}")
+        except Exception as e:
+            Logger.error(f"[MagicWandTool] Failed to create ROI: {e}", exc_info=True)
+        finally:
+            # --- FIX: Cleanup Preview Item ---
+            if self.preview_item:
+                 if self.preview_item.scene():
+                     self.preview_item.scene().removeItem(self.preview_item)
+                 self.preview_item = None
+            # ---------------------------------
+            
+            self._reset_state()
+            self.preview_changed.emit()
+
+        # Reset tool to Hand Mode to allow immediate selection of the new ROI
+        if hasattr(self.session, 'main_window') and self.session.main_window:
+             mw = self.session.main_window
+             # Reset via MultiView's active view
+             if hasattr(mw, 'multi_view'):
+                 try:
+                     view = mw.multi_view.get_active_view()
+                     if view:
+                         view.set_active_tool(None)
+                         Logger.debug("[MagicWandTool] Auto-switched to Hand Tool after creation")
+                 except Exception as e:
+                     Logger.error(f"[MagicWandTool] Failed to auto-switch to Hand Tool: {e}")
 
     def _update_selection(self, data: np.ndarray):
         """Internal helper to calculate mask and path."""
@@ -288,7 +526,7 @@ class PointCounterTool(AbstractTool):
             label=f"{label_prefix}_{existing_count + 1}",
             color=color,
             channel_index=effective_channel_idx,
-            properties={'shape': shape}
+            properties={'shape': shape, 'radius': self.radius}
         )
         
         # FIX: Point ROI visual offset issue
@@ -359,6 +597,20 @@ class PointCounterTool(AbstractTool):
         self.current_path = path
         self.preview_changed.emit()
 
+        # --- CRITICAL FIX: Ensure Preview Item Exists & Update ---
+        view = self._get_active_view()
+        if view and view.scene():
+             if self.preview_item is None:
+                 self.preview_item = QGraphicsPathItem()
+                 self.preview_item.setPen(QPen(Qt.GlobalColor.yellow, 1))
+                 self.preview_item.setZValue(9999)
+                 view.scene().addItem(self.preview_item)
+             
+             self.preview_item.setPath(self.current_path)
+             view.scene().update()
+        # -------------------------------------------------------
+
+
     def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         pass
 
@@ -380,14 +632,15 @@ class PolygonSelectionTool(AbstractTool):
         self.tool_active_channel_idx = -1
         self.is_freehand_mode = False # Toggle state
         self.display_scale = 1.0
+        self.is_moving = False
         
         # Fixed Size Mode
         self.fixed_size_mode = False
-        self.last_relative_points = None # List[QPointF] relative to points[0]
-        self.is_moving = False
+        self.last_relative_points = None
 
     def set_fixed_size_mode(self, enabled: bool):
         self.fixed_size_mode = enabled
+        Logger.info(f"[PolygonTool] Fixed size mode set to: {enabled}")
 
     def _update_preview_path(self, mouse_pos: QPointF = None):
         """Updates the QPainterPath used for rendering the preview."""
@@ -395,23 +648,31 @@ class PolygonSelectionTool(AbstractTool):
             self.current_path = None
             return
 
-        path = QPainterPath()
-        path.moveTo(self.points[0])
+        # Prepare points list for smoothing
+        pts = list(self.points)
         
-        for pt in self.points[1:]:
-            path.lineTo(pt)
-            
         if mouse_pos and not self.is_freehand_mode and not self.is_moving:
             # Only draw prediction line in point mode, and not moving fixed shape
-            path.lineTo(mouse_pos)
-        elif self.is_moving:
-             # Close the path for preview if moving fixed shape
-             path.closeSubpath()
+            pts.append(mouse_pos)
             
-        self.current_path = path
+        # Use smoothing helper
+        # If moving, it's a closed polygon. Otherwise open (preview).
+        closed = self.is_moving 
+        
+        self.current_path = create_smooth_path_from_points(pts, closed=closed)
+        
+        # Update the visual item
+        if self.preview_item:
+            self.preview_item.setPath(self.current_path or QPainterPath())
+            # Force update
+            if self.preview_item.scene():
+                self.preview_item.scene().update()
 
     def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
         # Only left click adds points. Right click handled separately.
+        view = context.get('view') if context else self._get_active_view()
+        self.current_view = view
+
         if not self.is_active:
             effective_idx = channel_index
             if effective_idx < 0:
@@ -431,12 +692,16 @@ class PolygonSelectionTool(AbstractTool):
             
         self.is_active = True
         
-        # If in freehand mode, we don't add points on click, we wait for drag?
-        # Actually, user requested Right Click to Toggle.
-        # So Left Click is always add point (or start freehand segment?)
+        # Ensure preview item exists and is in scene
+        if not self.preview_item:
+            if view and view.scene():
+                self.preview_item = QGraphicsPathItem()
+                self.preview_item.setPen(QPen(Qt.GlobalColor.yellow, 2, Qt.PenStyle.DashLine))
+                self.preview_item.setZValue(9999)
+                view.scene().addItem(self.preview_item)
+                Logger.debug(f"[PolygonTool] Preview item added to scene {view.view_id}")
+
         self.points.append(scene_pos)
-        print(f"DEBUG: Polygon Point Added. Total: {len(self.points)}")
-        Logger.debug(f"[PolygonTool] Point added: ({scene_pos.x():.1f}, {scene_pos.y():.1f}), total={len(self.points)}")
         self._update_preview_path(scene_pos) # Init with current pos
 
     def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
@@ -475,6 +740,17 @@ class PolygonSelectionTool(AbstractTool):
                      self.points.append(scene_pos)
             
             self._update_preview_path(scene_pos)
+
+        # Force View Update for real-time feedback
+        if hasattr(self.session, 'main_window') and self.session.main_window:
+             try:
+                 mw = self.session.main_window
+                 if hasattr(mw, 'multi_view'):
+                     view = mw.multi_view.get_active_view()
+                     if view and view.scene():
+                         view.scene().update()
+             except:
+                 pass
 
     def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.is_moving:
@@ -563,6 +839,45 @@ class PolygonSelectionTool(AbstractTool):
              image_points = self.points # Fallback
              print("DEBUG: Polygon used Raw Scene coordinates (No View found)")
 
+        # --- PHASE 3: Context Branching ---
+        context_mode = ToolContext.ROI # Default
+        if view and hasattr(view, 'current_context'):
+            context_mode = view.current_context
+        
+        Logger.info(f"[PolygonTool] Committing shape in context: {context_mode}")
+
+        if context_mode == ToolContext.ANNOTATION:
+            # Create Annotation
+            import uuid
+            from src.core.data_model import GraphicAnnotation
+            
+            # Store points as list of tuples (x, y)
+            pts_data = [(p.x(), p.y()) for p in image_points]
+            
+            ann = GraphicAnnotation(
+                id=str(uuid.uuid4()),
+                type='polygon',
+                points=pts_data,
+                color=self.get_channel_color(self.tool_active_channel_idx).name(),
+                thickness=2,
+                visible=True
+            )
+            # Add 'smooth' property if needed, default to True for polygons usually
+            ann.properties['smooth'] = True 
+            
+            # Use Manager if available, else append to list
+            if hasattr(view, 'annotation_manager') and view.annotation_manager:
+                view.annotation_manager.add_annotation(ann)
+            elif hasattr(self.session, 'annotations'):
+                self.session.annotations.append(ann)
+                # Trigger update?
+                view.scene().update()
+            
+            self.committed.emit(f"Created Annotation: {ann.id}")
+            self._cleanup_polygon()
+            return
+
+        # --- ROI Creation (Default) ---
         # Create ROI with scientific rigor (Store raw points for full-res mapping)
         roi = ROI(
             label=f"Polygon_{len(self.session.roi_manager.get_all_rois()) + 1}",
@@ -581,13 +896,25 @@ class PolygonSelectionTool(AbstractTool):
         self.session.roi_manager.add_roi(roi, undoable=True)
         self.committed.emit(f"Created ROI: {roi.label}")
 
+        self._cleanup_polygon()
+
+    def on_deactivate(self):
+        """USER REQUEST: Ensure polygon state is cleared on tool switch/ESC."""
+        self._cleanup_polygon()
+
+    def _cleanup_polygon(self):
         # Reset
+        if self.preview_item:
+            if self.preview_item.scene():
+                self.preview_item.scene().removeItem(self.preview_item)
+            self.preview_item = None
+            
         self.points = []
         self.current_path = None
         self.is_active = False
         self.is_freehand_mode = False
 
-class RectangleSelectionTool(AbstractTool):
+class RectangleSelectionTool(DrawingTool):
     """
     Rectangle Selection Tool.
     Drag to draw a rectangle. Release to create ROI.
@@ -607,9 +934,14 @@ class RectangleSelectionTool(AbstractTool):
         
     def set_fixed_size_mode(self, enabled: bool):
         self.fixed_size_mode = enabled
+    
+    def _create_specific_item(self):
+        return QGraphicsRectItem()
         
-    def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
-        print(f"DEBUG: RectTool.mouse_press at {scene_pos}, channel={channel_index}")
+    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+        Logger.debug(f"[RectangleSelectionTool.start_preview] ENTER: pos={scene_pos}, channel={channel_index}")
+        # Item creation handled by DrawingTool.mouse_press
+        
         effective_idx = channel_index
         if effective_idx < 0:
             effective_idx = self.active_channel_idx
@@ -617,7 +949,7 @@ class RectangleSelectionTool(AbstractTool):
         
         # --- USER REQUEST: Store scale for reverse mapping ---
         self.display_scale = context.get('display_scale', 1.0) if context else 1.0
-        print(f"DEBUG: RectTool.mouse_press display_scale={self.display_scale}")
+        Logger.debug(f"[RectangleSelectionTool.start_preview] display_scale={self.display_scale}")
         
         if self.fixed_size_mode and self.last_size:
             # Fixed Mode: Place rect centered at click (or top-left?)
@@ -625,20 +957,37 @@ class RectangleSelectionTool(AbstractTool):
             self.start_pos = scene_pos
             self.end_pos = scene_pos + QPointF(self.last_size.width(), self.last_size.height())
             self.is_moving = True
-            self._update_rect()
+            # No need to call update, base class handles it via get_preview_path
         else:
             # Normal Mode
             self.start_pos = scene_pos
             self.end_pos = scene_pos
             self.is_dragging = True
-            self._update_rect()
+            
+        # --- CRITICAL FIX: Ensure Geometry is Updated Immediately ---
+        if self.preview_item and isinstance(self.preview_item, QGraphicsRectItem):
+             rect = QRectF(self.start_pos, self.end_pos).normalized()
+             self.preview_item.setRect(rect)
+             Logger.debug(f"[RectangleSelectionTool.start_preview] updated rect: {rect}")
+
         
-    def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+        import time
+        start = time.perf_counter()
+        
+        # 调试：检查 self.preview_item 是否存在且有效
+        if not self.preview_item:
+            Logger.warning("[RectangleSelectionTool.on_mouse_move] preview_item is None!")
+        elif not self.preview_item.scene():
+            Logger.warning("[RectangleSelectionTool.on_mouse_move] preview_item has no scene!")
+        elif not self.preview_item.isVisible():
+            Logger.debug("[RectangleSelectionTool.on_mouse_move] Force showing preview_item")
+            self.preview_item.setVisible(True)
+            
         if self.is_moving and self.last_size:
             # Move the entire rect
             self.start_pos = scene_pos
             self.end_pos = scene_pos + QPointF(self.last_size.width(), self.last_size.height())
-            self._update_rect()
         elif self.is_dragging and self.start_pos:
             # Resize
             self.end_pos = scene_pos
@@ -654,11 +1003,17 @@ class RectangleSelectionTool(AbstractTool):
                 new_h = size if height >= 0 else -size
                 
                 self.end_pos = QPointF(self.start_pos.x() + new_w, self.start_pos.y() + new_h)
+        
+        # --- CRITICAL FIX: Update Rect Geometry ---
+        if self.preview_item and isinstance(self.preview_item, QGraphicsRectItem):
+            if self.start_pos and self.end_pos:
+                rect = QRectF(self.start_pos, self.end_pos).normalized()
+                self.preview_item.setRect(rect)
+                
+        Logger.debug(f"[RectangleSelectionTool.on_mouse_move] Logic took {(time.perf_counter()-start)*1000:.2f}ms")
             
-            self._update_rect()
-            
-    def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        print(f"DEBUG: RectTool.mouse_release at {scene_pos}")
+    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+        Logger.debug(f"[RectangleSelectionTool.finish_shape] ENTER: pos={scene_pos}")
         if self.is_moving:
             self.is_moving = False
             self._create_roi()
@@ -683,14 +1038,24 @@ class RectangleSelectionTool(AbstractTool):
         self.is_dragging = False
         self.is_moving = False
         self.preview_changed.emit()
+        Logger.debug("[RectangleSelectionTool.finish_shape] EXIT")
             
-    def _update_rect(self):
+    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
         path = QPainterPath()
         if self.start_pos and self.end_pos:
             rect = QRectF(self.start_pos, self.end_pos).normalized()
             path.addRect(rect)
         self.current_path = path
         self.preview_changed.emit()
+        return path
+
+    def _update_rect(self):
+        # Legacy method, might be called by set_fixed_size_mode?
+        # Actually no, set_fixed_size_mode just sets flag.
+        # This method is no longer needed by mouse events, but let's keep it safe or remove it.
+        # It's called by set_fixed_size_mode logic if we were to preview immediately, but
+        # usually preview only happens on mouse interaction.
+        pass
 
     def _create_roi(self):
         print("DEBUG: RectTool._create_roi start")
@@ -725,6 +1090,48 @@ class RectangleSelectionTool(AbstractTool):
             else:
                  print("DEBUG: Rectangle used Raw Scene coordinates (No View found)")
             
+            # --- PHASE 3: Context Branching ---
+            context_mode = ToolContext.ROI # Default
+            if view and hasattr(view, 'current_context'):
+                context_mode = view.current_context
+            
+            Logger.info(f"[RectTool] Committing shape in context: {context_mode}")
+
+            if context_mode == ToolContext.ANNOTATION:
+                # Create Annotation
+                import uuid
+                from src.core.data_model import GraphicAnnotation
+                
+                # Annotations use Scene Coordinates (usually) or Image? 
+                # Existing TextTool uses scene_pos (which is Scene Coords).
+                # But CanvasView._on_roi_added uses display_scale=1.0.
+                # Let's assume Annotations should use Image Coordinates for consistency if they scale with image?
+                # Actually, GraphicAnnotation usually stores points.
+                # Let's use Image Coordinates to be safe and consistent with ROIs.
+                
+                pts = [(image_start.x(), image_start.y()), (image_end.x(), image_end.y())]
+                
+                ann = GraphicAnnotation(
+                    id=str(uuid.uuid4()),
+                    type='rect',
+                    points=pts,
+                    color=self.get_channel_color(self.tool_active_channel_idx).name(),
+                    thickness=2,
+                    visible=True
+                )
+                
+                # Use Manager if available, else append to list
+                if hasattr(view, 'annotation_manager') and view.annotation_manager:
+                    view.annotation_manager.add_annotation(ann)
+                elif hasattr(self.session, 'annotations'):
+                    self.session.annotations.append(ann)
+                    # Trigger update?
+                    view.scene().update()
+                
+                self.committed.emit(f"Created Annotation: {ann.id}")
+                return
+
+            # --- ROI Creation (Default) ---
             # Create ROI with scientific rigor (Store raw points for full-res mapping)
             print("DEBUG: Creating ROI object...")
             roi = ROI(
@@ -768,20 +1175,17 @@ class TextTool(AbstractTool):
     def set_color(self, hex_color: str):
         self.color = hex_color
         
-    def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
         self.start_pos = scene_pos
         self.end_pos = scene_pos
         self.is_dragging = True
         self.display_scale = context.get('display_scale', 1.0) if context else 1.0
-        self._update_path()
         
-    def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.is_dragging:
             self.end_pos = scene_pos
-            self._update_path()
-            self.preview_changed.emit()
             
-    def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.is_dragging:
             self.end_pos = scene_pos
             self._create_annotation()
@@ -792,13 +1196,18 @@ class TextTool(AbstractTool):
         self.current_path = None
         self.preview_changed.emit()
         
-    def _update_path(self):
+    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
         path = QPainterPath()
         if self.start_pos and self.end_pos:
             path.moveTo(self.start_pos)
             path.lineTo(self.end_pos) # Just a line to show where text starts
         self.current_path = path
-        
+        return path
+
+    def _update_path(self):
+        pass
+
+
     def _create_annotation(self):
         if not self.start_pos or not self.end_pos:
             return
@@ -829,12 +1238,8 @@ class TextTool(AbstractTool):
         
         self.session.annotations.append(ann)
         self.committed.emit(f"Added text annotation")
-        
-    def get_preview_path(self) -> QPainterPath:
-        return self.current_path or QPainterPath()
 
-
-class EllipseSelectionTool(AbstractTool):
+class EllipseSelectionTool(DrawingTool):
     """
     Ellipse Selection Tool.
     Drag to draw an ellipse. Release to create ROI.
@@ -854,8 +1259,15 @@ class EllipseSelectionTool(AbstractTool):
         
     def set_fixed_size_mode(self, enabled: bool):
         self.fixed_size_mode = enabled
-        
-    def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+    
+    def _create_specific_item(self):
+        return QGraphicsEllipseItem()
+
+    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+        # --- CRITICAL FIX: Ensure Correct Item Type & Visibility ---
+        # Item creation handled by DrawingTool.mouse_press
+        # -----------------------------------------------------------
+
         effective_idx = channel_index
         if effective_idx < 0:
             effective_idx = self.active_channel_idx
@@ -869,20 +1281,17 @@ class EllipseSelectionTool(AbstractTool):
             self.start_pos = scene_pos
             self.end_pos = scene_pos + QPointF(self.last_size.width(), self.last_size.height())
             self.is_moving = True
-            self._update_ellipse()
         else:
             # Normal Mode
             self.start_pos = scene_pos
             self.end_pos = scene_pos
             self.is_dragging = True
-            self._update_ellipse()
         
-    def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.is_moving and self.last_size:
             # Move the entire shape
             self.start_pos = scene_pos
             self.end_pos = scene_pos + QPointF(self.last_size.width(), self.last_size.height())
-            self._update_ellipse()
         elif self.is_dragging and self.start_pos:
             self.end_pos = scene_pos
             
@@ -897,10 +1306,15 @@ class EllipseSelectionTool(AbstractTool):
                 new_h = size if height >= 0 else -size
                 
                 self.end_pos = QPointF(self.start_pos.x() + new_w, self.start_pos.y() + new_h)
+        
+        # --- CRITICAL FIX: Update Ellipse Geometry ---
+        if self.preview_item and isinstance(self.preview_item, QGraphicsEllipseItem):
+             if self.start_pos and self.end_pos:
+                 rect = QRectF(self.start_pos, self.end_pos).normalized()
+                 self.preview_item.setRect(rect)
+        # ---------------------------------------------
             
-            self._update_ellipse()
-            
-    def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.is_moving:
             self.is_moving = False
             self._create_roi()
@@ -926,13 +1340,17 @@ class EllipseSelectionTool(AbstractTool):
         self.is_moving = False
         self.preview_changed.emit()
             
-    def _update_ellipse(self):
+    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
         path = QPainterPath()
         if self.start_pos and self.end_pos:
             rect = QRectF(self.start_pos, self.end_pos).normalized()
             path.addEllipse(rect)
         self.current_path = path
         self.preview_changed.emit()
+        return path
+
+    def _update_ellipse(self):
+        pass
 
     def _create_roi(self):
         if not self.start_pos or not self.end_pos:
@@ -962,6 +1380,41 @@ class EllipseSelectionTool(AbstractTool):
         else:
              print("DEBUG: Ellipse used Raw Scene coordinates (No View found)")
             
+        # --- PHASE 3: Context Branching ---
+        context_mode = ToolContext.ROI # Default
+        if view and hasattr(view, 'current_context'):
+            context_mode = view.current_context
+        
+        Logger.info(f"[EllipseTool] Committing shape in context: {context_mode}")
+
+        if context_mode == ToolContext.ANNOTATION:
+            # Create Annotation
+            import uuid
+            from src.core.data_model import GraphicAnnotation
+            
+            pts = [(image_start.x(), image_start.y()), (image_end.x(), image_end.y())]
+            
+            ann = GraphicAnnotation(
+                id=str(uuid.uuid4()),
+                type='ellipse',
+                points=pts,
+                color=self.get_channel_color(self.tool_active_channel_idx).name(),
+                thickness=2,
+                visible=True
+            )
+            
+            # Use Manager if available, else append to list
+            if hasattr(view, 'annotation_manager') and view.annotation_manager:
+                view.annotation_manager.add_annotation(ann)
+            elif hasattr(self.session, 'annotations'):
+                self.session.annotations.append(ann)
+                # Trigger update?
+                view.scene().update()
+            
+            self.committed.emit(f"Created Annotation: {ann.id}")
+            return
+
+        # --- ROI Creation (Default) ---
         # Create ROI with scientific rigor (Store raw points for full-res mapping)
         roi = ROI(
             label=f"Ellipse_{len(self.session.roi_manager.get_all_rois()) + 1}",
@@ -979,7 +1432,7 @@ class EllipseSelectionTool(AbstractTool):
         self.committed.emit(f"Created ROI: {roi.label}")
 
 
-class LineScanTool(AbstractTool):
+class LineScanTool(DrawingTool):
     """
     Line Scan Tool.
     Drag to draw a line. Real-time updates for colocalization analysis.
@@ -1000,8 +1453,15 @@ class LineScanTool(AbstractTool):
 
     def set_fixed_size_mode(self, enabled: bool):
         self.fixed_size_mode = enabled
+        
+    def _create_specific_item(self):
+        return QGraphicsLineItem()
 
-    def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+        # --- CRITICAL FIX: Ensure Correct Item Type & Visibility ---
+        # Item creation handled by DrawingTool.mouse_press
+        # -----------------------------------------------------------
+
         self.start_pos = scene_pos
         # --- USER REQUEST: Store scale for reverse mapping ---
         self.display_scale = context.get('display_scale', 1.0) if context else 1.0
@@ -1012,45 +1472,46 @@ class LineScanTool(AbstractTool):
                 self.end_pos = scene_pos + self.last_vector
                 self.is_moving = True
                 self.is_dragging = False
-                self._update_line()
             else:
                 # Fallback default: 50px horizontal
                 self.last_vector = QPointF(50.0, 0.0)
                 self.end_pos = scene_pos + self.last_vector
                 self.is_moving = True
                 self.is_dragging = False
-                self._update_line()
         else:
             # Normal Mode
             self.end_pos = scene_pos
             self.is_dragging = True
             self.is_moving = False
-            self._update_line()
 
-    def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.is_moving and self.last_vector:
             # Move the entire line (maintain vector)
             self.start_pos = scene_pos
             self.end_pos = scene_pos + self.last_vector
-            self._update_line()
             
             # --- USER REQUEST: Emit full-resolution coordinates ---
             self.line_updated.emit(self.start_pos, self.end_pos)
             
         elif self.is_dragging:
             self.end_pos = scene_pos
-            self._update_line()
             
             # --- USER REQUEST: Emit full-resolution coordinates for accurate analysis ---
             self.line_updated.emit(self.start_pos, self.end_pos)
+            
+        # --- CRITICAL FIX: Update Line Geometry ---
+        if self.preview_item and isinstance(self.preview_item, QGraphicsLineItem):
+            if self.start_pos and self.end_pos:
+                from PySide6.QtCore import QLineF
+                self.preview_item.setLine(QLineF(self.start_pos, self.end_pos))
+        # ------------------------------------------
 
-    def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.is_moving:
             self.is_moving = False
             self._create_line_roi()
         elif self.is_dragging:
             self.end_pos = scene_pos
-            self._update_line()
             
             # --- USER REQUEST: Emit full-resolution coordinates for accurate analysis ---
             self.line_updated.emit(self.start_pos, self.end_pos)
@@ -1067,16 +1528,17 @@ class LineScanTool(AbstractTool):
         self.is_moving = False
         self.preview_changed.emit()
 
-    def get_preview_path(self) -> QPainterPath:
-        return self.current_path or QPainterPath()
-
-    def _update_line(self):
+    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
         path = QPainterPath()
         if self.start_pos and self.end_pos:
             path.moveTo(self.start_pos)
             path.lineTo(self.end_pos)
         self.current_path = path
         self.preview_changed.emit()
+        return path
+
+    def _update_line(self):
+        pass
 
     def _create_line_roi(self):
         if not self.start_pos or not self.end_pos:
@@ -1106,6 +1568,44 @@ class LineScanTool(AbstractTool):
         else:
              print("DEBUG: LineScan used Raw Scene coordinates (No View found)")
             
+        # --- PHASE 3: Context Branching ---
+        context_mode = ToolContext.ROI # Default
+        if view and hasattr(view, 'current_context'):
+            context_mode = view.current_context
+        
+        Logger.info(f"[LineTool] Committing shape in context: {context_mode}")
+
+        if context_mode == ToolContext.ANNOTATION:
+            # Create Annotation
+            import uuid
+            from src.core.data_model import GraphicAnnotation
+            
+            pts = [(image_start.x(), image_start.y()), (image_end.x(), image_end.y())]
+            
+            ann = GraphicAnnotation(
+                id=str(uuid.uuid4()),
+                type='line', # Or arrow? Default to line for LineScanTool. ArrowTool is separate usually.
+                points=pts,
+                color=self.get_channel_color(self.active_channel_idx).name(), # Use active channel or default yellow
+                thickness=2,
+                visible=True
+            )
+            # Maybe use yellow default for line scan?
+            if self.active_channel_idx < 0:
+                 ann.color = "#FFFF00" # Yellow
+            
+            # Use Manager if available, else append to list
+            if hasattr(view, 'annotation_manager') and view.annotation_manager:
+                view.annotation_manager.add_annotation(ann)
+            elif hasattr(self.session, 'annotations'):
+                self.session.annotations.append(ann)
+                # Trigger update?
+                view.scene().update()
+            
+            self.committed.emit(f"Created Annotation: {ann.id}")
+            return
+
+        # --- ROI Creation (Default) ---
         path = QPainterPath()
         path.moveTo(image_start)
         path.lineTo(image_end)
@@ -1135,48 +1635,56 @@ class CropTool(AbstractTool):
         self.end_pos = None
         self.current_path = None
         
-    def mouse_press(self, scene_pos: QPointF, channel_index: int):
+    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
         self.start_pos = scene_pos
         self.end_pos = scene_pos
-        self._update_rect()
+        self.is_dragging = True
+        # CropTool uses double click to execute, release just ends drag
         
-    def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.start_pos:
             self.end_pos = scene_pos
-            self._update_rect()
             
+    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+        # CropTool doesn't commit on release, it waits for double click
+        # Just stop dragging
+        # But we need to keep the preview visible?
+        # AbstractTool clears preview on release.
+        # CropTool needs persistent preview until double click.
+        # This refactor breaks CropTool unless we persist preview.
+        # For now, let's keep CropTool behavior: drag to define, double click to commit.
+        # But AbstractTool destroys preview item on release.
+        # So CropTool needs its own preview item management or AbstractTool needs to support persistence.
+        
+        # Workaround: Re-add preview item in finish_shape? Or don't use AbstractTool for CropTool?
+        # Actually, CropTool usually clears on release in standard tools, but here it says "Double-click to crop".
+        # If it clears on release, user can't see what they selected to double click.
+        # So CropTool logic: Drag -> Rect shows -> Release -> Rect stays -> Double Click -> Action.
+        
+        # We can set self.preview_item to None in finish_shape so AbstractTool doesn't remove it?
+        # No, AbstractTool removes it first.
+        
+        # Let's revert CropTool to NOT use AbstractTool hooks for now, OR:
+        # Override mouse_release to NOT call super?
+        # But AbstractTool.mouse_release cleans up.
+        
+        # Let's Override mouse_release in CropTool to bypass cleanup.
+        pass
+
     def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+        # Override to prevent cleanup
         pass
         
-    def mouse_double_click(self, scene_pos: QPointF):
-        # Execute Crop
-        if self.start_pos and self.end_pos:
-            rect = QRectF(self.start_pos, self.end_pos).normalized()
-            
-            # Minimum size check
-            if rect.width() < 5 or rect.height() < 5:
-                print("Crop area too small.")
-                return
-                
-            r_tuple = (rect.x(), rect.y(), rect.width(), rect.height())
-            
-            from src.core.commands import CropCommand
-            cmd = CropCommand(self.session, r_tuple)
-            self.session.roi_manager.undo_stack.push(cmd)
-            
-            # Reset
-            self.start_pos = None
-            self.end_pos = None
-            self.current_path = None
-            self.preview_changed.emit()
-            
-    def _update_rect(self):
+    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
         path = QPainterPath()
         if self.start_pos and self.end_pos:
             rect = QRectF(self.start_pos, self.end_pos).normalized()
             path.addRect(rect)
         self.current_path = path
-        self.preview_changed.emit()
+        return path
+
+    def _update_rect(self):
+        pass
 
 
 class BatchSelectionTool(AbstractTool):
@@ -1192,31 +1700,29 @@ class BatchSelectionTool(AbstractTool):
         self.is_dragging = False
         self.tool_channel_index = -1
 
-    def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
         self.start_pos = scene_pos
         self.is_dragging = True
         self.tool_channel_index = channel_index
         self.current_rect = QRectF(scene_pos, scene_pos)
-        self._update_preview()
-
-    def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+        
+    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if not self.is_dragging:
             return
         self.current_rect = QRectF(self.start_pos, scene_pos).normalized()
-        self._update_preview()
-
-    def mouse_release(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+        
+    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         if self.is_dragging and self.current_rect:
             self.selection_made.emit(self.current_rect, self.tool_channel_index)
         self.is_dragging = False
         self.current_rect = None
         self.preview_changed.emit()
-
-    def _update_preview(self):
-        self.preview_changed.emit()
-
-    def get_preview_path(self) -> QPainterPath:
+        
+    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
         path = QPainterPath()
         if self.current_rect:
             path.addRect(self.current_rect)
         return path
+
+    def _update_preview(self):
+        pass

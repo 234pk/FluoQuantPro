@@ -229,6 +229,58 @@ class IconManager:
                 <circle cx="60" cy="50" r="25" fill="none" stroke="{color}" stroke-width="10"/>
                 <path d="M 50 28 A 25 25 0 0 1 50 72 A 25 25 0 0 1 50 28" fill="{color}"/>
             </svg>
+        """,
+        "arrow": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 20 80 L 70 30 M 50 30 L 70 30 L 70 50" stroke="{color}" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        """,
+        "line": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <line x1="20" y1="80" x2="80" y2="20" stroke="{color}" stroke-width="8" stroke-linecap="round"/>
+                <circle cx="20" cy="80" r="6" fill="{color}"/>
+                <circle cx="80" cy="20" r="6" fill="{color}"/>
+            </svg>
+        """,
+        "rect": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <rect x="20" y="25" width="60" height="50" rx="4" stroke="{color}" stroke-width="8" fill="none"/>
+            </svg>
+        """,
+        "circle": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="50" cy="50" r="35" stroke="{color}" stroke-width="8" fill="none"/>
+            </svg>
+        """,
+        "ellipse": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <ellipse cx="50" cy="50" rx="40" ry="25" stroke="{color}" stroke-width="8" fill="none"/>
+            </svg>
+        """,
+        "polygon": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 50 15 L 85 40 L 75 80 L 25 80 L 15 40 Z" stroke="{color}" stroke-width="8" fill="none" stroke-linejoin="round"/>
+            </svg>
+        """,
+        "text": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 25 25 L 75 25 M 50 25 L 50 75 M 35 75 L 65 75" stroke="{color}" stroke-width="10" fill="none" stroke-linecap="round"/>
+            </svg>
+        """,
+        "align_left": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 10 20 L 90 20 M 10 40 L 60 40 M 10 60 L 90 60 M 10 80 L 60 80" stroke="{color}" stroke-width="10" stroke-linecap="round"/>
+            </svg>
+        """,
+        "align_center": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 10 20 L 90 20 M 25 40 L 75 40 M 10 60 L 90 60 M 25 80 L 75 80" stroke="{color}" stroke-width="10" stroke-linecap="round"/>
+            </svg>
+        """,
+        "align_right": """
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <path d="M 10 20 L 90 20 M 40 40 L 90 40 M 10 60 L 90 60 M 40 80 L 90 80" stroke="{color}" stroke-width="10" stroke-linecap="round"/>
+            </svg>
         """
     }
 

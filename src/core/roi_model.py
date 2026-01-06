@@ -4,6 +4,51 @@ import uuid
 from PySide6.QtGui import QPainterPath, QColor, QUndoStack, QUndoCommand
 from PySide6.QtCore import QObject, Signal, QPointF, QRectF
 
+def create_smooth_path_from_points(points: List[QPointF], closed: bool = True) -> QPainterPath:
+    """
+    Generates a smooth QPainterPath from points using Catmull-Rom splines.
+    """
+    path = QPainterPath()
+    if not points:
+        return path
+    
+    path.moveTo(points[0])
+    
+    if len(points) < 3:
+        for p in points[1:]:
+            path.lineTo(p)
+        if closed:
+            path.closeSubpath()
+        return path
+
+    n = len(points)
+    
+    for i in range(n if closed else n - 1):
+        if closed:
+            p0 = points[(i - 1) % n]
+            p1 = points[i]
+            p2 = points[(i + 1) % n]
+            p3 = points[(i + 2) % n]
+        else:
+            p0 = points[i - 1] if i > 0 else points[0]
+            p1 = points[i]
+            p2 = points[i + 1]
+            p3 = points[i + 2] if i < n - 2 else points[n - 1]
+
+        # Catmull-Rom to Cubic Bezier conversion
+        # Tangent at p1 = 0.5 * (p2 - p0)
+        # Tangent at p2 = 0.5 * (p3 - p1)
+        
+        t1 = (p2 - p0) * 0.5
+        t2 = (p3 - p1) * 0.5
+        
+        c1 = p1 + t1 / 3
+        c2 = p2 - t2 / 3
+        
+        path.cubicTo(c1, c2, p2)
+        
+    return path
+
 @dataclass
 class ROI:
     """
@@ -19,6 +64,7 @@ class ROI:
     selected: bool = False
     roi_type: str = "general" # e.g., "line_scan", "cell", "nucleus"
     line_points: Optional[tuple] = None # (start_qpointf, end_qpointf)
+    is_dragging: bool = False # Temporary state for performance optimization
     
     # --- Scientific Rigor: Sub-pixel Accuracy ---
     # Store raw points for resolution-independent reconstruction
@@ -105,14 +151,22 @@ class ROI:
             rect = QRectF(points[0], points[1]).normalized()
             path.addEllipse(rect)
         elif self.roi_type == "polygon" and len(points) >= 3:
-            path.moveTo(points[0])
-            for p in points[1:]:
-                path.lineTo(p)
-            path.closeSubpath()
+            # Use smoothed path for better visual quality
+            # Lazy Smoothing: Disable during drag
+            if not self.is_dragging:
+                self.path = create_smooth_path_from_points(points, closed=True)
+            else:
+                # Simple polygon during drag
+                path = QPainterPath()
+                path.moveTo(points[0])
+                for p in points[1:]:
+                    path.lineTo(p)
+                path.closeSubpath()
+                self.path = path
+            return # Skip default assignment
         elif self.roi_type == "point" and len(points) >= 1:
-            # Circular point with fixed radius? Or just a point.
-            # In FluoQuantPro, points are usually small circles.
-            r = 3.0 # Default radius
+            # Circular point with radius from properties or default
+            r = self.properties.get('radius', 3.0)
             
             # Check for shape property
             shape = self.properties.get('shape', 'circle')
@@ -188,18 +242,6 @@ class AddRoiCommand(QUndoCommand):
     def redo(self):
         # Direct call to internal add (avoids recursion)
         self.manager._add_roi_internal(self.roi)
-
-    def move_roi(self, roi_id: str, new_path: QPainterPath, undoable: bool = False):
-        """Updates ROI path (geometry). Set undoable=True for user movements."""
-        if roi_id not in self._rois:
-            return
-            
-        if undoable:
-            old_path = QPainterPath(self._rois[roi_id].path)
-            self.undo_stack.push(MoveRoiCommand(self, roi_id, old_path, new_path))
-        else:
-            self._rois[roi_id].path = new_path
-            self.roi_updated.emit(self._rois[roi_id])
 
     def undo(self):
         self.manager._remove_roi_internal(self.roi.id)
@@ -310,10 +352,12 @@ class RoiManager(QObject):
     def get_all_rois(self) -> List[ROI]:
         return list(self._rois.values())
 
-    def update_roi_path(self, roi_id: str, new_path: QPainterPath):
+    def update_roi_path(self, roi_id: str, new_path: QPainterPath, is_dragging: bool = False):
         """Updates the path of an existing ROI with Undo support."""
         if roi_id in self._rois:
-            old_path = self._rois[roi_id].path
+            roi = self._rois[roi_id]
+            roi.is_dragging = is_dragging # Set dragging state
+            old_path = roi.path
             if old_path != new_path:
                 self.undo_stack.push(MoveRoiCommand(self, roi_id, old_path, new_path))
 

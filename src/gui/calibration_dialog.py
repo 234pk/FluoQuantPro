@@ -40,7 +40,7 @@ class CalibrationDialog(QDialog):
         # Result Preview
         self.lbl_result = QLabel("")
         self.lbl_result.setAlignment(Qt.AlignCenter)
-        self.lbl_result.setStyleSheet("font-weight: bold; color: green;")
+        self.lbl_result.setProperty("role", "status")
         layout.addWidget(self.lbl_result)
         
         # Calculate Button
@@ -69,11 +69,18 @@ class CalibrationDialog(QDialog):
             if dist_px > 0:
                 pixel_size = known_dist / dist_px
                 self.lbl_result.setText(tr("New Scale: {0:.4f} {1}/px").format(pixel_size, unit))
+                self.lbl_result.setProperty("role", "success")
             else:
                 self.lbl_result.setText(tr("Draw a line to calculate scale"))
+                self.lbl_result.setProperty("role", "warning")
                 
         except ValueError:
             self.lbl_result.setText("")
+            self.lbl_result.setProperty("role", "status")
+
+        # Refresh style
+        self.lbl_result.style().unpolish(self.lbl_result)
+        self.lbl_result.style().polish(self.lbl_result)
 
     def get_result(self):
         try:

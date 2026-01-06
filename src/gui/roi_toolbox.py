@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QToolButton, 
                                QGroupBox, QLabel, QSizePolicy, QCheckBox, QDoubleSpinBox, QHBoxLayout,
                                QApplication, QComboBox, QPushButton, QColorDialog, QMenu)
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QSettings
 from PySide6.QtGui import QPalette, QColor, QCursor, QAction
 from src.core.language_manager import tr, LanguageManager
 from src.core.logger import Logger
@@ -9,6 +9,7 @@ from src.core.logger import Logger
 class RoiToolbox(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
+        self.setObjectName("card")
         self.main_window = main_window
         
         # Allow panel to shrink very small
@@ -39,23 +40,6 @@ class RoiToolbox(QWidget):
 
     def create_tools_group(self):
         self.tools_group = QGroupBox(tr("Tools"))
-        # Fluent/Card Style
-        self.tools_group.setStyleSheet("""
-            QGroupBox {
-                border: 1px solid #E0E0E0;
-                border-radius: 8px;
-                margin-top: 1.5em;
-                background-color: #FFFFFF;
-                font-family: "Segoe UI", sans-serif;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 3px 0 3px;
-                color: #4285F4;
-                font-weight: bold;
-            }
-        """)
         layout = QGridLayout()
         layout.setSpacing(4)
         layout.setContentsMargins(2, 8, 2, 4) # Reduced margins
@@ -75,15 +59,14 @@ class RoiToolbox(QWidget):
             (self.main_window.action_undo, 4, 0),
             (self.main_window.action_redo, 4, 1),
             (self.main_window.action_batch_select, 5, 0, 1, 2),
-            (self.main_window.action_export, 6, 0, 1, 2), # Moved export here
         ]
         
         for tool_info in tools:
             action = tool_info[0]
             row, col = tool_info[1], tool_info[2]
             
-            # Use TextUnderIcon for clearer, centered look
-            btn = self.create_button(action, tool_button_style=Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            # Use IconOnly for compact look
+            btn = self.create_button(action)
             # Fixed constraints removed for adaptive sizing (handled in resizeEvent/create_button)
             
             # Special handling for Polygon Tool Right-Click
@@ -100,6 +83,15 @@ class RoiToolbox(QWidget):
         self.chk_fixed_size = QCheckBox(tr("Fixed Shape"))
         self.chk_fixed_size.setToolTip(tr("Lock ROI size to the last drawn shape"))
         layout.addWidget(self.chk_fixed_size, 7, 0, 1, 2)
+
+        # Sync ROIs as Annotations
+        self.chk_sync_rois = QCheckBox(tr("Sync ROIs as Annotations"))
+        self.settings = QSettings("FluoQuantPro", "AppSettings")
+        sync_default = self.settings.value("interface/sync_rois_as_annotations", True, type=bool)
+        self.chk_sync_rois.setChecked(sync_default)
+        self.chk_sync_rois.setToolTip(tr("Automatically include ROIs in annotation list and exports"))
+        self.chk_sync_rois.toggled.connect(self._on_sync_rois_toggled)
+        layout.addWidget(self.chk_sync_rois, 8, 0, 1, 2)
 
         self.tools_group.setLayout(layout)
         self.layout.addWidget(self.tools_group)
@@ -138,6 +130,25 @@ class RoiToolbox(QWidget):
         menu.addAction(action_fixed)
 
         menu.exec(QCursor.pos())
+
+    def _on_sync_rois_toggled(self, checked):
+        """Persist the sync setting and notify related components."""
+        self.settings.setValue("interface/sync_rois_as_annotations", checked)
+        # Update session property if it exists
+        if hasattr(self.main_window, 'session'):
+            if hasattr(self.main_window.session, 'sync_rois_as_annotations'):
+                self.main_window.session.sync_rois_as_annotations = checked
+            
+            # USER REQUEST: When enabled, convert existing ROIs to annotations too
+            if checked:
+                Logger.info("[RoiToolbox] Sync enabled: Converting existing ROIs to annotations...")
+                self.main_window.session.sync_existing_rois_to_annotations()
+        
+        # Notify annotation panel to refresh if needed
+        if hasattr(self.main_window, 'annotation_panel'):
+            self.main_window.annotation_panel.annotation_updated.emit()
+        
+        Logger.info(f"[RoiToolbox] Sync ROIs as Annotations: {checked}")
 
     def set_polygon_mode(self, mode):
         # Activate the tool first
@@ -235,9 +246,7 @@ class RoiToolbox(QWidget):
         # 3. Counts Summary
         self.lbl_counts_summary = QLabel(tr("Counts: 0 total"))
         self.lbl_counts_summary.setWordWrap(True) # Allow wrapping
-        palette = QApplication.palette()
-        mid_color = palette.color(QPalette.ColorRole.Mid).name()
-        self.lbl_counts_summary.setStyleSheet(f"font-weight: bold; color: {mid_color};")
+        self.lbl_counts_summary.setProperty("role", "accent")
         layout.addWidget(self.lbl_counts_summary)
         
         # Connect radius change to tool
@@ -307,9 +316,11 @@ class RoiToolbox(QWidget):
         
         # Color
         btn_color = QPushButton()
-        btn_color.setFixedSize(20, 20)
-        btn_color.setStyleSheet(f"background-color: {default_color}; border: 1px solid #888;")
-        btn_color.clicked.connect(lambda: self._pick_channel_color(ch_idx, btn_color))
+        btn_color.setProperty("role", "color_picker")
+        btn_color.setToolTip(tr("Select Point Color"))
+        # Only set background color via style, others handled by role="color_picker"
+        btn_color.setStyleSheet(f"background-color: {default_color};")
+        btn_color.clicked.connect(lambda checked=False, i=ch_idx, b=btn_color: self._pick_channel_color(i, b))
         
         h_row.addWidget(lbl)
         h_row.addWidget(combo_shape)
@@ -325,7 +336,7 @@ class RoiToolbox(QWidget):
         color = QColorDialog.getColor(current_color, self, tr("Select Point Color"))
         if color.isValid():
             hex_color = color.name()
-            btn.setStyleSheet(f"background-color: {hex_color}; border: 1px solid #888;")
+            btn.setStyleSheet(f"background-color: {hex_color};")
             if hasattr(self.main_window, 'count_tool'):
                 self.main_window.count_tool.set_channel_color_override(ch_idx, hex_color)
 
@@ -336,6 +347,20 @@ class RoiToolbox(QWidget):
     def on_count_radius_changed(self, value):
         if hasattr(self.main_window, 'count_tool'):
             self.main_window.count_tool.radius = value
+            
+        # Also update selected point ROIs
+        if hasattr(self.main_window, 'session'):
+            selected_rois = [r for r in self.main_window.session.roi_manager.get_all_rois() 
+                             if r.selected and r.roi_type == "point"]
+            if selected_rois:
+                for roi in selected_rois:
+                    roi.properties['radius'] = value
+                    # Trigger reconstruction to update the path
+                    roi.reconstruct_from_points(roi.points)
+                
+                # Notify session about changes
+                self.main_window.session.data_changed.emit()
+                Logger.info(f"[RoiToolbox] Updated radius to {value} for {len(selected_rois)} selected points")
 
     def on_count_target_changed(self, index):
         if hasattr(self.main_window, 'count_tool'):
@@ -391,39 +416,30 @@ class RoiToolbox(QWidget):
 
     def create_analysis_group(self):
         self.analysis_group = QGroupBox(tr("Analysis"))
-        self.analysis_group.setStyleSheet("""
-            QGroupBox {
-                border: 1px solid #E0E0E0;
-                border-radius: 8px;
-                margin-top: 1.5em;
-                background-color: #FFFFFF;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 3px 0 3px;
-                color: #4285F4;
-                font-weight: bold;
-            }
-        """)
         layout = QGridLayout()
         layout.setSpacing(4)
         layout.setContentsMargins(2, 8, 2, 4) # Reduced margins
         
         # Analysis buttons definitions: (action, row, col)
         analysis_tools = [
-            (self.main_window.action_measure, 0, 0),
-            (self.main_window.action_export, 0, 1),
-            (self.main_window.action_export_images, 1, 0),
-            (self.main_window.action_settings, 1, 1),
+            (self.main_window.action_measure, 0, 0, 1, 2),
+            (self.main_window.action_export, 1, 0),
+            (self.main_window.action_export_images, 1, 1),
+            (self.main_window.action_settings, 2, 0, 1, 2),
         ]
         
-        for action, row, col in analysis_tools:
-            # Use TextBesideIcon for Analysis group as it's usually wider and more descriptive
-            btn = self.create_button(action, tool_button_style=Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        for tool_info in analysis_tools:
+            action = tool_info[0]
+            row, col = tool_info[1], tool_info[2]
+            # Use IconOnly for consistency
+            btn = self.create_button(action)
             # btn.setFixedHeight(38) # REMOVED: Allow shrinking height in compact mode
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred) # Flexible height
-            layout.addWidget(btn, row, col)
+            
+            if len(tool_info) > 3:
+                layout.addWidget(btn, row, col, tool_info[3], tool_info[4])
+            else:
+                layout.addWidget(btn, row, col)
         
         self.analysis_group.setLayout(layout)
         self.layout.addWidget(self.analysis_group)
@@ -433,6 +449,9 @@ class RoiToolbox(QWidget):
         self.tools_group.setTitle(tr("Tools"))
         self.chk_fixed_size.setText(tr("Fixed Shape"))
         self.chk_fixed_size.setToolTip(tr("Lock ROI size to the last drawn shape"))
+        
+        self.chk_sync_rois.setText(tr("Sync ROIs as Annotations"))
+        self.chk_sync_rois.setToolTip(tr("Automatically include ROIs in annotation list and exports"))
         
         self.wand_group.setTitle(tr("Magic Wand Options"))
         self.lbl_wand_tol.setText(tr("Default Tolerance:"))
@@ -457,92 +476,57 @@ class RoiToolbox(QWidget):
         
         self.analysis_group.setTitle(tr("Analysis"))
 
-    def create_button(self, action, tool_button_style=Qt.ToolButtonStyle.ToolButtonTextUnderIcon):
+    def create_button(self, action):
         btn = QToolButton()
         btn.setDefaultAction(action)
-        btn.setToolButtonStyle(tool_button_style)
-        btn.setAutoRaise(True)
-        # Enable styling
-        btn.setObjectName("ToolBoxButton")
-        # Adaptive Sizing: Use Ignored to allow shrinking below text width (prevents panel locking)
-        btn.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        # Ensure minimum width is small to allow shrinking
-        btn.setMinimumWidth(0)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        btn.setIconSize(QSize(20, 20))
+        # Ensure it takes full width in grid if needed
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
         return btn
 
     def resizeEvent(self, event):
-        # Adaptive Icon Sizing based on width
-        width = self.width()
-        
-        # Log resize event for debugging (Removed to reduce spam)
-        # Logger.debug(f"[RoiToolbox] resizeEvent: width={width}")
-        
-        # Compact Mode: If width is very small, switch to IconOnly to save space
-        compact_mode = width < 200 # Increased threshold to trigger earlier (was 180)
-        
-        # Simple linear scaling: map width [100, 300] to icon [16, 48]
-        # Allow larger icons for larger screens
-        if compact_mode:
-            icon_size = 24 # Fixed small size for compact mode
-        else:
-            icon_size = max(16, min(48, int(16 + (width - 100) * (32/200))))
+        # UI OPTIMIZATION: Following the new "Compact Icon-Only" design
+        icon_size = 20
         
         # Update all tool buttons in the main tools group
         if hasattr(self, 'tools_group'):
             for btn in self.tools_group.findChildren(QToolButton):
-                # Only process buttons that are direct children of the layout (not nested widgets if any)
-                # Actually findChildren is recursive.
-                
-                # Update Icon Size
                 btn.setIconSize(QSize(icon_size, icon_size))
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                # Only fix size for single-column tools to allow span to work
+                if self.tools_group.layout().indexOf(btn) != -1:
+                    pos = self.tools_group.layout().getItemPosition(self.tools_group.layout().indexOf(btn))
+                    if pos[3] == 1: # col_span == 1
+                        btn.setFixedSize(28, 28)
+                    else:
+                        btn.setMinimumHeight(28)
                 
-                # Update Style (Compact vs Text)
-                if self.tools_group.isAncestorOf(btn):
-                    if compact_mode:
-                        if btn.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly:
-                            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                            # Ensure tooltip has text + shortcut if available
-                            action = btn.defaultAction()
-                            if action:
-                                tip = action.text()
-                                if action.shortcut().toString():
-                                    tip += f" ({action.shortcut().toString()})"
-                                btn.setToolTip(tip)
-                    else:
-                        if btn.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonTextUnderIcon:
-                            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-                            # Reset tooltip to default (or keep enhanced one)
-                    
-                    # Adaptive Minimum Height to maintain proportion
-                    if compact_mode:
-                        btn.setMinimumHeight(icon_size + 12)
-                    else:
-                        btn.setMinimumHeight(icon_size + 30) # Increased spacing for text
+                # Ensure tooltip has text + shortcut if available
+                action = btn.defaultAction()
+                if action:
+                    tip = action.text()
+                    if action.shortcut().toString():
+                        tip += f" ({action.shortcut().toString()})"
+                    btn.setToolTip(tip)
 
         # Update Analysis Group Buttons
         if hasattr(self, 'analysis_group'):
             for btn in self.analysis_group.findChildren(QToolButton):
                 if self.analysis_group.isAncestorOf(btn):
                     btn.setIconSize(QSize(icon_size, icon_size))
+                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
                     
-                    # Logic for Analysis Buttons (normally TextBesideIcon)
-                    # Stage 1: TextUnderIcon (Medium width)
-                    # Stage 2: IconOnly (Small width)
+                    if self.analysis_group.layout().indexOf(btn) != -1:
+                        pos = self.analysis_group.layout().getItemPosition(self.analysis_group.layout().indexOf(btn))
+                        if pos[3] == 1: # col_span == 1
+                            btn.setFixedSize(28, 28)
+                        else:
+                            btn.setMinimumHeight(28)
                     
-                    if width < 200: # Compact
-                        if btn.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly:
-                            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                            action = btn.defaultAction()
-                            if action:
-                                btn.setToolTip(action.text())
-                        btn.setMinimumHeight(icon_size + 12)
-                    elif width < 300: # Medium
-                        if btn.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonTextUnderIcon:
-                            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-                        btn.setMinimumHeight(icon_size + 30)
-                    else: # Normal
-                        if btn.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonTextBesideIcon:
-                            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-                        btn.setMinimumHeight(38)
+                    action = btn.defaultAction()
+                    if action:
+                        btn.setToolTip(action.text())
 
         super().resizeEvent(event)

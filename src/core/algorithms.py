@@ -12,11 +12,24 @@ def qpath_to_mask(path: QPainterPath, shape: tuple) -> np.ndarray:
         shape: (H, W) tuple of the target image dimensions.
     """
     h, w = shape
+    if w <= 0 or h <= 0:
+        return np.zeros((0, 0), dtype=bool)
+
     # Format_Grayscale8 is 1 byte per pixel
     img = QImage(w, h, QImage.Format.Format_Grayscale8)
+    if img.isNull():
+        from src.core.logger import Logger
+        Logger.error(f"Failed to allocate QImage of size {w}x{h}")
+        return np.zeros(shape, dtype=bool)
+        
     img.fill(0)
     
     painter = QPainter(img)
+    if not painter.isActive():
+        from src.core.logger import Logger
+        Logger.error("Failed to start QPainter on mask image")
+        return np.zeros(shape, dtype=bool)
+
     # Disable Antialiasing for strict binary mask (center rule usually)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
     painter.setPen(Qt.PenStyle.NoPen)
@@ -26,16 +39,19 @@ def qpath_to_mask(path: QPainterPath, shape: tuple) -> np.ndarray:
     
     # Convert to numpy
     # constBits() returns a pointer to the first pixel data
+    # IMPORTANT: We must ensure img stays alive while we access ptr
     ptr = img.constBits()
     bpl = img.bytesPerLine()
     
     # Create numpy array from the buffer
-    # Note: The memory is shared, but we will make a copy when casting/reshaping to be safe if img dies
+    # We make an immediate copy to avoid lifetime issues with the QImage buffer
     try:
-        arr = np.array(ptr, copy=False).reshape((h, bpl))
-    except Exception:
-        # Fallback if buffer protocol fails or copy=False is not supported
-        arr = np.array(ptr).reshape((h, bpl))
+        # Create a view first, then copy
+        arr = np.array(ptr).reshape((h, bpl)).copy()
+    except Exception as e:
+        from src.core.logger import Logger
+        Logger.error(f"Error converting QImage to numpy: {e}")
+        return np.zeros(shape, dtype=bool)
     
     # Crop padding if bytes_per_line > width
     if bpl > w:
@@ -146,13 +162,13 @@ def mask_to_qpath(mask: np.ndarray, simplify_epsilon: float = 1.0) -> QPainterPa
         
     return path
 
-def bilinear_interpolate(img, x, y):
+def bilinear_interpolate_numpy(img, x, y):
     """
-    Performs bilinear interpolation for a given (x, y) coordinate on img.
+    Vectorized bilinear interpolation for an array of (x, y) coordinates.
     """
-    x0 = int(np.floor(x))
+    x0 = np.floor(x).astype(int)
     x1 = x0 + 1
-    y0 = int(np.floor(y))
+    y0 = np.floor(y).astype(int)
     y1 = y0 + 1
 
     x0 = np.clip(x0, 0, img.shape[1] - 1)
@@ -174,17 +190,19 @@ def bilinear_interpolate(img, x, y):
 
 def sample_line_profile(img, p1, p2, num_points=None):
     """
-    Samples image intensity along a line from p1 to p2 using bilinear interpolation.
+    Samples image intensity along a line from p1 to p2 using vectorized bilinear interpolation.
     p1, p2 are (x, y) coordinates.
     """
     if num_points is None:
         num_points = int(np.hypot(p2[0] - p1[0], p2[1] - p1[1])) + 1
     
     if num_points < 2:
-        return np.array([img[int(p1[1]), int(p1[0])]])
+        # Correctly handle boundary case
+        y, x = int(np.clip(p1[1], 0, img.shape[0]-1)), int(np.clip(p1[0], 0, img.shape[1]-1))
+        return np.array([img[y, x]])
 
     x_coords = np.linspace(p1[0], p2[0], num_points)
     y_coords = np.linspace(p1[1], p2[1], num_points)
     
-    profile = [bilinear_interpolate(img, x, y) for x, y in zip(x_coords, y_coords)]
-    return np.array(profile)
+    # Use vectorized version
+    return bilinear_interpolate_numpy(img, x_coords, y_coords)
