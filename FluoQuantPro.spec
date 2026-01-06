@@ -61,18 +61,18 @@ if sys.platform == 'darwin':
     app = BUNDLE(
         exe,
         name='FluoQuantPro.app',
-        icon='resources/icon.png',
-    bundle_identifier='com.fluoquantpro.app',
-    info_plist={
-        'NSHighResolutionCapable': 'True',
-        'NSRequiresAquaSystemAppearance': 'False',
-        'CFBundleShortVersionString': '1.0.9',
-        'CFBundleVersion': '1.0.9',
-        'CFBundleName': 'FluoQuantPro',
-        'CFBundleDisplayName': 'FluoQuantPro',
-        'CFBundleExecutable': 'FluoQuantPro',
-        'CFBundlePackageType': 'APPL',
-        'LSMinimumSystemVersion': '10.13.0',
-        'NSAppleEventsUsageDescription': 'FluoQuantPro needs access to Apple Events for better system integration.',
-    }
-)
+        icon='resources/icon.icns',
+        bundle_identifier='com.fluoquantpro.app',
+        info_plist={
+            'NSHighResolutionCapable': 'True',
+            'NSRequiresAquaSystemAppearance': 'False',
+            'CFBundleShortVersionString': '1.1.0',
+            'CFBundleVersion': '1.1.0',
+            'CFBundleName': 'FluoQuantPro',
+            'CFBundleDisplayName': 'FluoQuantPro',
+            'CFBundleExecutable': 'FluoQuantPro',
+            'CFBundlePackageType': 'APPL',
+            'LSMinimumSystemVersion': '10.13.0',
+            'NSAppleEventsUsageDescription': 'FluoQuantPro needs access to Apple Events for better system integration.',
+        }
+    )
