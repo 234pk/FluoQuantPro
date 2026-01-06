@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-13 # Use Intel runner for maximum compatibility (Intel + Rosetta 2 on M1/M2)
     permissions:
       contents: write
     
@@ -31,6 +31,17 @@ jobs:
     - name: Build macOS App
       run: |
         pyinstaller FluoQuantPro.spec --noconfirm
+
+    - name: Sign and Verify App
+      run: |
+        # Ensure executable permission
+        chmod +x dist/FluoQuantPro.app/Contents/MacOS/FluoQuantPro
+        
+        # Ad-hoc code signing to satisfy basic checks
+        codesign --force --deep --sign - dist/FluoQuantPro.app
+        
+        # Verify signature
+        codesign --verify --verbose dist/FluoQuantPro.app
 
     - name: Create DMG
       run: |

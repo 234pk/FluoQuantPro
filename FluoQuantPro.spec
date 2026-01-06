@@ -45,5 +45,16 @@ if sys.platform == 'darwin':
         exe,
         name='FluoQuantPro.app',
         icon='resources/icon.png',
-        bundle_identifier='com.fluoquantpro.app',
-    )
+    bundle_identifier='com.fluoquantpro.app',
+    info_plist={
+        'NSHighResolutionCapable': 'True',
+        'NSRequiresAquaSystemAppearance': 'False',
+        'CFBundleShortVersionString': '1.0.2',
+        'CFBundleVersion': '1.0.2',
+        'CFBundleName': 'FluoQuantPro',
+        'CFBundleDisplayName': 'FluoQuantPro',
+        'CFBundleExecutable': 'MacOS/FluoQuantPro',
+        'CFBundlePackageType': 'APPL',
+        'LSMinimumSystemVersion': '10.13.0',
+    }
+)

@@ -2598,6 +2598,15 @@ class CanvasView(QGraphicsView):
                     return min_dist
         return min_dist
 
+    def get_image_coordinates(self, scene_pos: QPointF) -> QPointF:
+        """
+        Maps a scene position to the image local coordinates.
+        Ensures robust mapping even if the image item is offset or transformed.
+        """
+        if hasattr(self, 'pixmap_item') and self.pixmap_item:
+            return self.pixmap_item.mapFromScene(scene_pos)
+        return scene_pos
+
     def _emit_view_clicked(self):
         try:
             self.view_clicked.emit(self.view_id, self.active_channel_index)
