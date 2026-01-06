@@ -24,6 +24,15 @@ FluoQuantPro is a professional software designed for high-performance analysis a
 - Python 3.10+ (for development)
 - Key Dependencies: PySide6, NumPy, OpenCV, Scikit-Image, Tifffile.
 
+### macOS Installation Troubleshooting
+If you encounter "App is damaged" or "Developer cannot be verified" on macOS:
+1. Open **Terminal**.
+2. Run the following command (replace `/Applications` with your actual path):
+   ```bash
+   sudo xattr -rd com.apple.quarantine /Applications/FluoQuantPro.app
+   ```
+3. Enter your password and try opening the app again.
+
 ---
 
 <a name="中文"></a>
@@ -45,3 +54,12 @@ FluoQuantPro 是一款专为免疫荧光 (IF) 图像设计的高性能分析与�
 - Windows 10/11 或 macOS
 - Python 3.10+ (开发环境)
 - 核心依赖: PySide6, NumPy, OpenCV, Scikit-Image, Tifffile。
+
+### macOS 安装故障排除
+如果在 macOS 上遇到“应用已损坏”或“无法验证开发者”提示：
+1. 打开 **终端 (Terminal)**。
+2. 输入以下命令（将 `/Applications` 替换为实际安装路径）：
+   ```bash
+   sudo xattr -rd com.apple.quarantine /Applications/FluoQuantPro.app
+   ```
+3. 输入密码并回车，然后重新尝试打开应用。

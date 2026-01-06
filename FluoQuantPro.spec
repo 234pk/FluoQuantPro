@@ -65,12 +65,13 @@ if sys.platform == 'darwin':
     info_plist={
         'NSHighResolutionCapable': 'True',
         'NSRequiresAquaSystemAppearance': 'False',
-        'CFBundleShortVersionString': '1.0.2',
-        'CFBundleVersion': '1.0.2',
+        'CFBundleShortVersionString': '1.0.3',
+        'CFBundleVersion': '1.0.3',
         'CFBundleName': 'FluoQuantPro',
         'CFBundleDisplayName': 'FluoQuantPro',
-        'CFBundleExecutable': 'MacOS/FluoQuantPro',
+        'CFBundleExecutable': 'FluoQuantPro',
         'CFBundlePackageType': 'APPL',
         'LSMinimumSystemVersion': '10.13.0',
+        'NSAppleEventsUsageDescription': 'FluoQuantPro needs access to Apple Events for better system integration.',
     }
 )

@@ -49,6 +49,8 @@ jobs:
       run: |
         # Use the generated .icns
         sed -i '' "s|icon='resources/icon.png'|icon='resources/icon.icns'|g" FluoQuantPro.spec
+        # Check architecture
+        echo "Building for architecture: $(uname -m)"
         pyinstaller FluoQuantPro.spec --noconfirm
 
     - name: Sign and Verify App
@@ -56,7 +58,8 @@ jobs:
         # Ensure executable permission
         chmod +x dist/FluoQuantPro.app/Contents/MacOS/FluoQuantPro
         
-        # Ad-hoc code signing
+        # Ad-hoc code signing for all binaries inside the bundle
+        find dist/FluoQuantPro.app/Contents/MacOS -type f -exec codesign --force --deep --sign - {} +
         codesign --force --deep --sign - dist/FluoQuantPro.app
         
         # Verify signature
@@ -64,8 +67,13 @@ jobs:
 
     - name: Create DMG Installer
       run: |
+        # Get architecture
+        ARCH=$(uname -m)
+        DMG_NAME="FluoQuantPro-macOS-${ARCH}.dmg"
+        echo "DMG_NAME=${DMG_NAME}" >> $GITHUB_ENV
+        
         # Use create-dmg to make a professional installer
-        test -f dist/FluoQuantPro.dmg && rm dist/FluoQuantPro.dmg
+        test -f "dist/${DMG_NAME}" && rm "dist/${DMG_NAME}"
         create-dmg \
           --volname "FluoQuantPro Installer" \
           --volicon "resources/icon.icns" \
@@ -75,19 +83,19 @@ jobs:
           --icon "FluoQuantPro.app" 200 190 \
           --hide-extension "FluoQuantPro.app" \
           --app-drop-link 600 185 \
-          "dist/FluoQuantPro.dmg" \
+          "dist/${DMG_NAME}" \
           "dist/FluoQuantPro.app"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: FluoQuantPro-macOS
-        path: dist/FluoQuantPro.dmg
+        name: ${{ env.DMG_NAME }}
+        path: dist/${{ env.DMG_NAME }}
 
     - name: Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/FluoQuantPro.dmg
+        files: dist/${{ env.DMG_NAME }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
