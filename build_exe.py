@@ -24,6 +24,8 @@ def build():
         '--add-data=FluoQuantPro_User_Manual.html;.', # Include user manual
         '--add-data=manual.html;.', # Include secondary manual if exists
         '--add-data=change_log.md;.', # Include change log
+        '--add-data=docs;docs', # Include docs folder
+        '--add-data=project.json;.', # Include project template
         
         # Optimization: Exclude unnecessary modules to reduce size and startup time
         '--exclude-module=tkinter',
