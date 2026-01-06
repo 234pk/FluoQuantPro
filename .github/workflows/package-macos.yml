@@ -1,0 +1,54 @@
+name: Build and Package macOS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build macOS App
+      run: |
+        pyinstaller FluoQuantPro.spec --noconfirm
+
+    - name: Create DMG
+      run: |
+        # Optional: create a DMG for easier distribution
+        mkdir -p dist/dmg
+        cp -R dist/FluoQuantPro.app dist/dmg/
+        # You could use tools like 'create-dmg' here if needed
+        # For now just zip it
+        cd dist
+        zip -r FluoQuantPro-macOS.zip FluoQuantPro.app
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: FluoQuantPro-macOS
+        path: dist/FluoQuantPro-macOS.zip
+
+    - name: Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/FluoQuantPro-macOS.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -20,6 +20,10 @@ def build():
         '--clean',
         '--icon=resources/icon.ico', # EXE Icon
         '--add-data=resources;resources', # Include resources folder
+        '--add-data=src/resources/translations.json;src/resources', # Include translations
+        '--add-data=FluoQuantPro_User_Manual.html;.', # Include user manual
+        '--add-data=manual.html;.', # Include secondary manual if exists
+        '--add-data=change_log.md;.', # Include change log
         
         # Optimization: Exclude unnecessary modules to reduce size and startup time
         '--exclude-module=tkinter',
