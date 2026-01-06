@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-13 # Use Intel runner for maximum compatibility (Intel + Rosetta 2 on M1/M2)
+    runs-on: macos-latest # Switch to latest (ARM64/Apple Silicon) as macos-13 is retired
     permissions:
       contents: write
     
@@ -27,9 +27,28 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
+        brew install create-dmg graphicsmagick imagemagick
+
+    - name: Prepare Icon
+      run: |
+        # Create .icns from .png for the App Bundle
+        mkdir FluoQuantPro.iconset
+        sips -z 16 16     resources/icon.png --out FluoQuantPro.iconset/icon_16x16.png
+        sips -z 32 32     resources/icon.png --out FluoQuantPro.iconset/icon_16x16@2x.png
+        sips -z 32 32     resources/icon.png --out FluoQuantPro.iconset/icon_32x32.png
+        sips -z 64 64     resources/icon.png --out FluoQuantPro.iconset/icon_32x32@2x.png
+        sips -z 128 128   resources/icon.png --out FluoQuantPro.iconset/icon_128x128.png
+        sips -z 256 256   resources/icon.png --out FluoQuantPro.iconset/icon_128x128@2x.png
+        sips -z 256 256   resources/icon.png --out FluoQuantPro.iconset/icon_256x256.png
+        sips -z 512 512   resources/icon.png --out FluoQuantPro.iconset/icon_256x256@2x.png
+        sips -z 512 512   resources/icon.png --out FluoQuantPro.iconset/icon_512x512.png
+        iconutil -c icns FluoQuantPro.iconset
+        mv FluoQuantPro.icns resources/icon.icns
 
     - name: Build macOS App
       run: |
+        # Use the generated .icns
+        sed -i '' "s|icon='resources/icon.png'|icon='resources/icon.icns'|g" FluoQuantPro.spec
         pyinstaller FluoQuantPro.spec --noconfirm
 
     - name: Sign and Verify App
@@ -37,37 +56,38 @@ jobs:
         # Ensure executable permission
         chmod +x dist/FluoQuantPro.app/Contents/MacOS/FluoQuantPro
         
-        # Ad-hoc code signing to satisfy basic checks
+        # Ad-hoc code signing
         codesign --force --deep --sign - dist/FluoQuantPro.app
         
         # Verify signature
         codesign --verify --verbose dist/FluoQuantPro.app
 
-    - name: Create DMG
+    - name: Create DMG Installer
       run: |
-        # Create a DMG for easier distribution
-        mkdir -p dist/dmg_content
-        cp -R dist/FluoQuantPro.app dist/dmg_content/
-        # Use hdiutil to create DMG
-        hdiutil create -volname "FluoQuantPro" -srcfolder dist/dmg_content -ov -format UDZO dist/FluoQuantPro.dmg
-        # Also keep the zip as backup
-        cd dist
-        zip -r FluoQuantPro-macOS.zip FluoQuantPro.app
+        # Use create-dmg to make a professional installer
+        test -f dist/FluoQuantPro.dmg && rm dist/FluoQuantPro.dmg
+        create-dmg \
+          --volname "FluoQuantPro Installer" \
+          --volicon "resources/icon.icns" \
+          --window-pos 200 120 \
+          --window-size 800 400 \
+          --icon-size 100 \
+          --icon "FluoQuantPro.app" 200 190 \
+          --hide-extension "FluoQuantPro.app" \
+          --app-drop-link 600 185 \
+          "dist/FluoQuantPro.dmg" \
+          "dist/FluoQuantPro.app"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: FluoQuantPro-macOS
-        path: |
-          dist/FluoQuantPro.dmg
-          dist/FluoQuantPro-macOS.zip
+        path: dist/FluoQuantPro.dmg
 
     - name: Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          dist/FluoQuantPro.dmg
-          dist/FluoQuantPro-macOS.zip
+        files: dist/FluoQuantPro.dmg
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
