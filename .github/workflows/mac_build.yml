@@ -59,8 +59,8 @@ jobs:
       with:
         name: macOS-Build-Logs
         path: |
-          build/FluoQuantPro/warn-FluoQuantPro.txt
-          build/FluoQuantPro/xref-FluoQuantPro.html
+          build/**/*.txt
+          build/**/*.html
 
     - name: Fix Permissions and Sign
       run: |
