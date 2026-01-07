@@ -24,6 +24,16 @@ hidden_imports += [
     'scipy.linalg.cython_lapack',
     'scipy.optimize',
     'scipy.ndimage',
+    'scipy.special',
+    'scipy.sparse',
+    'scipy.stats',
+    'scipy.linalg',
+    'scipy.spatial',
+    'scipy.integrate',
+    'scipy.signal',
+    'scipy.fft',
+    'pandas',
+    'numpy',
 ]
 
 a = Analysis(
