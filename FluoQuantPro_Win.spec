@@ -14,14 +14,10 @@ hidden_imports += [
     'skimage.morphology._max_tree',
     'scipy.special.cython_special',
     'scipy.linalg.cython_blas',
-    'sklearn.utils._typedefs',
-    'sklearn.utils._heap',
-    'sklearn.utils._sorting',
-    'sklearn.utils._vector_sentinel',
-    'sklearn.neighbors._partition_nodes',
-    'sklearn.neighbors._quad_tree',
-    'sklearn.tree._utils',
-    'sklearn.tree._tree'
+    'scipy.linalg.cython_lapack',
+    'scipy.optimize',
+    'scipy.ndimage',
+    'scipy.special._cdflib',
 ]
 
 a = Analysis(

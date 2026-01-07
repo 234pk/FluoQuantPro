@@ -21,15 +21,7 @@ hidden_imports += [
     'scipy.linalg.cython_lapack',
     'scipy.optimize',
     'scipy.ndimage',
-    'sklearn.utils._typedefs',
-    'sklearn.utils._heap',
-    'sklearn.utils._sorting',
-    'sklearn.utils._vector_sentinel',
-    'sklearn.neighbors._partition_nodes',
-    'sklearn.neighbors._quad_tree',
-    'sklearn.tree._utils',
-    'sklearn.tree._tree',
-    'sklearn.utils._cython_blas',
+    'scipy.special._cdflib',
 ]
 
 a = Analysis(

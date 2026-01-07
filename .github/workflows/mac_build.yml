@@ -24,7 +24,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pyinstaller
+        pip install --upgrade pyinstaller setuptools wheel
         
     - name: Install DMG creation tool
       run: brew install create-dmg
@@ -46,8 +46,18 @@ jobs:
         mv icon.icns resources/icon.icns
         
     - name: Build with PyInstaller
+      env:
+        MACOSX_DEPLOYMENT_TARGET: '10.13'
       run: |
         pyinstaller --clean FluoQuantPro_Mac.spec
+        
+    - name: Fix Permissions and Sign
+      run: |
+        # Fix Mach-O headers and sign the app bundle
+        # Using '-' as identity for ad-hoc signing
+        echo "Signing app bundle..."
+        chmod -R 755 "dist/FluoQuantPro.app"
+        codesign --force --deep --sign - --entitlements entitlements.plist "dist/FluoQuantPro.app"
         
     - name: Create DMG
       run: |

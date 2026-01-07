@@ -76,9 +76,7 @@ VSVersionInfo(
         '--hidden-import=scipy.special.cython_special',
         '--hidden-import=scipy.linalg.cython_blas',
         '--hidden-import=scipy.linalg.cython_lapack',
-        '--hidden-import=sklearn.utils._cython_blas',
-        '--hidden-import=sklearn.neighbors._partition_nodes',
-        '--hidden-import=sklearn.tree._utils',
+        '--hidden-import=scipy.special._cdflib',
         
         # Optimization: Exclude heavy unused modules
         '--exclude-module=tkinter',
