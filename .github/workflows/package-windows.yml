@@ -1,4 +1,4 @@
-name: Build and Package Windows
+name: Build and Package Windows (Single EXE)
 
 on:
   push:
@@ -9,10 +9,13 @@ on:
 
 jobs:
   build-windows:
+    name: Build Windows EXE
     runs-on: windows-latest
-    permissions:
-      contents: write
     
+    defaults:
+      run:
+        working-directory: FluoQuantPro
+
     steps:
     - uses: actions/checkout@v4
 
@@ -21,6 +24,7 @@ jobs:
       with:
         python-version: '3.10'
         cache: 'pip'
+        cache-dependency-path: 'FluoQuantPro/requirements.txt'
 
     - name: Install dependencies
       run: |
@@ -28,24 +32,20 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
-    - name: Build Windows EXE
+    - name: Build Single EXE
       run: |
-        python build_exe.py
-
-    - name: Zip Artifact
-      run: |
-        Compress-Archive -Path dist/FluoQuantPro.exe -DestinationPath dist/FluoQuantPro-Windows.zip
+        pyinstaller FluoQuantPro_Win.spec --noconfirm
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: FluoQuantPro-Windows
-        path: dist/FluoQuantPro-Windows.zip
+        name: FluoQuantPro-Windows-EXE
+        path: FluoQuantPro/dist/FluoQuantPro.exe
 
-    - name: Release
+    - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/FluoQuantPro-Windows.zip
+        files: FluoQuantPro/dist/FluoQuantPro.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
