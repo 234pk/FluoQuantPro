@@ -2,6 +2,7 @@ import PyInstaller.__main__
 import os
 import shutil
 import sys
+import subprocess
 
 def build():
     # 1. Cleanup
