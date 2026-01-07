@@ -1,39 +1,22 @@
+# Ignore build artifacts
 dist/
 build/
+v3.0/
+*.zip
+*.dmg
+*.exe
+*.dll
+*.so
+*.dylib
+*.pyd
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore Python artifacts
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-*.dll
-*.exe
-logs/
-.vscode/
-.idea/
-*.log
-
-# Data and large files
-*.zip
-*.tar.gz
-*.rar
-*.7z
-*.h5
-*.npy
-*.npz
-*.csv
-*.xlsx
-*.tif
-*.tiff
-
-# Environment
-.venv/
 venv/
-env/
-bin/
-lib/
-share/
-Include/
-Scripts/
-
-# OS files
-.DS_Store
-Thumbs.db
+.venv/
