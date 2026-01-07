@@ -2,6 +2,12 @@
     "File": {
         "zh": "文件"
     },
+    "Project channel template has irregularities and has been automatically normalized.\nWe recommend checking the channel template settings to avoid inheritance issues.\n\nDetails:\n{0}": {
+        "zh": "项目通道模板存在不规范项，已自动规范化处理。\n建议检查通道模板设置以避免继承异常。\n\n详细信息：\n{0}"
+    },
+    "Template Warning": {
+        "zh": "模板警告"
+    },
     "Project": {
         "zh": "项目"
     },
@@ -16,6 +22,27 @@
     },
     "Settings": {
         "zh": "设置"
+    },
+    "Language": {
+        "zh": "语言"
+    },
+    "Select Language:": {
+        "zh": "选择语言:"
+    },
+    "General": {
+        "zh": "常规"
+    },
+    "Interface": {
+        "zh": "界面"
+    },
+    "Display": {
+        "zh": "显示"
+    },
+    "Measurement": {
+        "zh": "测量"
+    },
+    "Export": {
+        "zh": "导出"
     },
     "Preferences": {
         "zh": "首选项"
@@ -86,6 +113,12 @@
     "User Manual": {
         "zh": "用户手册"
     },
+    "Annotation": {
+        "zh": "标注"
+    },
+    "Annotations": {
+        "zh": "标注"
+    },
     "Undo": {
         "zh": "撤销"
     },
@@ -94,6 +127,9 @@
     },
     "Clear ROIs": {
         "zh": "清除选区"
+    },
+    "Point Counter": {
+        "zh": "计数工具"
     },
     "Rectangle": {
         "zh": "矩形"
@@ -1260,8 +1296,8 @@
     "Auto-Saved Project to {0}": {
         "zh": "项目已自动保存至 {0}"
     },
-    "<h3>FluoQuant Pro</h3><p>A professional tool for fluorescence image analysis and point counting.</p><p>Version: 2.0.8</p>": {
-        "zh": "<h3>FluoQuant Pro</h3><p>用于荧光图像分析和点计数的专业工具。</p><p>版本: 2.0.8</p>"
+    "<h3>FluoQuant Pro</h3><p>A professional tool for fluorescence image analysis and point counting.</p><p>Version: 2.0.8</p><p>Developed By PK</p>": {
+        "zh": "<h3>FluoQuant Pro</h3><p>用于荧光图像分析和点计数的专业工具。</p><p>版本: 2.0.8</p><p>由 PK 开发</p>"
     },
     "<b>General:</b><br>Ctrl+N: New Project<br>Ctrl+O: Open Project<br>Ctrl+S: Save Project<br>Ctrl+,: Settings<br>Alt+F4: Exit<br><br><b>Tools:</b><br>W: Magic Wand<br>P: Polygon Lasso<br>R: Rectangle<br>E: Ellipse<br>C: Point Counter<br>H: Hand (Pan)<br>Ctrl+Z: Undo<br>Ctrl+Y: Redo<br>Ctrl+Del: Clear ROIs<br> Ctrl+X: Crop to Selection<br><br><b>Analysis:</b><br>Ctrl+M: Measure<br>Ctrl+E: Export Results<br><br><b>View:</b><br>Ctrl+B: Toggle Sidebar<br>F12: Toggle Controls<br>Ctrl+T: Switch Theme<br>F1: User Manual<br>Ctrl+F1: Keyboard Shortcuts": {
         "zh": "<b>常规:</b><br>Ctrl+N: 新建项目<br>Ctrl+O: 打开项目<br>Ctrl+S: 保存项目<br>Ctrl+,: 设置<br>Alt+F4: 退出<br><br><b>工具:</b><br>W: 魔棒<br>P: 多边形套索<br>R: 矩形<br>E: 椭圆<br>C: 点计数器<br>H: 手形 (平移)<br>Ctrl+Z: 撤销<br>Ctrl+Y: 重做<br>Ctrl+Del: 清除选区<br> Ctrl+X: 裁剪至选区<br><br><b>分析:</b><br>Ctrl+M: 测量<br>Ctrl+E: 导出结果<br><br><b>视图:</b><br>Ctrl+B: 切换侧边栏<br>F12: 切换控制面板<br>Ctrl+T: 切换主题<br>F1: 用户手册<br>Ctrl+F1: 键盘快捷键"

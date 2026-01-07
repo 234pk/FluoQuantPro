@@ -323,16 +323,34 @@ class MainWindow(QMainWindow):
         # Connect MultiView signals
         self.multi_view.connect_signals(self)
         
-        # Connect session signals
-        self.session.roi_manager.roi_added.connect(lambda _: self.roi_toolbox.update_counts_summary())
-        self.session.roi_manager.roi_removed.connect(lambda _: self.roi_toolbox.update_counts_summary())
-        self.session.roi_manager.roi_updated.connect(lambda _: self.roi_toolbox.update_counts_summary())
+        # Connect session signals (Combined)
+        manager = self.session.roi_manager
         
-        # Connect ROI Manager to Main Window handlers (for Annotation Sync/Conversion)
-        self.session.roi_manager.roi_added.connect(self.on_roi_added)
-        self.session.roi_manager.roi_removed.connect(self.on_roi_removed)
-        self.session.roi_manager.roi_updated.connect(self.on_roi_updated)
-        self.session.roi_manager.selection_changed.connect(self.on_roi_selection_changed)
+        # Cleanup any existing connections to these slots to prevent duplicates
+        try:
+            manager.roi_added.disconnect(self.on_roi_added)
+            manager.roi_removed.disconnect(self.on_roi_removed)
+            manager.roi_updated.disconnect(self.on_roi_updated)
+            manager.selection_changed.disconnect(self.on_roi_selection_changed)
+        except:
+            pass # Not connected yet
+            
+        manager.roi_added.connect(self.on_roi_added)
+        manager.roi_removed.connect(self.on_roi_removed)
+        manager.roi_updated.connect(self.on_roi_updated)
+        manager.selection_changed.connect(self.on_roi_selection_changed)
+        
+        # Connect toolbox to manager signals
+        if hasattr(self, 'roi_toolbox'):
+            try:
+                manager.roi_added.disconnect(self.roi_toolbox.update_counts_summary)
+                manager.roi_removed.disconnect(self.roi_toolbox.update_counts_summary)
+                manager.roi_updated.disconnect(self.roi_toolbox.update_counts_summary)
+            except:
+                pass
+            manager.roi_added.connect(self.roi_toolbox.update_counts_summary)
+            manager.roi_removed.connect(self.roi_toolbox.update_counts_summary)
+            manager.roi_updated.connect(self.roi_toolbox.update_counts_summary)
         
         # Connect ColocalizationPanel to session changes
         if self.colocalization_panel:
@@ -510,7 +528,7 @@ class MainWindow(QMainWindow):
             self.control_tabs.setTabText(1, tr("Adjustments"))
             self.control_tabs.setTabText(2, tr("Enhance"))
             self.control_tabs.setTabText(3, tr("Colocalization"))
-            self.control_tabs.setTabText(4, tr("标注"))
+            self.control_tabs.setTabText(4, tr("Annotation"))
             self.control_tabs.setTabText(5, tr("Measure Results"))
             
         # Update Status Bar
@@ -719,19 +737,34 @@ class MainWindow(QMainWindow):
         """Handles graphic annotation tool selection."""
         print(f"\n\nDEBUG: [Main] on_annotation_tool_selected called with mode: {mode} (FORCE LOG)\n")
         
+        # 1. 检查是否正在进行 ROI 工具切换（状态锁）
+        if getattr(self, '_is_switching_roi_tool', False) and mode == 'none':
+            print("DEBUG: [Main] Ignoring annotation reset because we are currently switching ROI tools.")
+            return
+
         try:
             # Reset any pending annotation mode
-            self.pending_annotation_mode = None
+            if mode != 'none':
+                self.pending_annotation_mode = None
             
             if mode == 'none':
-                print("DEBUG: [Main] Mode is none, switching to Hand/Pan")
-                # Revert to Pan or previous?
-                # If we deselected annotation tool, check if Pan should be active (default)
-                # But check if we are in a tab that implies Pan (like Toolbox)
-                if hasattr(self, 'action_pan'):
-                    self.action_pan.setChecked(True)
-                    # Force tool clear
-                    self.multi_view.set_tool(None)
+                # 2. 检查是否有任何 ROI 工具正处于选中状态
+                is_any_roi_tool_active = False
+                for act in self.tools_action_group.actions():
+                    if act != self.action_pan and act.isChecked():
+                        is_any_roi_tool_active = True
+                        break
+                
+                # 如果当前有 ROI 工具，不要退回到 Pan
+                if is_any_roi_tool_active:
+                    print(f"DEBUG: [Main] Ignoring annotation reset because an ROI tool is checked.")
+                    return
+
+                # --- 优化：不再武断地切回手型工具 ---
+                # 即使没有 ROI 工具，我们也只是清理当前视图的工具状态，而不是强制选中 action_pan
+                # 这样可以避免信号回环导致的“抢夺焦点”问题
+                print("DEBUG: [Main] Mode is none, clearing view tools (NOT forcing Pan)")
+                self.multi_view.set_tool(None)
                 return
 
             # Map annotation mode to ROI tools (The "Nuclear Option")
@@ -808,124 +841,134 @@ class MainWindow(QMainWindow):
 
     def on_roi_added(self, roi):
         """Sync ROI to annotations if enabled OR convert to annotation if in annotation mode."""
+        print(f"CRITICAL_DEBUG: Entering Main.on_roi_added for ROI {roi.id}")
+        import sys
+        sys.stdout.flush()
+        from src.core.logger import Logger
+        Logger.debug(f"[Main.on_roi_added] ENTER - ROI: {roi.label} ({roi.id})")
         
-        # 1. Check if we are in "Annotation Mode" (Hijacking ROI tools)
-        if getattr(self, 'pending_annotation_mode', None):
-            mode = self.pending_annotation_mode
-            print(f"DEBUG: Converting ROI {roi.id} to Annotation ({mode})")
-            
-            # Convert ROI points to annotation points
-            points = [(p.x(), p.y()) for p in roi.points]
-            if not points and roi.line_points:
-                p1, p2 = roi.line_points
-                points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
-            
-            # Create UUID
-            import uuid
-            ann_id = str(uuid.uuid4())
-            
-            # Map mode to annotation type
-            ann_type = mode # 'rect', 'ellipse', 'arrow', 'line', 'polygon'
-            
-            # User Request: "Dual Attributes" - ROI should also have the specific type
-            # so RoiGraphicsItem can render it correctly (e.g. arrow head).
-            roi.roi_type = ann_type
-            
-            # Get properties from Annotation Panel
-            props = self.annotation_panel.get_current_properties()
-            
-            # Create Annotation
-            ann = GraphicAnnotation(
-                id=ann_id,
-                type=ann_type,
-                points=points,
-                color=props.get('color', "#FFFF00"), 
-                thickness=props.get('thickness', 2),
-                visible=True
-            )
-            
-            # Apply additional properties (style, arrow size)
-            ann.style = props.get('style', 'solid')
-            ann.export_only = props.get('export_only', False)
-            if ann_type == 'arrow':
-                # Scale default size (15.0) by display scale so it looks correct on screen
-                # Get current display scale
-                scale = 1.0
-                if hasattr(self, 'multi_view'):
-                    # Try active view first
-                    active_view = self.multi_view.views.get(self.multi_view.active_channel_id)
-                    if active_view:
-                        scale = active_view.display_scale
-                    elif self.multi_view.views:
-                        scale = next(iter(self.multi_view.views.values())).display_scale
+        try:
+            # 1. Check if we are in "Annotation Mode" (Hijacking ROI tools)
+            if getattr(self, 'pending_annotation_mode', None):
+                mode = self.pending_annotation_mode
+                print(f"DEBUG: Converting ROI {roi.id} to Annotation ({mode})")
                 
-                base_size = props.get('arrow_head_size', 15.0)
-                if scale > 0:
-                    ann.properties['arrow_head_size'] = base_size / scale
-                else:
-                    ann.properties['arrow_head_size'] = base_size
-            
-            # Add to annotations
-            
-            # 【核心修复】避免重影：隐藏原始 ROI 并建立关联，而不是直接删除
-            # 这样可以保持 ROI 数据，但在 Canvas 上只显示 Annotation
-            roi.visible = False
-            ann.roi_id = roi.id
-            ann.roi = roi # 建立内存中的直接引用 (AnnotationGraphicsItem 会用到)
-            
-            self.session.annotations.append(ann)
-            self.annotation_panel.update_annotation_list()
-            self.multi_view.set_annotations(self.session.annotations)
-            
-            # 触发 ROI 状态更新信号，确保 Canvas 刷新 (RoiGraphicsItem 会根据 visible 隐藏)
-            self.session.roi_manager.roi_updated.emit(roi.id)
-            
-            return
+                # Convert ROI points to annotation points
+                points = [(p.x(), p.y()) for p in roi.points]
+                if not points and roi.line_points:
+                    p1, p2 = roi.line_points
+                    points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
+                
+                # Create UUID
+                import uuid
+                ann_id = str(uuid.uuid4())
+                
+                # Map mode to annotation type
+                ann_type = mode # 'rect', 'ellipse', 'arrow', 'line', 'polygon'
+                
+                # User Request: "Dual Attributes" - ROI should also have the specific type
+                # so RoiGraphicsItem can render it correctly (e.g. arrow head).
+                roi.roi_type = ann_type
+                
+                # Get properties from Annotation Panel
+                props = self.annotation_panel.get_current_properties()
+                
+                # Create Annotation
+                ann = GraphicAnnotation(
+                    id=ann_id,
+                    type=ann_type,
+                    points=points,
+                    color=props.get('color', "#FFFF00"), 
+                    thickness=props.get('thickness', 2),
+                    visible=True
+                )
+                
+                # Apply additional properties (style, arrow size)
+                ann.style = props.get('style', 'solid')
+                ann.export_only = props.get('export_only', False)
+                if ann_type == 'arrow':
+                    # Scale default size (15.0) by display scale so it looks correct on screen
+                    scale = 1.0
+                    if hasattr(self, 'multi_view'):
+                        active_view = self.multi_view.views.get(self.multi_view.active_channel_id)
+                        if active_view:
+                            scale = active_view.display_scale
+                        elif self.multi_view.views:
+                            scale = next(iter(self.multi_view.views.values())).display_scale
+                    
+                    base_size = props.get('arrow_head_size', 15.0)
+                    if scale > 0:
+                        ann.properties['arrow_head_size'] = base_size / scale
+                    else:
+                        ann.properties['arrow_head_size'] = base_size
+                
+                # 【核心修复】避免重影：隐藏原始 ROI 并建立关联
+                roi.visible = False
+                ann.roi_id = roi.id
+                ann.roi = roi 
+                
+                self.session.annotations.append(ann)
+                self.annotation_panel.update_annotation_list()
+                self.multi_view.set_annotations(self.session.annotations)
+                
+                # 触发 ROI 状态更新信号
+                self.session.roi_manager.roi_updated.emit(roi.id)
+                Logger.debug(f"[Main.on_roi_added] ROI converted to annotation successfully")
+                return
 
-        if getattr(self, '_suppress_roi_annotation_sync', False):
-            return
+            if getattr(self, '_suppress_roi_annotation_sync', False):
+                return
 
-        # 2. Normal ROI Sync (if enabled)
-        if self.roi_toolbox.chk_sync_rois.isChecked():
-            # Convert ROI points to annotation points
-            points = [(p.x(), p.y()) for p in roi.points]
-            if not points and roi.line_points:
-                p1, p2 = roi.line_points
-                points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
-            
-            # Map ROI types to annotation types
-            ann_type = 'roi_ref'
-            if roi.roi_type == 'rectangle': ann_type = 'rect'
-            elif roi.roi_type == 'ellipse': ann_type = 'ellipse'
-            elif roi.roi_type == 'line_scan' or roi.roi_type == 'line': ann_type = 'line'
-            elif roi.roi_type == 'polygon': ann_type = 'polygon'
-            elif roi.roi_type == 'arrow': ann_type = 'arrow'
-            elif roi.roi_type == 'point': ann_type = 'circle' # Points are circles in annotations
-            elif roi.roi_type == 'circle': ann_type = 'circle'
-            
-            # Special handling for points to ensure they have a default size
-            if roi.roi_type == 'point' and len(points) == 1:
-                # Add a second point to define a small radius
-                p1 = points[0]
-                points = [p1, (p1[0] + 5, p1[1] + 5)]
-            
-            ann = GraphicAnnotation(
-                id=f"ann_{roi.id}",
-                type=ann_type,
-                points=points,
-                color=roi.color.name(),
-                thickness=2,
-                roi_id=roi.id
-            )
-            ann.roi = roi # 【核心修复】建立内存引用，确保 AnnotationGraphicsItem 能访问 ROI 的 display_style
-            
-            # Transfer properties if any
-            if hasattr(roi, 'properties'):
-                ann.properties.update(roi.properties)
-            
-            self.session.annotations.append(ann)
-            self.annotation_panel.update_annotation_list()
-            self.multi_view.set_annotations(self.session.annotations)
+            # 2. Normal ROI Sync (if enabled)
+            if hasattr(self, 'roi_toolbox') and self.roi_toolbox.chk_sync_rois.isChecked():
+                # Don't sync point ROIs if they are part of point counter (they are too many)
+                if roi.roi_type == "point":
+                    return
+                # Convert ROI points to annotation points
+                points = [(p.x(), p.y()) for p in roi.points]
+                if not points and roi.line_points:
+                    p1, p2 = roi.line_points
+                    points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
+                
+                # Map ROI types to annotation types
+                ann_type = 'roi_ref'
+                if roi.roi_type == 'rectangle': ann_type = 'rect'
+                elif roi.roi_type == 'ellipse': ann_type = 'ellipse'
+                elif roi.roi_type == 'line_scan' or roi.roi_type == 'line': ann_type = 'line'
+                elif roi.roi_type == 'polygon': ann_type = 'polygon'
+                elif roi.roi_type == 'arrow': ann_type = 'arrow'
+                elif roi.roi_type == 'point': ann_type = 'circle'
+                elif roi.roi_type == 'circle': ann_type = 'circle'
+                
+                # Special handling for points
+                if roi.roi_type == 'point' and len(points) == 1:
+                    p1 = points[0]
+                    points = [p1, (p1[0] + 5, p1[1] + 5)]
+                
+                ann = GraphicAnnotation(
+                    id=f"ann_{roi.id}",
+                    type=ann_type,
+                    points=points,
+                    color=roi.color.name(),
+                    thickness=2,
+                    roi_id=roi.id
+                )
+                ann.roi = roi
+                
+                if hasattr(roi, 'properties'):
+                    ann.properties.update(roi.properties)
+                
+                self.session.annotations.append(ann)
+                self.annotation_panel.update_annotation_list()
+                self.multi_view.set_annotations(self.session.annotations)
+                Logger.debug(f"[Main.on_roi_added] ROI synced to annotation successfully")
+                
+        except Exception as e:
+            Logger.error(f"[Main.on_roi_added] Error processing ROI addition: {e}")
+            import traceback
+            Logger.error(traceback.format_exc())
+        
+        Logger.debug(f"[Main.on_roi_added] EXIT")
         
     def on_roi_removed(self, roi_id):
         """Remove linked annotation if ROI is removed."""
@@ -1265,6 +1308,7 @@ class MainWindow(QMainWindow):
 
         # Tools (Checkable)
         self.action_wand = QAction(tr("Magic Wand"), self)
+        self.action_wand.setObjectName("action_wand")
         self.action_wand.setCheckable(True)
         self.action_wand.setShortcut("W")
         self.action_wand.setStatusTip(tr("Select a region based on color/intensity similarity"))
@@ -1272,6 +1316,7 @@ class MainWindow(QMainWindow):
         self.action_wand.toggled.connect(lambda c: self.on_tool_toggled(self.action_wand, c))
         
         self.action_polygon = QAction(tr("Polygon Lasso"), self)
+        self.action_polygon.setObjectName("action_polygon")
         self.action_polygon.setCheckable(True)
         self.action_polygon.setShortcut("P")
         self.action_polygon.setStatusTip(tr("Draw a multi-sided region of interest"))
@@ -1279,6 +1324,7 @@ class MainWindow(QMainWindow):
         self.action_polygon.toggled.connect(lambda c: self.on_tool_toggled(self.action_polygon, c))
         
         self.action_rect = QAction(tr("Rectangle"), self)
+        self.action_rect.setObjectName("action_rect")
         self.action_rect.setCheckable(True)
         self.action_rect.setShortcut("R")
         self.action_rect.setStatusTip(tr("Draw a rectangular region of interest"))
@@ -1286,13 +1332,15 @@ class MainWindow(QMainWindow):
         self.action_rect.toggled.connect(lambda c: self.on_tool_toggled(self.action_rect, c))
 
         self.action_ellipse = QAction(tr("Ellipse"), self)
+        self.action_ellipse.setObjectName("action_ellipse")
         self.action_ellipse.setCheckable(True)
         self.action_ellipse.setShortcut("E")
         self.action_ellipse.setStatusTip(tr("Draw an elliptical region of interest"))
         self.action_ellipse.setIcon(get_icon("ellipse", "draw-ellipse"))
         self.action_ellipse.toggled.connect(lambda c: self.on_tool_toggled(self.action_ellipse, c))
 
-        self.action_count = QAction(tr("计数 (Point Counter)"), self)
+        self.action_count = QAction(tr("Point Counter"), self)
+        self.action_count.setObjectName("action_count")
         self.action_count.setCheckable(True)
         self.action_count.setShortcut("C")
         self.action_count.setStatusTip(tr("Interactively count fluorescent points across channels"))
@@ -1300,6 +1348,7 @@ class MainWindow(QMainWindow):
         self.action_count.toggled.connect(lambda c: self.on_tool_toggled(self.action_count, c))
 
         self.action_line_scan = QAction(tr("Line Scan"), self)
+        self.action_line_scan.setObjectName("action_line_scan")
         self.action_line_scan.setCheckable(True)
         self.action_line_scan.setShortcut("L")
         self.action_line_scan.setStatusTip(tr("Draw a line to perform colocalization analysis"))
@@ -1308,6 +1357,7 @@ class MainWindow(QMainWindow):
 
         # Pan / Hand Tool
         self.action_pan = QAction(tr("Hand (Pan)"), self)
+        self.action_pan.setObjectName("action_pan")
         self.action_pan.setCheckable(True)
         self.action_pan.setShortcut("H")
         self.action_pan.setStatusTip(tr("Pan the view and move existing ROIs"))
@@ -1316,6 +1366,7 @@ class MainWindow(QMainWindow):
 
         # Batch Selection Tool
         self.action_batch_select = QAction(tr("Batch Select"), self)
+        self.action_batch_select.setObjectName("action_batch_select")
         self.action_batch_select.setCheckable(True)
         self.action_batch_select.setShortcut("B")
         self.action_batch_select.setStatusTip(tr("Drag to select multiple ROIs/Annotations"))
@@ -1340,7 +1391,7 @@ class MainWindow(QMainWindow):
         self.tools_action_group.addAction(self.action_line_scan)
         self.tools_action_group.addAction(self.action_pan)
         self.tools_action_group.addAction(self.action_batch_select)
-        self.tools_action_group.setExclusive(False)
+        self.tools_action_group.setExclusive(True) # 启用互斥，防止多个工具同时选中
 
         # Analysis Actions
         self.action_measure = QAction(tr("Measure"), self)
@@ -2500,6 +2551,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("recentProjects", [])
         self.update_recent_projects_menu()
 
+
+
     def update_ui_after_load(self):
         """Updates all UI components after a project is loaded."""
         self.sample_list.refresh_list()
@@ -2615,7 +2668,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(
                         self,
                         tr("Template Warning"),
-                        tr("项目通道模板存在不规范项，已自动规范化处理。\n建议检查通道模板设置以避免继承异常。\n\n详细信息：\n{0}").format("\n".join(warnings))
+                        tr("Project channel template has irregularities and has been automatically normalized.\nWe recommend checking the channel template settings to avoid inheritance issues.\n\nDetails:\n{0}").format("\n".join(warnings))
                     )
             return True
         else:
@@ -3201,57 +3254,79 @@ class MainWindow(QMainWindow):
         if getattr(self, '_suppress_tool_toggled', False):
             return
 
-        # Manual Exclusivity Logic
-        if checked:
-            # Uncheck all other tools
-            self._suppress_tool_toggled = True
-            for act in self.tools_action_group.actions():
-                if act != tool_action and act.isChecked():
-                    act.setChecked(False)
-            self._suppress_tool_toggled = False
-        else:
-            # If unchecked, and NO other tool is checked, switch to Pan (Default)
-            if not any(a.isChecked() for a in self.tools_action_group.actions()):
-                # Fix: If we are in Annotation Mode (pending_annotation_mode is set),
-                # do NOT fallback to Pan, because the Annotation tool is active but not represented in this action group.
-                if getattr(self, 'pending_annotation_mode', None):
-                    return
-
-                # If switching AWAY from a tool (checked=False), and we are in Annotation Tab, 
-                # we might want to stay in "None" tool mode (waiting for annotation tool) rather than Pan.
-                # But typically unchecking an ROI tool means "I'm done with this tool".
+        # --- 状态锁：开始切换 ROI 工具 ---
+        self._is_switching_roi_tool = True
+        
+        try:
+            # Manual Exclusivity Logic
+            if checked:
+                # Uncheck all other tools
+                self._suppress_tool_toggled = True
+                for act in self.tools_action_group.actions():
+                    if act != tool_action:
+                        act.setChecked(False)
+                self._suppress_tool_toggled = False
                 
+                # FORCE: If we are selecting something other than Pan, ensure Pan is NOT checked
                 if tool_action != self.action_pan:
-                     # Switch to Pan
-                     self.action_pan.setChecked(True)
-                     return # The checking of Pan will trigger this function again with checked=True
-                else:
-                     # Pan was unchecked. Re-check it.
-                     self._suppress_tool_toggled = True
-                     self.action_pan.setChecked(True)
-                     self._suppress_tool_toggled = False
-                     return
+                    self.action_pan.setChecked(False)
+            else:
+                # If unchecked, and NO other tool is checked, switch to Pan (Default)
+                if not any(a.isChecked() for a in self.tools_action_group.actions()):
+                    # Fix: If we are in Annotation Mode (pending_annotation_mode is set),
+                    # do NOT fallback to Pan, because the Annotation tool is active but not represented in this action group.
+                    if getattr(self, 'pending_annotation_mode', None):
+                        return
 
-        if not checked:
-            return
-            
-        # Update Drawing Mode
-        self.drawing_mode = DrawingMode.ROI
-            
-        # Update toolbox UI
-        if hasattr(self, 'roi_toolbox'):
-            self.roi_toolbox.set_active_tool(tool_action)
+                    if tool_action != self.action_pan:
+                         # Switch to Pan
+                         self.action_pan.setChecked(True)
+                         return 
+                    else:
+                         # Pan was unchecked. Re-check it.
+                         self._suppress_tool_toggled = True
+                         self.action_pan.setChecked(True)
+                         self._suppress_tool_toggled = False
+                         return
 
-        # Clear annotation tool selection if a regular ROI tool is selected
-        if hasattr(self, 'annotation_panel'):
-            # Only clear if we are selecting a TOOL, not just unchecking one (which defaults to Pan)
-            # If we are selecting Pan, we might want to keep Annotation tool active?
-            # Actually, Pan is mutually exclusive with Annotation drawing too.
-            # But if we click an ROI tool, we definitely want to clear Annotation tool selection.
-            self.annotation_panel.clear_tool_selection()
-            
-        # Reset pending annotation mode to prevent "hijacking"
-        self.pending_annotation_mode = None 
+            if not checked:
+                return
+                
+            # Update Drawing Mode
+            self.drawing_mode = DrawingMode.ROI
+                
+            # Update toolbox UI
+            if hasattr(self, 'roi_toolbox'):
+                print(f"DEBUG: [Main.on_tool_toggled] Toggling toolbox for action: {tool_action.text() if tool_action else 'None'}")
+                import sys
+                sys.stdout.flush()
+                
+                self.roi_toolbox.set_active_tool(tool_action)
+                
+                # AUTO-SWITCH TAB: If an ROI tool is selected, switch to ROI Toolbox tab
+                for i in range(self.control_tabs.count()):
+                    tab_text = self.control_tabs.tabText(i)
+                    is_toolbox_tab = False
+                    for tab_id, _, title in self.all_tabs_data:
+                        if tab_id == "toolbox" and title == tab_text:
+                            is_toolbox_tab = True
+                            break
+                    
+                    if is_toolbox_tab:
+                        self.control_tabs.setCurrentIndex(i)
+                        print(f"DEBUG: [Main.on_tool_toggled] Switched to tab {i} ({tab_text})")
+                        break
+                sys.stdout.flush()
+
+            # Clear annotation tool selection if a regular ROI tool is selected
+            if hasattr(self, 'annotation_panel'):
+                self.annotation_panel.clear_tool_selection()
+                
+            # Reset pending annotation mode to prevent "hijacking"
+            self.pending_annotation_mode = None 
+        finally:
+            # --- 释放锁 ---
+            self._is_switching_roi_tool = False
 
         if tool_action == self.action_wand:
             self.lbl_status.setText("Mode: Magic Wand (Click to Auto-Select, Drag horizontally to adjust tolerance)")
@@ -4274,7 +4349,8 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, tr("About FluoQuant Pro"), 
             tr("<h3>FluoQuant Pro</h3>"
             "<p>A professional tool for fluorescence image analysis and point counting.</p>"
-            "<p>Version: 2.0.8</p>"))
+            "<p>Version: 2.0.8</p>"
+            "<p>Developed By PK</p>"))
 
     def show_shortcuts(self):
         """Shows the Keyboard Shortcuts dialog."""
