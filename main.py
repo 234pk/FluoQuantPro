@@ -162,7 +162,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         # Initialize Logger
-        Logger.setup(os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs"))
+        Logger.setup()
         Logger.info("Application starting...")
         
         self.setWindowTitle("FluoQuant Pro")

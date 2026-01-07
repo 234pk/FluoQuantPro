@@ -13,9 +13,27 @@ class Logger:
         if cls._instance:
             return cls._instance
             
+        # Determine the log directory based on the platform if default is used
+        if log_dir == "logs":
+            if sys.platform == 'darwin':
+                # macOS: ~/Library/Logs/FluoQuantPro
+                log_dir = os.path.expanduser("~/Library/Logs/FluoQuantPro")
+            elif sys.platform == 'win32':
+                # Windows: %APPDATA%/FluoQuantPro/logs
+                appdata = os.environ.get('APPDATA')
+                if appdata:
+                    log_dir = os.path.join(appdata, "FluoQuantPro", "logs")
+            
         # Create logs directory if it doesn't exist
-        if not os.path.exists(log_dir):
-            os.makedirs(log_dir)
+        try:
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
+        except Exception as e:
+            # Fallback to current directory if system log path is not accessible
+            print(f"[Logger] Failed to create system log dir {log_dir}: {e}")
+            log_dir = "logs"
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
             
         # Cleanup old logs (older than 7 days)
         try:

@@ -1,0 +1,75 @@
+name: Build macOS DMG
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+        
+    - name: Install DMG creation tool
+      run: brew install create-dmg
+        
+    - name: Generate ICNS icon
+      run: |
+        mkdir icon.iconset
+        sips -z 16 16   resources/icon.png --out icon.iconset/icon_16x16.png
+        sips -z 32 32   resources/icon.png --out icon.iconset/icon_16x16@2x.png
+        sips -z 32 32   resources/icon.png --out icon.iconset/icon_32x32.png
+        sips -z 64 64   resources/icon.png --out icon.iconset/icon_32x32@2x.png
+        sips -z 128 128 resources/icon.png --out icon.iconset/icon_128x128.png
+        sips -z 256 256 resources/icon.png --out icon.iconset/icon_128x128@2x.png
+        sips -z 256 256 resources/icon.png --out icon.iconset/icon_256x256.png
+        sips -z 512 512 resources/icon.png --out icon.iconset/icon_256x256@2x.png
+        sips -z 512 512 resources/icon.png --out icon.iconset/icon_512x512.png
+        cp resources/icon.png icon.iconset/icon_512x512@2x.png
+        iconutil -c icns icon.iconset
+        mv icon.icns resources/icon.icns
+        
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --clean FluoQuantPro_Mac.spec
+        
+    - name: Create DMG
+      run: |
+        mkdir -p dmg_root
+        cp -R "dist/FluoQuantPro.app" dmg_root/
+        # Create a symlink to Applications to make it easier to install
+        ln -s /Applications dmg_root/Applications
+        
+        create-dmg \
+          --volname "FluoQuantPro Installer" \
+          --volicon "resources/icon.icns" \
+          --window-pos 200 120 \
+          --window-size 800 400 \
+          --icon-size 100 \
+          --icon "FluoQuantPro.app" 200 190 \
+          --icon "Applications" 600 190 \
+          --hide-extension "FluoQuantPro.app" \
+          "dist/FluoQuantPro-macOS-v3.0.0.dmg" \
+          "dmg_root/"
+          
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: FluoQuantPro-macOS-DMG
+        path: dist/*.dmg
