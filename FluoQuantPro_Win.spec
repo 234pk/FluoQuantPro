@@ -8,7 +8,20 @@ hidden_imports = collect_submodules('src')
 hidden_imports += [
     'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'PySide6.QtSvg',
     'numpy', 'cv2', 'tifffile', 'qimage2ndarray', 'skimage', 
-    'scipy', 'pywt', 'matplotlib', 'matplotlib.backends.backend_qtagg'
+    'scipy', 'pywt', 'matplotlib', 'matplotlib.backends.backend_qtagg',
+    'skimage.feature._orb_descriptor_positions',
+    'skimage.filters.rank.core_cy_3d',
+    'skimage.morphology._max_tree',
+    'scipy.special.cython_special',
+    'scipy.linalg.cython_blas',
+    'sklearn.utils._typedefs',
+    'sklearn.utils._heap',
+    'sklearn.utils._sorting',
+    'sklearn.utils._vector_sentinel',
+    'sklearn.neighbors._partition_nodes',
+    'sklearn.neighbors._quad_tree',
+    'sklearn.tree._utils',
+    'sklearn.tree._tree'
 ]
 
 a = Analysis(
@@ -28,7 +41,7 @@ a = Analysis(
     runtime_hooks=[],
     excludes=['tkinter', 'unittest', 'pydoc', 'IPython', 'notebook'],
     noarchive=False,
-    optimize=2, # 使用更高级别的优化
+    optimize=0, # 必须设为 0 以保留 numpy 2.0+ 所需的 docstrings
 )
 
 pyz = PYZ(a.pure)
