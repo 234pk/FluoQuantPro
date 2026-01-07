@@ -1,5 +1,10 @@
 import os
 import sys
+import multiprocessing
+
+if __name__ == '__main__':
+    # 必须在所有逻辑之前调用，防止 Windows 打包后的无限递归启动
+    multiprocessing.freeze_support()
 
 # Ensure the project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -61,16 +66,24 @@ def get_resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     # 1. 优先检查 PyInstaller 的临时解压目录
     if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
+        path = os.path.join(sys._MEIPASS, relative_path)
+        if os.path.exists(path):
+            return path
     
-    # 2. 对于 macOS Bundle 结构，资源可能在 ../Resources (如果是从 MacOS 目录运行)
+    # 2. 检查可执行文件同级目录 (针对手动复制的文件)
     exe_dir = os.path.dirname(sys.executable)
+    exe_path = os.path.join(exe_dir, relative_path)
+    if os.path.exists(exe_path):
+        return os.path.normpath(exe_path)
+
+    # 3. 对于 macOS Bundle 结构
     macos_bundle_res = os.path.join(exe_dir, "..", "Resources", relative_path)
     if os.path.exists(macos_bundle_res):
         return os.path.normpath(macos_bundle_res)
         
-    # 3. 默认回退到开发环境路径
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+    # 4. 默认回退到开发环境路径
+    dev_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+    return dev_path
 
 class SceneLoaderWorker(QThread):
     # scene_id, index, data (numpy array or None), channel_def (object)

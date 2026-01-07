@@ -3,42 +3,26 @@ import sys
 import os
 from PyInstaller.utils.hooks import collect_submodules
 
-# 动态收集所有相关子模块
+# 动态收集所有相关子模块向，确保动态导入不遗漏
 hidden_imports = collect_submodules('src')
 hidden_imports += collect_submodules('skimage')
 hidden_imports += collect_submodules('scipy')
+hidden_imports += collect_submodules('pandas')
+hidden_imports += collect_submodules('matplotlib')
+
 hidden_imports += [
     'unittest',
     'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'PySide6.QtSvg',
-    'numpy', 'cv2', 'tifffile', 'qimage2ndarray', 'skimage', 
+    'numpy', 'numpy._core', 'cv2', 'tifffile', 'qimage2ndarray', 'skimage', 
     'scipy', 'pywt', 'matplotlib', 'matplotlib.backends.backend_qtagg',
-    'src.gui.export_settings_dialog',
-    # 补充相关子模块
-    'skimage.feature._orb_descriptor_positions',
-    'skimage.filters.rank.core_cy_3d',
-    'skimage.morphology._max_tree',
-    'skimage.morphology.disk_decompositions',
-    'skimage.morphology.ball_decompositions',
     'scipy.special.cython_special',
     'scipy.linalg.cython_blas',
     'scipy.linalg.cython_lapack',
     'scipy.special.beta',
     'scipy.sparse.csr_array',
     'pandas.core.internals.Block',
-    'scipy.optimize',
-    'scipy.ndimage',
-    'scipy.special',
-    'scipy.sparse',
-    'scipy.stats',
-    'scipy.linalg',
-    'scipy.spatial',
-    'scipy.integrate',
-    'scipy.signal',
-    'scipy.fft',
     'pandas',
-    'numpy',
-    'numexpr',
-    'numba',
+    'psutil',
     'pyarrow',
 ]
 
@@ -52,6 +36,7 @@ a = Analysis(
         ('FluoQuantPro_User_Manual.html', '.'), 
         ('manual.html', '.'), 
         ('change_log.md', '.'), 
+        ('README.md', '.'),
         ('docs', 'docs'), 
         ('project.json', '.')
     ],
