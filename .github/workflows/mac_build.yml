@@ -49,7 +49,7 @@ jobs:
         
     - name: Build macOS App
       env:
-        MACOSX_DEPLOYMENT_TARGET: '10.13'
+        MACOSX_DEPLOYMENT_TARGET: '11.0'
       run: |
         pyinstaller --clean FluoQuantPro_Mac.spec
 
@@ -64,17 +64,18 @@ jobs:
 
     - name: Fix Permissions and Sign
       run: |
-        # Fix Mach-O headers and sign the app bundle
-        # Using '-' as identity for ad-hoc signing
+        # Fix permissions and sign the app bundle
         echo "Signing app bundle..."
         chmod -R 755 "dist/FluoQuantPro.app"
+        # Force sign all binaries inside the app bundle
+        find "dist/FluoQuantPro.app/Contents/MacOS" -type f -name "*.so" -exec codesign --force --sign - --timestamp=none {} \;
+        find "dist/FluoQuantPro.app/Contents/MacOS" -type f -name "*.dylib" -exec codesign --force --sign - --timestamp=none {} \;
         codesign --force --deep --sign - --entitlements entitlements.plist "dist/FluoQuantPro.app"
         
     - name: Create DMG
       run: |
         mkdir -p dmg_root
         cp -R "dist/FluoQuantPro.app" dmg_root/
-        # Create a symlink to Applications to make it easier to install
         ln -s /Applications dmg_root/Applications
         
         create-dmg \
@@ -86,7 +87,7 @@ jobs:
           --icon "FluoQuantPro.app" 200 190 \
           --icon "Applications" 600 190 \
           --hide-extension "FluoQuantPro.app" \
-          "dist/FluoQuantPro-macOS-v3.0.0.dmg" \
+          "dist/FluoQuantPro-macOS.dmg" \
           "dmg_root/"
           
     - name: Upload Artifact

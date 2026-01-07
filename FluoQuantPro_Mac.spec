@@ -34,6 +34,9 @@ hidden_imports += [
     'scipy.fft',
     'pandas',
     'numpy',
+    'numexpr',
+    'numba',
+    'pyarrow',
 ]
 
 a = Analysis(
