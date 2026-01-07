@@ -50,6 +50,36 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# ---------------------------------------------------------
+# 依赖完整性防御性检查
+# ---------------------------------------------------------
+import sys
+def check_dependency(name):
+    found = False
+    for binary in a.binaries:
+        if name.lower() in binary[0].lower():
+            found = True
+            break
+    if not found:
+        # 有些库可能是纯 Python 的，在 pure 中
+        for module in a.pure:
+            if name.lower() in module[0].lower():
+                found = True
+                break
+    
+    if not found:
+        print(f"CRITICAL ERROR: {name} was not found in the build analysis!")
+        # 暂时只打印警告，因为有些库的文件名可能不包含库名，或者被打包在 zip 中
+        # sys.exit(1) 
+
+print("Verifying critical dependencies...")
+check_dependency('numpy')
+check_dependency('PySide6')
+check_dependency('scipy')
+check_dependency('matplotlib')
+# ---------------------------------------------------------
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
