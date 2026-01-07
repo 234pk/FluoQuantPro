@@ -60,7 +60,7 @@ exe = EXE(
     [], # macOS Onedir 模式不在此处打包二进制文件
     exclude_binaries=True,
     name='FluoQuantPro',
-    debug=False,
+    debug=True,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False, # macOS 上禁用 UPX 以提高兼容性

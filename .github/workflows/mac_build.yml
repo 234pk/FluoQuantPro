@@ -47,12 +47,21 @@ jobs:
         iconutil -c icns icon.iconset
         mv icon.icns resources/icon.icns
         
-    - name: Build with PyInstaller
+    - name: Build macOS App
       env:
         MACOSX_DEPLOYMENT_TARGET: '10.13'
       run: |
         pyinstaller --clean FluoQuantPro_Mac.spec
-        
+
+    - name: Upload Build Logs
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: macOS-Build-Logs
+        path: |
+          build/FluoQuantPro/warn-FluoQuantPro.txt
+          build/FluoQuantPro/xref-FluoQuantPro.html
+
     - name: Fix Permissions and Sign
       run: |
         # Fix Mach-O headers and sign the app bundle
