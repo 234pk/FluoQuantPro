@@ -50,9 +50,8 @@ jobs:
 
     - name: Release
       uses: softprops/action-gh-release@v2
-      if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+      if: startsWith(github.ref, 'refs/tags/')
       with:
-        tag_name: v3.0.0
-        files: dist/FluoQuantPro.exe
+        files: dist/*.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

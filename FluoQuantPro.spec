@@ -39,6 +39,7 @@ exe = EXE(
     [],
     name='FluoQuantPro',
     debug=True,
+debug=True,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
