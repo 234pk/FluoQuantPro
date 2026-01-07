@@ -3,8 +3,10 @@ import sys
 import os
 from PyInstaller.utils.hooks import collect_submodules
 
-# 动态收集 src 下的所有子模块
+# 动态收集所有相关子模块
 hidden_imports = collect_submodules('src')
+hidden_imports += collect_submodules('skimage')
+hidden_imports += collect_submodules('scipy')
 hidden_imports += [
     'unittest',
     'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'PySide6.QtSvg',

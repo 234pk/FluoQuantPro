@@ -1,12 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 
+from PyInstaller.utils.hooks import collect_submodules
+
+hidden_imports = collect_submodules('src')
+hidden_imports += collect_submodules('skimage')
+hidden_imports += collect_submodules('scipy')
+hidden_imports += [
+    'unittest',
+    'pywt',
+    'scipy.special.cython_special',
+    'scipy.linalg.cython_blas',
+    'scipy.linalg.cython_lapack',
+    'matplotlib.backends.backend_qtagg',
+    'PySide6.QtSvg',
+]
+
 a = Analysis(
     ['main.py'],
     pathex=['.'],
     binaries=[],
     datas=[('resources', 'resources'), ('src/resources/translations.json', 'src/resources')],
-    hiddenimports=['unittest', 'skimage', 'skimage.feature._orb_descriptor_positions', 'skimage.filters.rank.core_cy_3d', 'skimage.morphology._max_tree', 'skimage.morphology.disk_decompositions', 'skimage.morphology.ball_decompositions', 'pywt', 'scipy.special.cython_special', 'scipy.linalg.cython_blas', 'scipy.linalg.cython_lapack'],
+    hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -29,7 +44,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
