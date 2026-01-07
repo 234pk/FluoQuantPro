@@ -12,6 +12,10 @@ hidden_imports += [
     'scipy.special.cython_special',
     'scipy.linalg.cython_blas',
     'scipy.linalg.cython_lapack',
+    'scipy.special.beta',
+    'scipy.sparse.csr_array',
+    'pandas.core.internals.Block',
+    'pandas',
     'matplotlib.backends.backend_qtagg',
     'PySide6.QtSvg',
 ]
