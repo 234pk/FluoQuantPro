@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FluoQuant Pro 用户手册</title>
+    <style>
+        body {
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            border-bottom: 3px solid #4285f4;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #4285f4;
+            border-left: 5px solid #4285f4;
+            padding-left: 10px;
+            margin-top: 40px;
+            background-color: #e8f0fe;
+            padding: 10px;
+        }
+        h3 {
+            color: #2c3e50;
+            margin-top: 25px;
+        }
+        p {
+            margin-bottom: 15px;
+            text-align: justify;
+        }
+        ul, ol {
+            margin-bottom: 15px;
+            padding-left: 30px;
+        }
+        li {
+            margin-bottom: 5px;
+        }
+        .image-container {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+            background-color: #fff;
+            border-radius: 8px;
+        }
+        .placeholder-text {
+            color: #888;
+            margin-bottom: 10px;
+            font-style: italic;
+        }
+        img.preview {
+            max-width: 100%;
+            max-height: 500px;
+            display: none;
+            margin-top: 10px;
+            border: 1px solid #ddd;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        code {
+            background-color: #f1f1f1;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: Consolas, monospace;
+            color: #d63384;
+        }
+        .note {
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            color: #856404;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        nav {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            margin-bottom: 30px;
+        }
+        nav ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        nav a {
+            text-decoration: none;
+            color: #4285f4;
+            font-weight: 500;
+        }
+        nav a:hover {
+            text-decoration: underline;
+        }
+        .toc-level-1 { margin-left: 0; font-weight: bold; margin-top: 10px; }
+        .toc-level-2 { margin-left: 20px; font-weight: normal; margin-top: 5px; }
+        
+        /* Back to top button */
+        #back-to-top {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: #4285f4;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 50%;
+            text-decoration: none;
+            display: none;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+    </style>
+    <script>
+        function previewImage(input) {
+            if (input.files && input.files[0]) {
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    var img = input.nextElementSibling;
+                    img.src = e.target.result;
+                    img.style.display = 'block';
+                    input.previousElementSibling.style.display = 'none';
+                }
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+        
+        window.onscroll = function() {
+            var btn = document.getElementById("back-to-top");
+            if (document.body.scrollTop > 20 || document.documentElement.scrollTop > 20) {
+                btn.style.display = "block";
+            } else {
+                btn.style.display = "none";
+            }
+        };
+    </script>
+</head>
+<body>
+
+<h1>FluoQuant Pro 3.0 用户手册</h1>
+
+<div class="note">
+    <strong>提示：</strong> 本文档包含交互式图片上传区域。您可以点击“选择文件”按钮上传软件截图，以便生成完整的图文教程。
+</div>
+
+<nav>
+    <h2>目录</h2>
+    <ul>
+        <li class="toc-level-1"><a href="#intro">1. 软件简介</a></li>
+        <li class="toc-level-1"><a href="#install">2. 安装与启动</a></li>
+        <li class="toc-level-1"><a href="#ui">3. 用户界面概览</a></li>
+        <li class="toc-level-1"><a href="#project">4. 项目管理</a></li>
+            <li class="toc-level-2"><a href="#project-create">4.1 创建新项目</a></li>
+            <li class="toc-level-2"><a href="#project-import">4.2 导入图像</a></li>
+            <li class="toc-level-2"><a href="#project-save">4.3 保存与自动保存</a></li>
+        <li class="toc-level-1"><a href="#view">5. 图像浏览与调节</a></li>
+            <li class="toc-level-2"><a href="#view-nav">5.1 缩放与平移</a></li>
+            <li class="toc-level-2"><a href="#view-channel">5.2 通道控制</a></li>
+            <li class="toc-level-2"><a href="#view-adjust">5.3 亮度与对比度调节</a></li>
+        <li class="toc-level-1"><a href="#roi">6. 选区与标注 (ROI)</a></li>
+            <li class="toc-level-2"><a href="#roi-tools">6.1 标注工具详解</a></li>
+            <li class="toc-level-2"><a href="#roi-prop">6.2 属性设置</a></li>
+            <li class="toc-level-2"><a href="#roi-manager">6.3 标注管理</a></li>
+        <li class="toc-level-1"><a href="#analysis">7. 数据分析功能</a></li>
+            <li class="toc-level-2"><a href="#analysis-measure">7.1 强度测量</a></li>
+            <li class="toc-level-2"><a href="#analysis-coloc">7.2 共定位分析</a></li>
+            <li class="toc-level-2"><a href="#analysis-line">7.3 线扫描分析</a></li>
+            <li class="toc-level-2"><a href="#analysis-overlap">7.4 ROI 重叠分析</a></li>
+        <li class="toc-level-1"><a href="#export">8. 导出功能</a></li>
+        <li class="toc-level-1"><a href="#settings">9. 设置与首选项</a></li>
+    </ul>
+</nav>
+
+<section id="intro">
+    <h2>1. 软件简介</h2>
+    <p>FluoQuant Pro 是一款专业的荧光显微图像定量分析软件，专为生命科学研究人员设计。它提供了从多通道图像导入、可视化增强、感兴趣区域（ROI）标注，到复杂的共定位分析和数据导出的全流程解决方案。</p>
+    <p><strong>核心功能：</strong></p>
+    <ul>
+        <li><strong>多格式支持：</strong> 支持 TIFF, PNG, JPG 等常见格式，以及多通道荧光图像的自动合并与拆分。</li>
+        <li><strong>高效可视化：</strong> 实时亮度/对比度调节，Gamma 校正，多通道融合显示。</li>
+        <li><strong>精准标注：</strong> 提供矩形、圆形、多边形、自由绘制等多种 ROI 工具，支持矢量级编辑。</li>
+        <li><strong>深度分析：</strong> 内置 Pearson 相关系数、Mander's 系数等共定位算法，支持线扫描强度分布分析。</li>
+        <li><strong>数据导出：</strong> 一键导出高质量渲染图像及 CSV 格式的详细测量数据。</li>
+    </ul>
+    
+    <div class="image-container">
+        <div class="placeholder-text">此处插入图片: 软件启动欢迎界面</div>
+        <input type="file" accept="image/*" onchange="previewImage(this)">
+        <img class="preview" src="" alt="Image Preview">
+    </div>
+    
+</section>
+
+<section id="install">
+    <h2>2. 安装与启动</h2>
+    <p>FluoQuant Pro 为绿色免安装软件，解压即用。</p>
+    <h3>系统要求</h3>
+    <ul>
+        <li>操作系统：Windows 10/11 (64位) 或 macOS 12+</li>
+        <li>内存：建议 8GB 以上 (处理大图建议 16GB)</li>
+        <li>显卡：支持 OpenGL 3.3 以上的独立显卡推荐</li>
+    </ul>
+    <h3>启动步骤</h3>
+    <ol>
+        <li>下载并解压软件包到任意目录（避免中文路径以防兼容性问题）。</li>
+        <li>双击运行 <code>FluoQuantPro.exe</code>。</li>
+        <li>首次启动时，软件会自动检测系统语言并进行适配。</li>
+    </ol>
+</section>
+
+<section id="ui">
+    <h2>3. 用户界面概览</h2>
+    <p>软件主界面采用现代化的三栏布局设计，旨在最大化图像显示区域，同时保持工具的易用性。</p>
+    
+    <div class="image-container">
+        <div class="placeholder-text">此处插入图片: 软件主界面全览</div>
+        <input type="file" accept="image/*" onchange="previewImage(this)">
+        <img class="preview" src="" alt="Image Preview">
+    </div>
+    
+    
+    <h3>3.1 左侧：项目与样本栏</h3>
+    <p><strong>功能：</strong> 显示当前项目中的所有图像样本列表。</p>
+    <ul>
+        <li><strong>样本列表：</strong> 以树状结构显示每个样本及其包含的通道（红/绿/蓝等）。</li>
+        <li><strong>搜索框：</strong> 快速筛选样本名称。</li>
+        <li><strong>右键菜单：</strong> 提供重命名、删除、排序等快捷操作。</li>
+    </ul>
+
+    <h3>3.2 中间：图像画布 (Canvas)</h3>
+    <p><strong>功能：</strong> 核心工作区，用于显示图像、绘制 ROI 和查看分析结果。</p>
+    <ul>
+        <li>支持鼠标滚轮缩放，按住中键或空格键平移。</li>
+        <li>左上角显示当前图像的元数据信息（像素尺寸、位深）。</li>
+        <li>右下角提供比例尺显示。</li>
+    </ul>
+
+    <h3>3.3 右侧：控制面板</h3>
+    <p><strong>功能：</strong> 包含所有图像调节和分析工具，分为多个选项卡：</p>
+    <ul>
+        <li><strong>图像调节 (Adjustments)：</strong> 直方图、亮度对比度滑块。</li>
+        <li><strong>图形标注 (Annotations)：</strong> 也就是刚才我们汉化的面板，提供各种绘图工具。</li>
+        <li><strong>共定位/线扫描 (Colocalization)：</strong> 高级分析工具。</li>
+        <li><strong>测量结果 (Measure Results)：</strong> 数据表格展示。</li>
+    </ul>
+    
+    <div class="image-container">
+        <div class="placeholder-text">此处插入图片: 右侧控制面板特写</div>
+        <input type="file" accept="image/*" onchange="previewImage(this)">
+        <img class="preview" src="" alt="Image Preview">
+    </div>
+    
+</section>
+
+<section id="project">
+    <h2>4. 项目管理</h2>
+    <p>FluoQuant Pro 使用“项目 (Project)”的概念来管理一组相关的实验图像。所有操作状态（包括调节参数、ROI、测量数据）都会保存在项目文件中。</p>
+
+    <h3 id="project-create">4.1 创建新项目</h3>
+    <ol>
+        <li>点击菜单栏 <code>文件 (File) -> 新建项目 (New Project)</code>。</li>
+        <li>选择一个空文件夹作为项目根目录。</li>
+        <li>系统会自动生成 <code>project.json</code> 文件。</li>
+    </ol>
+
+    <h3 id="project-import">4.2 导入图像</h3>
+    <p>软件支持多种导入方式：</p>
+    <ul>
+        <li><strong>导入文件：</strong> 选择单个或多个图片文件。</li>
+        <li><strong>导入文件夹 (自动分组)：</strong> 智能识别文件名中的模式（如 "Sample1_CH1.tif", "Sample1_CH2.tif"），自动将它们合并为一个多通道样本。</li>
+        <li><strong>导入合并图 (RGB Split)：</strong> 导入一张 RGB 复合图像，软件会自动将其拆分为红、绿、蓝三个独立通道进行分析。</li>
+    </ul>
+    
+    <div class="image-container">
+        <div class="placeholder-text">此处插入图片: 导入图像对话框</div>
+        <input type="file" accept="image/*" onchange="previewImage(this)">
+        <img class="preview" src="" alt="Image Preview">
+    </div>
+    
+
+    <h3 id="project-save">4.3 保存与自动保存</h3>
+    <p>您可以手动点击 <code>保存项目</code>，也可以在 <code>设置 -> 自动保存设置</code> 中开启定时自动保存功能（默认每 5 分钟），防止数据丢失。</p>
+</section>
+
+<section id="view">
+    <h2>5. 图像浏览与调节</h2>
+    
+    <h3 id="view-nav">5.1 缩放与平移</h3>
+    <ul>
+        <li><strong>缩放：</strong> 滚动鼠标滚轮。</li>
+        <li><strong>平移：</strong> 按住鼠标中键（滚轮）拖动，或按住键盘 <code>Space</code> 键配合左键拖动。</li>
+        <li><strong>适配窗口：</strong> 双击画布背景或按快捷键 <code>F</code>。</li>
+    </ul>
+
+    <h3 id="view-channel">5.2 通道控制</h3>
+    <p>在左侧样本列表中，每个通道前都有一个复选框。</p>
+    <ul>
+        <li><strong>勾选/取消勾选：</strong> 开启或关闭该通道的显示。</li>
+        <li><strong>单通道模式：</strong> 点击通道名称，仅高亮显示该通道。</li>
+    </ul>
+
+    <h3 id="view-adjust">5.3 亮度与对比度调节</h3>
+    <p>在右侧 <code>图像调节</code> 面板中：</p>
+    <ul>
+        <li><strong>直方图：</strong> 显示当前图像的灰度分布。</li>
+        <li><strong>Min/Max 滑块：</strong> 调整显示的黑白场。缩小范围可以增强暗部信号。</li>
+        <li><strong>Gamma：</strong> 非线性调节，用于在不饱和高光的情况下提升暗部细节。</li>
+        <li><strong>自动 (Auto)：</strong> 自动计算最佳显示范围。</li>
+        <li><strong>重置 (Reset)：</strong> 恢复原始显示状态。</li>
+    </ul>
+    
+    <div class="image-container">
+        <div class="placeholder-text">此处插入图片: 直方图调节操作演示</div>
+        <input type="file" accept="image/*" onchange="previewImage(this)">
+        <img class="preview" src="" alt="Image Preview">
+    </div>
+    
+</section>
+
+<section id="roi">
+    <h2>6. 选区与标注 (ROI)</h2>
+    <p>本软件拥有强大的 ROI 标注系统，所有工具均已完全汉化。</p>
+
+    <h3 id="roi-tools">6.1 标注工具详解</h3>
+    <p>位于右侧 <code>图形标注 (Graphic Annotations)</code> 面板：</p>
+    <ul>
+        <li><strong>箭头工具 (Arrow)：</strong> 绘制带箭头的指向线。</li>
+        <li><strong>直线工具 (Line)：</strong> 测量长度或进行线扫描。</li>
+        <li><strong>矩形/圆形/椭圆工具：</strong> 规则形状选区。</li>
+        <li><strong>多边形工具 (Polygon)：</strong> 点击定义顶点，双击结束，用于勾勒不规则细胞轮廓。</li>
+        <li><strong>文本工具 (Text)：</strong> 在图像上添加注释文字。</li>
+        <li><strong>魔棒工具 (Magic Wand)：</strong> (快捷键 W) 基于颜色相似度自动选取区域。</li>
+    </ul>
+    
+    <div class="image-container">
+        <div class="placeholder-text">此处插入图片: 使用多边形工具勾勒细胞</div>
+        <input type="file" accept="image/*" onchange="previewImage(this)">
+        <img class="preview" src="" alt="Image Preview">
+    </div>
+    
+
+    <h3 id="roi-prop">6.2 属性设置</h3>
+    <p>选中任意标注后，可以在 <code>属性 (Properties)</code> 区域修改其外观：</p>
+    <ul>
+        <li><strong>颜色：</strong> 点击色块更改线条颜色。</li>
+        <li><strong>宽度：</strong> 调整线条粗细。</li>
+        <li><strong>样式：</strong> 切换实线、虚线、点线。</li>
+        <li><strong>仅导出 (Export Only)：</strong> 勾选后，该标注仅在导出图像时显示，不参与数据测量（用于纯注释）。</li>
+    </ul>
+
+    <h3 id="roi-manager">6.3 标注管理</h3>
+    <p><strong>列表管理：</strong> 所有标注都会显示在列表中，支持多选删除、隐藏。</p>
+    <p><strong>同步选区：</strong> 勾选 <code>将选区同步为标注</code>，绘制的 ROI 会自动转换为可导出的图形对象。</p>
+</section>
+
+<section id="analysis">
+    <h2>7. 数据分析功能</h2>
+
+    <h3 id="analysis-measure">7.1 强度测量</h3>
+    <p>绘制 ROI 后，点击 <code>分析 -> 测量 (Measure)</code> (快捷键 M)。</p>
+    <p>结果将显示在 <code>测量结果</code> 表格中，包含：</p>
+    <ul>
+        <li><strong>Area：</strong> 面积 (平方微米/像素)。</li>
+        <li><strong>Mean：</strong> 平均荧光强度。</li>
+        <li><strong>IntDen：</strong> 积分密度 (Mean × Area)。</li>
+        <li><strong>Min/Max：</strong> 最小/最大灰度值。</li>
+    </ul>
+
+    <h3 id="analysis-coloc">7.2 共定位分析</h3>
+    <p>用于分析两个通道（如红与绿）之间的信号重叠程度。</p>
+    <ol>
+        <li>切换到 <code>共定位/线扫描</code> 面板。</li>
+        <li>选择要分析的两个通道（Channel 1 和 Channel 2）。</li>
+        <li>选择分析区域（整个图像或特定 ROI）。</li>
+        <li>点击 <code>计算 (Calculate)</code>。</li>
+    </ol>
+    <p><strong>输出指标：</strong></p>
+    <ul>
+        <li><strong>Pearson's R：</strong> 相关系数 (-1 到 1)，1 表示完全正相关。</li>
+        <li><strong>Mander's M1/M2：</strong> 共定位系数，表示通道 1 中有多少信号与通道 2 重叠。</li>
+    </ul>
+    
+    <div class="image-container">
+        <div class="placeholder-text">此处插入图片: 共定位散点图分析结果</div>
+        <input type="file" accept="image/*" onchange="previewImage(this)">
+        <img class="preview" src="" alt="Image Preview">
+    </div>
+    
+
+    <h3 id="analysis-line">7.3 线扫描分析</h3>
+    <p>用于分析荧光信号沿特定路径的分布。</p>
+    <ol>
+        <li>使用 <code>直线工具</code> 在感兴趣区域画一条线。</li>
+        <li>面板会自动绘制出该路径上各通道的强度曲线图。</li>
+        <li>图表支持导出为 CSV 数据或图片。</li>
+    </ol>
+
+    <h3 id="analysis-overlap">7.4 ROI 重叠分析</h3>
+    <p>用于分析多个感兴趣区域（ROI）之间的空间重叠关系。</p>
+    <p><strong>操作步骤：</strong></p>
+    <ol>
+        <li>在图像上绘制两个或多个重叠的 ROI（如多边形或矩形）。</li>
+        <li>点击工具栏的 <code>测量 (Measure)</code> 按钮（快捷键 M）。</li>
+        <li>软件将自动计算所有 ROI 的重叠情况，结果显示在 <code>测量结果</code> 表格中。</li>
+    </ol>
+    <p><strong>结果说明：</strong></p>
+    <ul>
+        <li><strong>虚拟行 (Virtual Row)：</strong> 结果表中会自动添加以 "virtual_overlap" 开头的行。</li>
+        <li><strong>Area：</strong> 重叠区域（交集）的面积。</li>
+        <li><strong>Intersection Stats：</strong> 重叠区域内的荧光强度统计。</li>
+        <li><strong>Pairwise Analysis：</strong> 软件还会分析两两之间的重叠比例 (IoU)。</li>
+    </ul>
+</section>
+
+<section id="export">
+    <h2>8. 导出功能</h2>
+    
+    <h3>导出图像</h3>
+    <p>点击 <code>文件 -> 导出图像</code>。支持两种模式：</p>
+    <ul>
+        <li><strong>原始数据 (Raw Data)：</strong> 导出为 16-bit 灰度 TIFF，保留原始数值，适合后续量化分析。</li>
+        <li><strong>渲染图像 (Rendered)：</strong> 导出为 RGB TIFF/PNG，包含当前的亮度调节、伪彩颜色和 ROI 标注，适合发表文章或展示。</li>
+    </ul>
+
+    <h3>导出数据</h3>
+    <p>在测量结果表格中，右键点击选择 <code>导出 CSV</code>，即可将所有测量数据保存为 Excel 可读文件。</p>
+</section>
+
+<section id="settings">
+    <h2>9. 设置与首选项</h2>
+    <p><strong>语言设置：</strong> <code>设置 -> 应用程序设置 -> 语言</code>，支持中文和英文切换。</p>
+    <p><strong>比例尺设置：</strong> 在 <code>图形标注</code> 面板底部的 <code>比例尺</code> 区域，可以设置像素大小（微米/像素），或使用显微镜预设。</p>
+    
+    <div class="image-container">
+        <div class="placeholder-text">此处插入图片: 设置对话框</div>
+        <input type="file" accept="image/*" onchange="previewImage(this)">
+        <img class="preview" src="" alt="Image Preview">
+    </div>
+    
+</section>
+
+<a href="#" id="back-to-top" title="返回顶部">↑</a>
+
+</body>
+</html>
