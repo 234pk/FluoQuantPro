@@ -47,11 +47,17 @@ jobs:
         iconutil -c icns icon.iconset
         mv icon.icns resources/icon.icns
         
+    - name: Check Icon and Files
+      run: |
+        ls -la resources/
+        ls -la entitlements.plist
+        
     - name: Build macOS App
       env:
         MACOSX_DEPLOYMENT_TARGET: '11.0'
       run: |
-        pyinstaller --clean FluoQuantPro_Mac.spec
+        # 运行 PyInstaller 并确保日志输出到控制台，同时尝试捕获错误
+        pyinstaller --clean --log-level=INFO FluoQuantPro_Mac.spec
 
     - name: Upload Build Logs
       uses: actions/upload-artifact@v4

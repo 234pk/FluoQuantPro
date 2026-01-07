@@ -3,12 +3,19 @@ import sys
 import os
 from PyInstaller.utils.hooks import collect_submodules
 
-# 动态收集所有相关子模块向，确保动态导入不遗漏
-hidden_imports = collect_submodules('src')
-hidden_imports += collect_submodules('skimage')
-hidden_imports += collect_submodules('scipy')
-hidden_imports += collect_submodules('pandas')
-hidden_imports += collect_submodules('matplotlib')
+# 动态收集所有相关子模块，确保动态导入不遗漏
+hidden_imports = []
+try:
+    hidden_imports += collect_submodules('src')
+except Exception as e:
+    print(f"Warning: Failed to collect submodules for src: {e}")
+
+packages_to_collect = ['skimage', 'scipy', 'pandas', 'matplotlib']
+for pkg in packages_to_collect:
+    try:
+        hidden_imports += collect_submodules(pkg)
+    except Exception as e:
+        print(f"Warning: Failed to collect submodules for {pkg}: {e}")
 
 hidden_imports += [
     'unittest',
