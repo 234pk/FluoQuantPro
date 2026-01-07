@@ -35,3 +35,12 @@ jobs:
       with:
         name: FluoQuantPro-Windows-v3.0.0
         path: dist/FluoQuantPro.exe
+
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+      with:
+        tag_name: v3.0.0
+        files: dist/FluoQuantPro.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -83,3 +83,12 @@ jobs:
       with:
         name: FluoQuantPro-macOS-DMG
         path: dist/*.dmg
+
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+      with:
+        tag_name: v3.0.0
+        files: dist/*.dmg
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
