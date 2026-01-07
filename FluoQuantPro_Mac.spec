@@ -28,7 +28,8 @@ hidden_imports += [
     'sklearn.neighbors._partition_nodes',
     'sklearn.neighbors._quad_tree',
     'sklearn.tree._utils',
-    'sklearn.tree._tree'
+    'sklearn.tree._tree',
+    'sklearn.utils._cython_blas',
 ]
 
 a = Analysis(

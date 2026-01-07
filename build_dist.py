@@ -82,13 +82,12 @@ VSVersionInfo(
         
         # Optimization: Exclude heavy unused modules
         '--exclude-module=tkinter',
-        '--exclude-module=matplotlib',
         '--exclude-module=ipython',
         '--exclude-module=notebook',
         '--exclude-module=jedi',
         
         # Search Paths
-        '--paths=src',
+        '--paths=.',
     ]
     
     PyInstaller.__main__.run(args)
