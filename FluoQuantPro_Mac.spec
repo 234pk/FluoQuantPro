@@ -21,7 +21,6 @@ hidden_imports += [
     'scipy.linalg.cython_lapack',
     'scipy.optimize',
     'scipy.ndimage',
-    'scipy.special._cdflib',
 ]
 
 a = Analysis(
