@@ -53,6 +53,8 @@ class AnnotationPanel(QWidget):
 
         # --- 1. Graphic Annotations Group (Reordered to top as implied by context) ---
         self.grp_annotations = QGroupBox(tr("Graphic Annotations"))
+        self.grp_annotations.setObjectName("grp_annotations")
+        self.grp_annotations.setProperty("full_title", tr("Graphic Annotations"))
         v_ann = QVBoxLayout()
         v_ann.setSpacing(8)
         v_ann.setContentsMargins(4, 15, 4, 4)
@@ -148,6 +150,8 @@ class AnnotationPanel(QWidget):
         
         # --- 2. Properties Group ---
         self.grp_props = QGroupBox(tr("Properties"))
+        self.grp_props.setObjectName("grp_props")
+        self.grp_props.setProperty("full_title", tr("Properties"))
         
         # Use a main grid layout for properties
         self.grid_props = QGridLayout()
@@ -331,6 +335,8 @@ class AnnotationPanel(QWidget):
 
         # --- 3. Scale Bar Group ---
         self.grp_scale_bar = QGroupBox(tr("Scale Bar"))
+        self.grp_scale_bar.setObjectName("grp_scale_bar")
+        self.grp_scale_bar.setProperty("full_title", tr("Scale Bar"))
         v_scale = QVBoxLayout()
         v_scale.setSpacing(4)
         v_scale.setContentsMargins(4, 12, 4, 4)
@@ -449,7 +455,8 @@ class AnnotationPanel(QWidget):
         btn.setIconSize(QSize(20, 20))
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         btn.setCheckable(True)
-        btn.setFixedSize(28, 28)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn.setMinimumSize(28, 28)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setProperty("tool_id", tool_id)
         
@@ -845,8 +852,8 @@ class AnnotationPanel(QWidget):
     def _update_ann_count(self):
         self.lbl_ann_count.setText(tr("Total Annotations: {}").format(len(self.session.annotations)))
 
-    def _update_tool_specific_controls(self, tool_type):
-        """Shows/Hides specific controls based on selected tool."""
+    def _update_tool_specific_controls(self, tool_id):
+        """Shows/hides controls based on selected tool or annotation type."""
         # Hide all first
         self.lbl_ann_size.setVisible(False)
         self.spin_ann_size.setVisible(False)
@@ -854,18 +861,21 @@ class AnnotationPanel(QWidget):
         self.widget_arrow_params.hide()
         self.chk_ann_smooth.hide()
         
-        if tool_type == 'arrow':
+        if tool_id == 'arrow':
             self.lbl_ann_size.setText(tr("Head Size:"))
             self.lbl_ann_size.setVisible(True)
             self.spin_ann_size.setVisible(True)
             self.widget_arrow_params.show()
-        elif tool_type == 'text':
+        elif tool_id == 'text':
             self.lbl_ann_size.setText(tr("Font Size:"))
             self.lbl_ann_size.setVisible(True)
             self.spin_ann_size.setVisible(True)
             self.widget_text_params.show()
-        elif tool_type in ['polygon', 'roi_ref']:
+        elif tool_id in ['polygon', 'roi_ref']:
             self.chk_ann_smooth.show()
+
+        # Update visibility of style controls
+        self._update_style_controls_visibility()
 
     def _toggle_annotations(self, visible):
         self.session.show_annotations = visible
@@ -933,6 +943,77 @@ class AnnotationPanel(QWidget):
         
         self.settings_changed.emit()
 
+    def resizeEvent(self, event):
+        width = self.width()
+        is_compact = width < 150
+        is_tiny = width < 100
+        
+        # 1. 标题组优化
+        for grp in [self.grp_annotations, self.grp_props, self.grp_scale_bar]:
+            if hasattr(self, grp.objectName()): # 确保已初始化
+                grp.setTitle("" if is_compact else grp.property("full_title"))
+
+        # 2. 标注工具栏布局调整
+        if hasattr(self, 'tool_buttons_layout'):
+            # 极窄模式下切换为 2 列或 1 列
+            cols = 1 if is_tiny else (2 if is_compact else 4)
+            # 重新分配 grid 位置
+            btns = [self.btn_add_arrow, self.btn_add_line, self.btn_add_rect, self.btn_add_circle,
+                    self.btn_add_ellipse, self.btn_add_poly, self.btn_add_text, self.btn_batch_select]
+            for i, btn in enumerate(btns):
+                self.tool_buttons_layout.removeWidget(btn)
+                row = i // cols
+                col = i % cols
+                self.tool_buttons_layout.addWidget(btn, row, col)
+                
+                # 动态调整按钮尺寸与样式
+                if is_tiny:
+                    btn.setFixedSize(28, 28)
+                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                elif is_compact:
+                    btn.setMinimumHeight(28)
+                    btn.setMinimumWidth(28)
+                    btn.setMaximumWidth(16777215) # Unset fixed width
+                    btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                else:
+                    btn.setMinimumHeight(28)
+                    btn.setMaximumWidth(16777215)
+                    btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+
+        # 3. 标注列表可见性
+        if hasattr(self, 'list_ann'):
+            self.list_ann.setVisible(not is_compact)
+            if hasattr(self, 'lbl_ann_count'):
+                self.lbl_ann_count.setVisible(not is_compact)
+
+        # 4. 属性面板优化 (隐藏标签)
+        if hasattr(self, 'grid_props'):
+            for i in range(self.grid_props.count()):
+                item = self.grid_props.itemAt(i)
+                w = item.widget()
+                if isinstance(w, QLabel) and w.text() != tr("Size:"):
+                    w.setVisible(not is_compact)
+
+        # 5. 比例尺面板优化
+        if hasattr(self, 'grp_scale_bar'):
+            # 获取内部 layout
+            layout = self.grp_scale_bar.layout()
+            if layout:
+                for i in range(layout.count()):
+                    item = layout.itemAt(i)
+                    if item.layout() and isinstance(item.layout(), QGridLayout):
+                        grid = item.layout()
+                        # 隐藏 row 2 到 row 8 的所有控件
+                        for r in range(2, 9):
+                            for c in range(2):
+                                it = grid.itemAtPosition(r, c)
+                                if it and it.widget():
+                                    it.widget().setVisible(not is_compact)
+
+        super().resizeEvent(event)
+
     def retranslate_ui(self):
         self.grp_scale_bar.setTitle(tr("Scale Bar"))
         self.chk_enabled.setText(tr("Enable Scale Bar"))
@@ -945,15 +1026,30 @@ class AnnotationPanel(QWidget):
         self.grp_annotations.setTitle(tr("Graphic Annotations"))
         self.chk_ann_visible.setText(tr("Show Annotations"))
         
-        # Tool buttons - tooltips only (icon-only mode)
+        # Tool buttons - tooltips and text (for beside icon mode)
         self.btn_add_arrow.setToolTip(tr("Arrow Tool"))
+        self.btn_add_arrow.setText(tr("Arrow"))
+        
         self.btn_add_line.setToolTip(tr("Line Tool"))
+        self.btn_add_line.setText(tr("Line"))
+        
         self.btn_add_rect.setToolTip(tr("Rectangle Tool"))
+        self.btn_add_rect.setText(tr("Rect"))
+        
         self.btn_add_circle.setToolTip(tr("Circle Tool"))
+        self.btn_add_circle.setText(tr("Circle"))
+        
         self.btn_add_ellipse.setToolTip(tr("Ellipse Tool"))
+        self.btn_add_ellipse.setText(tr("Ellipse"))
+        
         self.btn_add_poly.setToolTip(tr("Polygon Tool"))
+        self.btn_add_poly.setText(tr("Polygon"))
+        
         self.btn_add_text.setToolTip(tr("Text Tool"))
+        self.btn_add_text.setText(tr("Text"))
+        
         self.btn_batch_select.setToolTip(tr("Batch Select"))
+        self.btn_batch_select.setText(tr("Batch"))
         
         self.btn_align_left.setToolTip(tr("Align Left"))
         self.btn_align_center.setToolTip(tr("Align Center"))

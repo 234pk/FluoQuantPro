@@ -338,21 +338,20 @@ class MultiViewWidget(QWidget):
 
     def on_view_clicked(self, view_id: str, channel_index: int):
         """Relay selection signal and update visual state."""
+        if self.active_channel_id == view_id:
+            # Already selected, skip redundant updates to prevent excessive redrawing
+            return
+
         self.active_channel_id = view_id
         
-        # Update Visuals
+        # Update Visuals only if changed
         for vid, view in self.views.items():
             view.set_selected(vid == view_id)
             
-        # For Merge view, channel_index might be -1 or specific logic?
-        # If view_id is "Merge", we might not select a specific channel unless we implement layer selection.
-        # For now, just relay if it's a valid channel index (>= 0).
+        # Relay selection signal
         if channel_index >= 0:
             self.channel_selected.emit(channel_index)
         elif view_id == "Merge":
-            # If Merge is clicked, maybe we want to select the "Merge" option in adjustment panel?
-            # Or just keep the last selected channel?
-            # For now, let's assume -1 represents Merge or "No specific channel"
             self.channel_selected.emit(-1)
 
     def on_mouse_moved(self, x: int, y: int, channel_index: int):

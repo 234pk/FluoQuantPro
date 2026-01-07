@@ -107,6 +107,37 @@ class AdjustmentPanel(QWidget):
         self.lbl_gamma.setText(tr("Gamma"))
         self.btn_reset.setToolTip(tr("Reset brightness/contrast to default"))
 
+    def resizeEvent(self, event):
+        width = self.width()
+        is_compact = width < 150
+        
+        # 1. 标题组优化
+        if hasattr(self, 'grp_controls'):
+            self.grp_controls.setTitle("" if is_compact else tr("Basic Adjustments"))
+        
+        # 2. 核心控件行优化 (Min/Max/Gamma)
+        # 遍历三个容器布局
+        for container in [self.container_min, self.container_max, self.container_gamma]:
+            # 第一个元素是标签
+            lbl = container.itemAt(0).widget()
+            if lbl: lbl.setVisible(not is_compact)
+            
+            # 第二个元素是包含 slider 和 spinbox 的 QHBoxLayout
+            h_layout = container.itemAt(1).layout()
+            if h_layout and isinstance(h_layout, QHBoxLayout):
+                if is_compact:
+                    # 紧凑模式：如果当前是水平，则切换为垂直逻辑（通过隐藏 spinbox 来简化，或通过调整对齐）
+                    # 这里我们选择隐藏 spinbox，因为在极窄屏下 slider 更重要，spinbox 可以在弹出窗口或宽屏下调整
+                    h_layout.itemAt(1).widget().setVisible(False)
+                else:
+                    h_layout.itemAt(1).widget().setVisible(True)
+
+        # 3. 直方图面板自适应
+        if hasattr(self, 'histogram_panel'):
+            self.histogram_panel.setVisible(width > 80) # 极窄模式下隐藏复杂的直方图
+
+        super().resizeEvent(event)
+
     def create_fine_control(self, label_text, min_val, max_val, init_val, callback, scale=1.0):
         layout_container = QVBoxLayout()
         layout_container.setSpacing(2)

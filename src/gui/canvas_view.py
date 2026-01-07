@@ -180,6 +180,7 @@ class RoiHandleItem(QGraphicsRectItem):
 class RoiGraphicsItem(QGraphicsPathItem):
     """Custom GraphicsItem for ROI to handle interactions and sync."""
     def __init__(self, roi: ROI, parent=None, display_scale=1.0):
+        Logger.debug(f"[RoiGraphicsItem.__init__] ENTER - ROI: {roi.label} ({roi.id})")
         # We need to scale the path if the scene is downsampled but ROI is full res
         self.display_scale = display_scale
         scaled_path = self._scale_path(roi.path, display_scale)
@@ -208,6 +209,7 @@ class RoiGraphicsItem(QGraphicsPathItem):
         self.MAX_POLYGON_HANDLES = 20
         self.handle_to_point_map = {} # Maps handle index (0, 1...) to roi.points index
         self.handles = {}
+        Logger.debug(f"[RoiGraphicsItem.__init__] Creating handles for {roi.roi_type}")
         self._create_handles()
         
         # State for resizing
@@ -220,6 +222,7 @@ class RoiGraphicsItem(QGraphicsPathItem):
         
         # Sync Throttling
         self._last_sync_time = 0
+        Logger.debug(f"[RoiGraphicsItem.__init__] EXIT")
 
     def shape(self):
         """Override shape to increase hit area for easier selection."""
@@ -1150,6 +1153,12 @@ class RoiGraphicsItem(QGraphicsPathItem):
             # Custom ROI style (preserving per-ROI color)
             style = self.style_center.get_style('roi_default').copy()
             style['pen_color'] = self.roi_color.name()
+            
+            # 【优化】对于点类型 ROI，使用实线并增加填充，增强视觉一致性
+            if hasattr(self, 'roi') and self.roi.roi_type == "point":
+                style['pen_style'] = 'solid'
+                style['brush_color'] = self.roi_color.name()
+                style['brush_alpha'] = 100 # 半透明填充
             
         # Set context and draw
         self.engine.set_context(painter, 1.0)
@@ -2679,7 +2688,8 @@ class CanvasView(QGraphicsView):
 
         # 2. Original Logic for everything else
         if event.button() == Qt.MouseButton.LeftButton:
-            Logger.debug(f"[CanvasView] mousePressEvent: button=Left, tool={type(self.active_tool).__name__ if self.active_tool else 'None'}, mode={self.dragMode()}")
+            # REMOVED: High-frequency debug logging
+            # Logger.debug(f"[CanvasView] mousePressEvent: button=Left, tool={type(self.active_tool).__name__ if self.active_tool else 'None'}, mode={self.dragMode()}")
             # Safety Net: If tool is active, ensure DragMode is NoDrag
             if self.active_tool and self.dragMode() != QGraphicsView.DragMode.NoDrag:
                  Logger.warning(f"[CanvasView] Force correcting DragMode from {self.dragMode()} to NoDrag for tool {type(self.active_tool).__name__}")
@@ -2714,6 +2724,11 @@ class CanvasView(QGraphicsView):
              # logic by calling super() early and returning, unless we specifically hit a handle.
              # This ensures that clicking background ALWAYS pans when Hand tool is selected.
              if is_hand_mode and not has_handle:
+                 # USER REQUEST: Pass channel selection event even when dragging
+                 if event.button() == Qt.MouseButton.LeftButton:
+                     # Use singleShot to decouple from the mouse press handling
+                     QTimer.singleShot(0, self._emit_view_clicked)
+
                  super().mousePressEvent(event)
                  return
              pass
@@ -3072,12 +3087,23 @@ class CanvasView(QGraphicsView):
 
     def _on_roi_added(self, roi):
         """Called when a new ROI is added to the manager."""
+        print(f"CRITICAL_DEBUG: Entering _on_roi_added for ROI {roi.id}")
+        import sys
+        sys.stdout.flush()
+        Logger.debug(f"[CanvasView._on_roi_added] ENTER - ROI: {roi.label} ({roi.id})")
         # Create item with current display scale
         # Fixed: Always use 1.0 because Scene is Full Resolution
-        item = RoiGraphicsItem(roi, display_scale=1.0)
-        item.roi_manager = self.roi_manager # Inject manager for sync
-        self.scene().addItem(item)
-        self._roi_items[roi.id] = item
+        try:
+            item = RoiGraphicsItem(roi, display_scale=1.0)
+            item.roi_manager = self.roi_manager # Inject manager for sync
+            self.scene().addItem(item)
+            self._roi_items[roi.id] = item
+            Logger.debug(f"[CanvasView._on_roi_added] Item added to scene and tracked.")
+        except Exception as e:
+            Logger.error(f"[CanvasView._on_roi_added] Failed to create or add ROI item: {e}")
+            import traceback
+            Logger.error(traceback.format_exc())
+        Logger.debug(f"[CanvasView._on_roi_added] EXIT")
 
     def _on_roi_removed(self, roi_id):
         if roi_id in self._roi_items:
@@ -3259,6 +3285,14 @@ class CanvasView(QGraphicsView):
              self.set_active_tool(PolygonSelectionTool(self.session))
         elif mode == 'line':
              self.set_active_tool(LineScanTool(self.session))
+        elif mode == 'point':
+             # Point Counter Tool is managed by MainWindow but we can set it here if available
+             if hasattr(self.session, 'main_window') and hasattr(self.session.main_window, 'point_counter_tool'):
+                 self.set_active_tool(self.session.main_window.point_counter_tool)
+             else:
+                 # Fallback to creating a new one if somehow missing (not ideal)
+                 from src.gui.tools import PointCounterTool
+                 self.set_active_tool(PointCounterTool(self.session))
         elif mode != 'none':
             # Fallback for unsupported modes (e.g. arrow, text)
             self.active_tool = None 
@@ -3452,10 +3486,20 @@ class CanvasView(QGraphicsView):
         except AttributeError:
             # Fallback for older PySide versions if necessary
             pos = event.pos()
-             
+            
+        # --- CRITICAL: Calculate scene_pos ONCE at the start ---
         scene_pos = self.mapToScene(pos.toPoint())
-        self.mouse_moved.emit(int(scene_pos.x()), int(scene_pos.y()))
-
+             
+        # THROTTELED: mouse_moved signal (Update status bar)
+        # Only emit at ~30 FPS to prevent UI lag
+        current_time = time.perf_counter()
+        if not hasattr(self, '_last_mouse_move_time'):
+            self._last_mouse_move_time = 0
+            
+        if current_time - self._last_mouse_move_time > 0.033: # ~30 FPS
+            self.mouse_moved.emit(int(scene_pos.x()), int(scene_pos.y()))
+            self._last_mouse_move_time = current_time
+        
         # --- CRITICAL FIX: Ensure Tool Update (User Request) ---
         # If tool is ACTIVELY drawing/dragging, it MUST receive events.
         is_drawing = False
@@ -3466,13 +3510,12 @@ class CanvasView(QGraphicsView):
              elif hasattr(self.active_tool, 'is_active') and self.active_tool.is_active:
                  is_drawing = True
         
-        # Log is_drawing status
-        Logger.debug(f"[CanvasView] mouseMoveEvent: pos={event.position()}, tool={type(self.active_tool).__name__ if self.active_tool else 'None'}, mode={self.dragMode()}, is_drawing={is_drawing}")
+        # REMOVED: High-frequency debug logging (Causes performance issues/crashes)
+        # Logger.debug(f"[CanvasView] mouseMoveEvent: pos={event.position()}, tool={type(self.active_tool).__name__ if self.active_tool else 'None'}, mode={self.dragMode()}, is_drawing={is_drawing}")
         
         if is_drawing:
              # Force update regardless of bypass flag
              try:
-                 # print(f"DEBUG: CanvasView dispatching move to tool (is_drawing=True)")
                  self.active_tool.mouse_move(scene_pos, event.modifiers())
                  self._update_preview()
                  if self.scene(): self.scene().update()

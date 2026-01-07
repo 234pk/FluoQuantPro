@@ -96,7 +96,10 @@ class QtRenderEngine(IRenderEngine):
         # Brush
         brush_color = style.get('brush_color')
         if brush_color:
-            self.painter.setBrush(QBrush(QColor(brush_color)))
+            color = QColor(brush_color)
+            alpha = style.get('brush_alpha', 255)
+            color.setAlpha(alpha)
+            self.painter.setBrush(QBrush(color))
         else:
             self.painter.setBrush(Qt.BrushStyle.NoBrush)
             

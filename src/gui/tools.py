@@ -463,6 +463,7 @@ class PointCounterTool(AbstractTool):
         self.current_path = None
         self.target_channel_idx = -1 # -1 means use the channel of the view clicked
         self.channel_settings = {} # {idx: {'color': hex, 'shape': 'circle'}}
+        self.active_category = "Puncta" # 将默认分类从 Other 修改为 Puncta
 
     def set_channel_color_override(self, channel_idx, color_hex):
         if channel_idx not in self.channel_settings:
@@ -473,27 +474,46 @@ class PointCounterTool(AbstractTool):
         if channel_idx not in self.channel_settings:
             self.channel_settings[channel_idx] = {}
         self.channel_settings[channel_idx]['shape'] = shape
+        self.preview_changed.emit()
+
+    def set_channel_radius(self, channel_idx, radius):
+        if channel_idx not in self.channel_settings:
+            self.channel_settings[channel_idx] = {}
+        self.channel_settings[channel_idx]['radius'] = radius
+        self.preview_changed.emit()
 
     def _get_channel_config(self, idx):
-        """Returns (color, shape) for a given channel index."""
-        # Default
+        """Returns (color, shape, radius) for a given channel index."""
+        # 1. 基础默认值
         color = self.get_channel_color(idx)
         shape = 'circle'
+        radius = self.radius
         
-        # Override
+        # 2. 如果是特定通道，尝试获取该通道在 session 中的默认颜色
+        if idx >= 0 and self.session:
+            channel = self.session.get_channel(idx)
+            if channel:
+                color = QColor(channel.display_settings.color)
+
+        # 3. 应用覆盖设置 (来自 UI 的用户修改)
         if idx in self.channel_settings:
             s = self.channel_settings[idx]
             if 'color' in s:
                 color = QColor(s['color'])
             if 'shape' in s:
                 shape = s['shape']
+            if 'radius' in s:
+                radius = s['radius']
         
-        # Handle Merge (idx = -1) - check if we have settings for -1?
-        # Actually Merge usually uses target_channel_idx, so we should look that up first.
-        return color, shape
+        return color, shape, radius
 
     def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
         """Adds a point ROI at the clicked location."""
+        import time
+        from src.core.logger import Logger
+        start_time = time.perf_counter()
+        Logger.debug(f"[PointCounterTool.mouse_press] ENTER - ScenePos: ({scene_pos.x():.2f}, {scene_pos.y():.2f}), Channel: {channel_index}")
+        
         self.display_scale = context.get('display_scale', 1.0) if context else 1.0
         # Determine which channel this point belongs to
         # If we are in Merge view (index -1), use UI active channel or override
@@ -504,8 +524,8 @@ class PointCounterTool(AbstractTool):
         # 1. Get the target channel for metadata (color, name)
         channel = self.session.get_channel(effective_channel_idx)
         
-        # Get Config (Color/Shape)
-        color, shape = self._get_channel_config(effective_channel_idx)
+        # Get Config (Color/Shape/Radius)
+        color, shape, radius = self._get_channel_config(effective_channel_idx)
         
         if channel:
             label_prefix = f"Point_{channel.name}"
@@ -515,18 +535,18 @@ class PointCounterTool(AbstractTool):
             color = self.get_channel_color(-1) # Fallback if config failed
             
         # 2. Create path based on shape
-        path = self._create_shape_path(scene_pos, self.radius, shape)
+        path = self._create_shape_path(scene_pos, radius, shape)
         
         # 3. Create ROI with scientific rigor (Store raw point for full-res mapping)
         # Find current count for this prefix to make label unique
-        existing_count = sum(1 for r in self.session.roi_manager.get_all_rois() 
-                           if r.label.startswith(label_prefix))
+        rois = self.session.roi_manager.get_all_rois()
+        existing_count = sum(1 for r in rois if r.label.startswith(label_prefix))
         
         roi = ROI(
             label=f"{label_prefix}_{existing_count + 1}",
             color=color,
             channel_index=effective_channel_idx,
-            properties={'shape': shape, 'radius': self.radius}
+            properties={'shape': shape, 'radius': radius, 'category': self.active_category}
         )
         
         # FIX: Point ROI visual offset issue
@@ -539,19 +559,20 @@ class PointCounterTool(AbstractTool):
              
         if view and hasattr(view, 'get_image_coordinates'):
              full_res_pos = view.get_image_coordinates(scene_pos)
-             print(f"DEBUG: PointCounter Mapped: Scene({scene_pos.x():.1f}, {scene_pos.y():.1f}) -> Image({full_res_pos.x():.1f}, {full_res_pos.y():.1f})")
+             Logger.debug(f"[PointCounterTool.mouse_press] Mapped: Scene({scene_pos.x():.1f}, {scene_pos.y():.1f}) -> Image({full_res_pos.x():.1f}, {full_res_pos.y():.1f})")
         else:
-             print("DEBUG: PointCounter used Raw Scene coordinates (No View found)")
+             Logger.debug("[PointCounterTool.mouse_press] Using Raw Scene coordinates (No View found)")
             
         # Reconstruct using the specific shape logic
+        Logger.debug(f"[PointCounterTool.mouse_press] Calling reconstruct_from_points for ROI: {roi.label}")
         roi.reconstruct_from_points([full_res_pos], roi_type="point")
         
-        # We don't need to manually set path anymore as reconstruct_from_points handles it now
-        # based on properties['shape']
-        
         # 4. Add to manager
+        Logger.debug(f"[PointCounterTool.mouse_press] Adding ROI to manager: {roi.id}")
         self.session.roi_manager.add_roi(roi, undoable=True)
+        
         self.committed.emit(f"Counted {roi.label}")
+        Logger.debug(f"[PointCounterTool.mouse_press] EXIT - Logic took {(time.perf_counter()-start_time)*1000:.2f}ms")
         
     def _create_shape_path(self, center, radius, shape):
         path = QPainterPath()
@@ -561,16 +582,30 @@ class PointCounterTool(AbstractTool):
             path.addRect(x - r, y - r, 2*r, 2*r)
         elif shape == 'triangle':
             # Upward triangle
-            # Top
             p1 = QPointF(x, y - r)
-            # Bottom Right
             p2 = QPointF(x + r, y + r)
-            # Bottom Left
             p3 = QPointF(x - r, y + r)
             path.moveTo(p1)
             path.lineTo(p2)
             path.lineTo(p3)
             path.closeSubpath()
+        elif shape == 'diamond':
+            # Diamond shape
+            p1 = QPointF(x, y - r)     # Top
+            p2 = QPointF(x + r, y)     # Right
+            p3 = QPointF(x, y + r)     # Bottom
+            p4 = QPointF(x - r, y)     # Left
+            path.moveTo(p1)
+            path.lineTo(p2)
+            path.lineTo(p3)
+            path.lineTo(p4)
+            path.closeSubpath()
+        elif shape == 'cross':
+            # Cross shape (+)
+            path.moveTo(x - r, y)
+            path.lineTo(x + r, y)
+            path.moveTo(x, y - r)
+            path.lineTo(x, y + r)
         else: # circle
             path.addEllipse(x - r, y - r, 2*r, 2*r)
         return path
@@ -578,21 +613,18 @@ class PointCounterTool(AbstractTool):
     def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         """Updates preview of the point to be placed."""
         # Determine shape based on potential target
-        # This is tricky because we don't know the channel until click (for Merge).
-        # But we can guess based on target_channel_idx.
         target_idx = self.target_channel_idx if self.target_channel_idx >= 0 else self.active_channel_idx
-        _, shape = self._get_channel_config(target_idx)
+        _, shape, radius = self._get_channel_config(target_idx)
         
-        path = self._create_shape_path(scene_pos, self.radius, shape)
+        path = self._create_shape_path(scene_pos, radius, shape)
         
-        # Add crosshair lines (optional, maybe distracting with shapes?)
-        # Let's keep them but make them subtle or just rely on shape.
-        # User asked for shapes, let's keep crosshair for precision.
-        line_len = self.radius * 2
-        path.moveTo(scene_pos.x() - line_len, scene_pos.y())
-        path.lineTo(scene_pos.x() + line_len, scene_pos.y())
-        path.moveTo(scene_pos.x(), scene_pos.y() - line_len)
-        path.lineTo(scene_pos.x(), scene_pos.y() + line_len)
+        # Add crosshair lines for precision if not already a cross
+        if shape != 'cross':
+            line_len = radius * 1.5
+            path.moveTo(scene_pos.x() - line_len, scene_pos.y())
+            path.lineTo(scene_pos.x() + line_len, scene_pos.y())
+            path.moveTo(scene_pos.x(), scene_pos.y() - line_len)
+            path.lineTo(scene_pos.x(), scene_pos.y() + line_len)
         
         self.current_path = path
         self.preview_changed.emit()

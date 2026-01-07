@@ -45,7 +45,7 @@ class RoiToolbox(QWidget):
         layout.setContentsMargins(2, 8, 2, 4) # Reduced margins
         
         # Tools definitions: (action_name, row, col, [row_span, col_span])
-        self.main_window.action_export.setText(tr("导出测量结果"))
+        self.main_window.action_export.setText(tr("Export Results (CSV)"))
         
         tools = [
             (self.main_window.action_wand, 0, 0),
@@ -245,13 +245,69 @@ class RoiToolbox(QWidget):
         
         # 3. Counts Summary
         self.lbl_counts_summary = QLabel(tr("Counts: 0 total"))
-        self.lbl_counts_summary.setWordWrap(True) # Allow wrapping
+        self.lbl_counts_summary.setWordWrap(True)
         self.lbl_counts_summary.setProperty("role", "accent")
+        self.lbl_counts_summary.setStyleSheet("font-weight: bold; color: #3498db;")
         layout.addWidget(self.lbl_counts_summary)
+
+        # --- NEW: Classification Table ---
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QStyle
+        self.count_table = QTableWidget(0, 3)
+        self.count_table.setHorizontalHeaderLabels([tr("Channel/Category"), tr("Count"), tr("%")])
+        self.count_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.count_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.count_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.count_table.setFixedHeight(150)
+        self.count_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                alternate-background-color: #f2f2f2;
+                gridline-color: #dcdde1;
+                color: #2f3640;
+                font-size: 11px;
+                selection-background-color: #3498db;
+                selection-color: #ffffff;
+            }
+            QHeaderView::section {
+                background-color: #f5f6fa;
+                color: #2f3640;
+                padding: 4px;
+                font-weight: bold;
+                border: 1px solid #dcdde1;
+            }
+        """)
+        layout.addWidget(self.count_table)
+
+        # --- Controls: Reset and Category Management ---
+        h_ctrl = QHBoxLayout()
+        self.btn_reset_counts = QPushButton(tr("Reset Counts"))
+        self.btn_reset_counts.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogDiscardButton))
+        self.btn_reset_counts.clicked.connect(self.on_reset_counts_clicked)
         
+        self.btn_manage_categories = QPushButton(tr("Categories..."))
+        self.btn_manage_categories.setToolTip(tr("Manage custom point categories"))
+        self.btn_manage_categories.clicked.connect(self.on_manage_categories_clicked)
+        
+        h_ctrl.addWidget(self.btn_reset_counts)
+        h_ctrl.addWidget(self.btn_manage_categories)
+        layout.addLayout(h_ctrl)
+
+        # --- Category Selector for active tool ---
+        h_cat = QHBoxLayout()
+        h_cat.addWidget(QLabel(tr("Current Category:")))
+        self.combo_active_category = QComboBox()
+        # 将 Puncta 放在首位作为默认值
+        self.combo_active_category.addItems(["Puncta", "Cells", "Nuclei", "Other"])
+        self.combo_active_category.currentIndexChanged.connect(self.on_active_category_changed)
+        h_cat.addWidget(self.combo_active_category)
+        layout.addLayout(h_cat)
+
         # Connect radius change to tool
         self.spin_count_radius.valueChanged.connect(self.on_count_radius_changed)
-
+        
+        # Connect table changes for filtering (NEW: Move out of update_counts_summary)
+        self.count_table.itemChanged.connect(self.on_count_table_item_changed)
+        
         self.count_group.setLayout(layout)
         self.layout.addWidget(self.count_group)
         self.count_group.hide() # Hidden by default
@@ -263,32 +319,69 @@ class RoiToolbox(QWidget):
             item = self.channel_settings_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+            elif item.layout():
+                # Recursively delete layout items
+                def clear_layout(layout):
+                    while layout.count():
+                        sub = layout.takeAt(0)
+                        if sub.widget(): sub.widget().deleteLater()
+                        elif sub.layout(): clear_layout(sub.layout())
+                clear_layout(item.layout())
+                item.layout().deleteLater()
         
         if not hasattr(self.main_window, 'session'):
             return
 
-        # Header
+        # Header - 使用固定的宽度确保与下方对齐
         h_header = QHBoxLayout()
-        h_header.addWidget(QLabel(tr("Channel")))
-        h_header.addWidget(QLabel(tr("Shape")))
-        h_header.addWidget(QLabel(tr("Color")))
+        lbl_ch = QLabel(tr("Channel"))
+        lbl_ch.setFixedWidth(60)
+        lbl_ch.setStyleSheet("font-weight: bold;")
+        
+        lbl_sh = QLabel(tr("Shape"))
+        lbl_sh.setFixedWidth(70)
+        lbl_sh.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_sh.setStyleSheet("font-weight: bold;")
+        
+        lbl_sz = QLabel(tr("Size"))
+        lbl_sz.setFixedWidth(50)
+        lbl_sz.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_sz.setStyleSheet("font-weight: bold;")
+        
+        lbl_co = QLabel(tr("Color"))
+        lbl_co.setFixedWidth(30)
+        lbl_co.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_co.setStyleSheet("font-weight: bold;")
+        
+        h_header.addWidget(lbl_ch)
+        h_header.addWidget(lbl_sh)
+        h_header.addWidget(lbl_sz)
+        h_header.addWidget(lbl_co)
+        h_header.addStretch() # 添加弹簧防止撑开
         self.channel_settings_layout.addLayout(h_header)
 
         # Iterate channels
-        for i, ch in enumerate(self.main_window.session.channels):
-            self._add_channel_row(i, ch.name, ch.display_settings.color)
+        if hasattr(self.main_window.session, 'channels'):
+            for i, ch in enumerate(self.main_window.session.channels):
+                self._add_channel_row(i, ch.name, ch.display_settings.color)
             
-        # Add "Merge/Default" row for cases where no specific channel is targeted (or explicitly Merge)
+        # Add "Merge/Default" row
         self._add_channel_row(-1, tr("Merge/Default"), "#FFFFFF")
 
         # Target Selector
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        self.channel_settings_layout.addWidget(line)
+        
         h_target = QHBoxLayout()
         self.lbl_count_target = QLabel(tr("Active Target:"))
         h_target.addWidget(self.lbl_count_target)
         self.combo_count_target = QComboBox()
         self.combo_count_target.addItem(tr("Auto (View Context)"), -1)
-        for i, ch in enumerate(self.main_window.session.channels):
-            self.combo_count_target.addItem(ch.name, i)
+        if hasattr(self.main_window.session, 'channels'):
+            for i, ch in enumerate(self.main_window.session.channels):
+                self.combo_count_target.addItem(ch.name, i)
         
         # Restore previous selection if valid
         if hasattr(self.main_window, 'count_tool'):
@@ -298,38 +391,81 @@ class RoiToolbox(QWidget):
         self.combo_count_target.currentIndexChanged.connect(self.on_count_target_changed)
         h_target.addWidget(self.combo_count_target)
         self.channel_settings_layout.addLayout(h_target)
+        
+        # 强制更新布局
+        self.channel_settings_layout.activate()
 
     def _add_channel_row(self, ch_idx, name, default_color):
+        # 从工具中获取当前配置，如果没有则使用默认
+        current_shape = "circle"
+        current_radius = 3.0
+        current_color = default_color
+        
+        if hasattr(self.main_window, 'count_tool'):
+            color_obj, current_shape, current_radius = self.main_window.count_tool._get_channel_config(ch_idx)
+            current_color = color_obj.name()
+
         h_row = QHBoxLayout()
+        h_row.setSpacing(4) # 紧凑布局
         
         # Label
         lbl = QLabel(f"{name}:")
         lbl.setFixedWidth(60)
+        lbl.setToolTip(name) # 长的通道名可以悬浮查看
         
         # Shape
         combo_shape = QComboBox()
-        combo_shape.addItems([tr("Circle"), tr("Square"), tr("Triangle")])
-        combo_shape.setItemData(0, "circle")
-        combo_shape.setItemData(1, "square")
-        combo_shape.setItemData(2, "triangle")
-        combo_shape.currentIndexChanged.connect(lambda idx: self._update_channel_shape(ch_idx, combo_shape.currentData()))
+        for text, data in [
+            (tr("Circle"), "circle"),
+            (tr("Square"), "square"),
+            (tr("Triangle"), "triangle"),
+            (tr("Cross"), "cross"),
+            (tr("Diamond"), "diamond")
+        ]:
+            combo_shape.addItem(text, data)
+        combo_shape.setFixedWidth(70)
         
+        # 设置当前选中的形状
+        idx = combo_shape.findData(current_shape)
+        if idx >= 0: combo_shape.setCurrentIndex(idx)
+        
+        combo_shape.currentIndexChanged.connect(lambda idx, ch=ch_idx, cb=combo_shape: self._update_channel_shape(ch, cb.currentData()))
+        
+        # Size (Radius)
+        spin_size = QDoubleSpinBox()
+        spin_size.setRange(0.5, 50.0)
+        spin_size.setSingleStep(0.5)
+        spin_size.setValue(current_radius) # 使用当前半径
+        spin_size.setFixedWidth(50)
+        spin_size.setToolTip(tr("Point Radius"))
+        spin_size.valueChanged.connect(lambda val, i=ch_idx: self._update_channel_radius(i, val))
+
         # Color
         btn_color = QPushButton()
         btn_color.setProperty("role", "color_picker")
         btn_color.setToolTip(tr("Select Point Color"))
-        # Only set background color via style, others handled by role="color_picker"
-        btn_color.setStyleSheet(f"background-color: {default_color};")
+        # 使用当前颜色
+        btn_color.setStyleSheet(f"background-color: {current_color}; border: 1px solid #dcdde1; border-radius: 2px;")
+        btn_color.setFixedSize(24, 24)
         btn_color.clicked.connect(lambda checked=False, i=ch_idx, b=btn_color: self._pick_channel_color(i, b))
         
+        # 居中对齐容器
+        c_color = QWidget()
+        c_color.setFixedWidth(30)
+        cl = QHBoxLayout(c_color)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cl.addWidget(btn_color)
+
         h_row.addWidget(lbl)
         h_row.addWidget(combo_shape)
-        h_row.addWidget(btn_color)
+        h_row.addWidget(spin_size)
+        h_row.addWidget(c_color)
+        h_row.addStretch() # 对应表头的弹簧
+        
         self.channel_settings_layout.addLayout(h_row)
         
-        # Push initial values to tool
-        self._update_channel_shape(ch_idx, "circle")
-        # Color is assumed default from channel unless changed here
+        # 不需要再次强制 push initial values，因为我们已经读取了当前状态并设置了信号连接
 
     def _pick_channel_color(self, ch_idx, btn):
         current_color = QColor(btn.palette().color(QPalette.ColorRole.Button))
@@ -343,6 +479,10 @@ class RoiToolbox(QWidget):
     def _update_channel_shape(self, ch_idx, shape):
         if hasattr(self.main_window, 'count_tool'):
             self.main_window.count_tool.set_channel_shape(ch_idx, shape)
+
+    def _update_channel_radius(self, ch_idx, radius):
+        if hasattr(self.main_window, 'count_tool'):
+            self.main_window.count_tool.set_channel_radius(ch_idx, radius)
 
     def on_count_radius_changed(self, value):
         if hasattr(self.main_window, 'count_tool'):
@@ -369,50 +509,222 @@ class RoiToolbox(QWidget):
 
     def set_active_tool(self, tool_action):
         """Switches visible option groups based on the active tool."""
-        # Hide all specific groups
+        import sys
+        # Use simple string-based identification to avoid reference mismatch
+        tool_name = tool_action.objectName() if tool_action else ""
+        tool_text = tool_action.text().lower() if tool_action else ""
+        
+        Logger.debug(f"[RoiToolbox.set_active_tool] ENTER - Tool: {tool_text} (ID: {tool_name})")
+        print(f"DEBUG: [RoiToolbox.set_active_tool] Processing tool: {tool_text}")
+        sys.stdout.flush()
+        
+        # Hide all specific groups initially
         self.wand_group.hide()
         self.count_group.hide()
         
+        is_wand = "wand" in tool_name or (hasattr(self.main_window, 'action_wand') and tool_action == self.main_window.action_wand)
+        is_count = "count" in tool_name or (hasattr(self.main_window, 'action_count') and tool_action == self.main_window.action_count)
+        
         # Show relevant group
-        if tool_action == self.main_window.action_wand:
+        if is_wand:
             self.wand_group.show()
-        elif tool_action == self.main_window.action_count:
-            self.count_group.show()
-            self.update_counts_summary()
+            Logger.debug("[RoiToolbox.set_active_tool] Showing Wand Group")
+            print("DEBUG: [RoiToolbox] Wand group shown")
+        elif is_count:
+            try:
+                # 先显示组，再刷新内容，有助于 Qt 计算布局
+                self.count_group.show()
+                self.refresh_point_counter_channels()
+                self.update_counts_summary()
+                
+                # 显式同步一次分类设置，确保即使不手动切换也能正确统计 Puncta
+                self.on_active_category_changed(self.combo_active_category.currentIndex())
+                
+                Logger.debug("[RoiToolbox.set_active_tool] Showing Count Group")
+                print("DEBUG: [RoiToolbox] Count group shown, refreshed and category synced")
+            except Exception as e:
+                Logger.debug(f"[RoiToolbox.set_active_tool] Error showing count group: {e}")
+        
+        # FORCE UI REFRESH: This is critical for nested layouts
+        self.updateGeometry()
+        if self.parentWidget():
+            self.parentWidget().updateGeometry()
+            self.parentWidget().repaint()
+        
+        sys.stdout.flush()
+        Logger.debug("[RoiToolbox.set_active_tool] EXIT")
+
+    def on_active_category_changed(self, index):
+        """Sync the selected category to the PointCounterTool."""
+        category = self.combo_active_category.currentText()
+        if hasattr(self.main_window, 'count_tool'):
+            # Store the active category in the tool for new ROIs
+            if not hasattr(self.main_window.count_tool, 'active_category'):
+                self.main_window.count_tool.active_category = "Puncta" # 修改默认值为 Puncta
+            self.main_window.count_tool.active_category = category
+            Logger.debug(f"[RoiToolbox] Set active point category to: {category}")
+
+    def on_reset_counts_clicked(self):
+        """Clears all point ROIs after confirmation."""
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(self, tr("Reset Counts"), 
+                                   tr("Are you sure you want to delete ALL point count ROIs? This cannot be undone."),
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            if not hasattr(self.main_window, 'session'): return
+            
+            # Find all point ROIs
+            rois_to_remove = [r.id for r in self.main_window.session.roi_manager.get_all_rois() 
+                             if r.roi_type == "point" or r.label.startswith("Point_")]
+            
+            if rois_to_remove:
+                for roi_id in rois_to_remove:
+                    self.main_window.session.roi_manager.remove_roi(roi_id, undoable=True)
+                Logger.info(f"[RoiToolbox] Reset counts: removed {len(rois_to_remove)} points")
+                self.update_counts_summary()
+
+    def on_manage_categories_clicked(self):
+        """Dialog to add/remove custom categories."""
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self, tr("Manage Categories"), 
+                                      tr("Add new category (comma separated):"),
+                                      text=", ".join([self.combo_active_category.itemText(i) for i in range(self.combo_active_category.count())]))
+        if ok and text:
+            new_cats = [c.strip() for c in text.split(",") if c.strip()]
+            self.combo_active_category.clear()
+            self.combo_active_category.addItems(new_cats)
+            # Notify tool if needed
+            self.on_active_category_changed(0)
 
     def update_counts_summary(self):
-        """Updates the count summary label based on existing point ROIs."""
-        if not hasattr(self.main_window, 'session'):
-            return
+        """
+        Comprehensive update of count statistics.
+        Calculates counts per channel and per category, including percentages.
+        """
+        Logger.debug("[RoiToolbox.update_counts_summary] ENTER")
+        try:
+            if not hasattr(self.main_window, 'session'):
+                return
+                
+            rois = self.main_window.session.roi_manager.get_all_rois()
+            # Filter for point ROIs (both by type and label convention)
+            point_rois = [r for r in rois if r.roi_type == "point" or r.label.startswith("Point_")]
             
+            total = len(point_rois)
+            if hasattr(self, 'lbl_counts_summary'):
+                self.lbl_counts_summary.setText(tr("Counts: {0} total").format(total))
+            
+            # 1. Gather Data: Breakdown by Channel and Category
+            # ... (stats gathering logic same) ...
+            stats = {}
+            for r in point_rois:
+                ch_idx = r.channel_index
+                ch_name = tr("Merge") if ch_idx == -1 else (self.main_window.session.get_channel(ch_idx).name if self.main_window.session.get_channel(ch_idx) else f"Ch {ch_idx}")
+                category = r.properties.get('category', 'Puncta') # 兜底值从 Other 改为 Puncta
+                if ch_name not in stats: stats[ch_name] = {}
+                stats[ch_name][category] = stats[ch_name].get(category, 0) + 1
+                
+            # 2. Update Table
+            if hasattr(self, 'count_table'):
+                # BLOCK SIGNALS to prevent recursion during table population
+                self.count_table.blockSignals(True)
+                from PySide6.QtWidgets import QTableWidgetItem
+                self.count_table.setRowCount(0)
+                
+                sorted_channels = sorted(stats.keys())
+                for ch in sorted_channels:
+                     ch_total = sum(stats[ch].values())
+                     row = self.count_table.rowCount()
+                     self.count_table.insertRow(row)
+                     
+                     ch_item = QTableWidgetItem(ch)
+                     ch_item.setFlags(ch_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                     ch_item.setCheckState(Qt.CheckState.Checked)
+                     # 优化：使用浅色背景和深色加粗文字
+                     ch_item.setBackground(QColor("#dfe6e9"))
+                     ch_item.setForeground(QColor("#2d3436"))
+                     font = ch_item.font()
+                     font.setBold(True)
+                     ch_item.setFont(font)
+                     ch_item.setData(Qt.ItemDataRole.UserRole, ("channel", ch))
+                     self.count_table.setItem(row, 0, ch_item)
+                     self.count_table.setItem(row, 1, QTableWidgetItem(str(ch_total)))
+                     perc = (ch_total / total * 100) if total > 0 else 0
+                     self.count_table.setItem(row, 2, QTableWidgetItem(f"{perc:.1f}%"))
+                     
+                     for cat in sorted(stats[ch].keys()):
+                         cat_count = stats[ch][cat]
+                         row = self.count_table.rowCount()
+                         self.count_table.insertRow(row)
+                         cat_item = QTableWidgetItem(f"  └ {cat}")
+                         cat_item.setFlags(cat_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                         cat_item.setCheckState(Qt.CheckState.Checked)
+                         cat_item.setForeground(QColor("#636e72")) # 中深灰色，用于区分层级
+                         cat_item.setData(Qt.ItemDataRole.UserRole, ("category", ch, cat))
+                         self.count_table.setItem(row, 0, cat_item)
+                         
+                         count_item = QTableWidgetItem(str(cat_count))
+                         count_item.setForeground(QColor("#2d3436"))
+                         self.count_table.setItem(row, 1, count_item)
+                         
+                         cat_perc = (cat_count / ch_total * 100) if ch_total > 0 else 0
+                         perc_item = QTableWidgetItem(f"{cat_perc:.1f}%")
+                         perc_item.setForeground(QColor("#2d3436"))
+                         self.count_table.setItem(row, 2, perc_item)
+                
+                # UNBLOCK SIGNALS
+                self.count_table.blockSignals(False)
+        except Exception as e:
+            Logger.error(f"[RoiToolbox.update_counts_summary] Error: {e}")
+            import traceback
+            Logger.error(traceback.format_exc())
+            if hasattr(self, 'count_table'):
+                self.count_table.blockSignals(False)
+            
+        Logger.debug("[RoiToolbox.update_counts_summary] EXIT")
+
+    def on_count_table_item_changed(self, item):
+        """Handle checkbox toggling to filter ROI visibility."""
+        if item.column() != 0: return
+        
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if not data or not hasattr(self.main_window, 'session'): return
+        
+        is_visible = (item.checkState() == Qt.CheckState.Checked)
+        
         rois = self.main_window.session.roi_manager.get_all_rois()
-        point_rois = [r for r in rois if r.label.startswith("Point_")]
+        point_rois = [r for r in rois if r.roi_type == "point" or r.label.startswith("Point_")]
         
-        total = len(point_rois)
-        
-        # Breakdown by channel name (extracted from label)
-        channel_counts = {}
-        for r in point_rois:
-            # Label format: Point_{ChannelName}_{Index}
-            # We want to extract ChannelName
-            if r.label.startswith("Point_"):
-                # Remove prefix
-                name_part = r.label[6:] 
-                # Remove trailing index (last _ part)
-                if "_" in name_part:
-                    ch_name = name_part.rsplit("_", 1)[0]
-                    channel_counts[ch_name] = channel_counts.get(ch_name, 0) + 1
-        
-        summary_text = tr("Counts: {0} total").format(total)
-        if total > 0:
-            details = []
-            # Sort by count or name? Name is better.
-            for ch in sorted(channel_counts.keys()):
-                count = channel_counts[ch]
-                details.append(f"{ch}: {count}")
-            summary_text += " (" + ", ".join(details) + ")"
-            
-        self.lbl_counts_summary.setText(summary_text)
+        if data[0] == "channel":
+            target_ch_name = data[1]
+            for r in point_rois:
+                # Determine channel name
+                ch_idx = r.channel_index
+                if ch_idx == -1: ch_name = tr("Merge")
+                else:
+                    ch = self.main_window.session.get_channel(ch_idx)
+                    ch_name = ch.name if ch else f"Ch {ch_idx}"
+                
+                if ch_name == target_ch_name:
+                    r.visible = is_visible
+                    self.main_window.session.roi_manager.roi_updated.emit(r)
+                    
+        elif data[0] == "category":
+            target_ch_name = data[1]
+            target_cat = data[2]
+            for r in point_rois:
+                ch_idx = r.channel_index
+                if ch_idx == -1: ch_name = tr("Merge")
+                else:
+                    ch = self.main_window.session.get_channel(ch_idx)
+                    ch_name = ch.name if ch else f"Ch {ch_idx}"
+                
+                cat = r.properties.get('category', 'Puncta')
+                
+                if ch_name == target_ch_name and cat == target_cat:
+                    r.visible = is_visible
+                    self.main_window.session.roi_manager.roi_updated.emit(r)
 
     def create_analysis_group(self):
         self.analysis_group = QGroupBox(tr("Analysis"))
@@ -487,46 +799,63 @@ class RoiToolbox(QWidget):
         return btn
 
     def resizeEvent(self, event):
-        # UI OPTIMIZATION: Following the new "Compact Icon-Only" design
-        icon_size = 20
+        width = self.width()
         
-        # Update all tool buttons in the main tools group
-        if hasattr(self, 'tools_group'):
-            for btn in self.tools_group.findChildren(QToolButton):
-                btn.setIconSize(QSize(icon_size, icon_size))
-                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                # Only fix size for single-column tools to allow span to work
-                if self.tools_group.layout().indexOf(btn) != -1:
-                    pos = self.tools_group.layout().getItemPosition(self.tools_group.layout().indexOf(btn))
-                    if pos[3] == 1: # col_span == 1
-                        btn.setFixedSize(28, 28)
-                    else:
-                        btn.setMinimumHeight(28)
+        # 1. 状态阈值定义
+        is_compact = width < 120
+        is_transition = 120 <= width < 220
+        is_comfort = width >= 220
+        
+        # 2. 按钮进化逻辑
+        icon_size = 20
+        for btn in self.findChildren(QToolButton):
+            # 跳过非本面板管理的按钮
+            if btn.parent() and "nav_btn" in btn.objectName():
+                continue
                 
-                # Ensure tooltip has text + shortcut if available
-                action = btn.defaultAction()
-                if action:
-                    tip = action.text()
-                    if action.shortcut().toString():
-                        tip += f" ({action.shortcut().toString()})"
-                    btn.setToolTip(tip)
+            if is_compact:
+                # 紧凑模式：纯图标，固定尺寸
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                btn.setFixedSize(28, 28)
+                btn.setIconSize(QSize(icon_size, icon_size))
+            elif is_transition:
+                # 过渡模式：弹性拉伸，高度固定
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                btn.setMinimumHeight(28)
+                btn.setMaximumHeight(32)
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                # 取消宽度限制
+                btn.setFixedWidth(16777215) 
+            else:
+                # 舒适模式：显示文字 + 图标，更宽大
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                btn.setMinimumHeight(34)
+                btn.setIconSize(QSize(icon_size, icon_size))
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                btn.setFixedWidth(16777215)
 
-        # Update Analysis Group Buttons
-        if hasattr(self, 'analysis_group'):
-            for btn in self.analysis_group.findChildren(QToolButton):
-                if self.analysis_group.isAncestorOf(btn):
-                    btn.setIconSize(QSize(icon_size, icon_size))
-                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                    
-                    if self.analysis_group.layout().indexOf(btn) != -1:
-                        pos = self.analysis_group.layout().getItemPosition(self.analysis_group.layout().indexOf(btn))
-                        if pos[3] == 1: # col_span == 1
-                            btn.setFixedSize(28, 28)
-                        else:
-                            btn.setMinimumHeight(28)
-                    
-                    action = btn.defaultAction()
-                    if action:
-                        btn.setToolTip(action.text())
+        # 3. 通道配置行 (210px 矛盾点) 优化逻辑
+        # 我们遍历所有的通道设置行布局，根据宽度切换方向
+        if hasattr(self, 'channel_settings_layout'):
+            for i in range(self.channel_settings_layout.count()):
+                item = self.channel_settings_layout.itemAt(i)
+                if item and item.layout() and isinstance(item.layout(), QHBoxLayout):
+                    layout = item.layout()
+                    # 如果宽度过窄，尝试通过调整控件可见性或间距来适应
+                    if is_compact:
+                        # 极端窄模式：只显示颜色块，隐藏其他
+                        for j in range(layout.count()):
+                            w = layout.itemAt(j).widget()
+                            if w:
+                                # 只有颜色按钮容器保持可见
+                                if not (isinstance(w, QWidget) and w.findChild(QPushButton)):
+                                    w.setVisible(False)
+                                else:
+                                    w.setVisible(True)
+                    else:
+                        # 恢复所有可见性
+                        for j in range(layout.count()):
+                            w = layout.itemAt(j).widget()
+                            if w: w.setVisible(True)
 
         super().resizeEvent(event)

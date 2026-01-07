@@ -151,6 +151,28 @@ class PercentageControlWidget(QWidget):
         if ok:
             self.set_value(val / 100.0)
 
+    def set_compact_mode(self, is_compact, is_tiny):
+        """Toggle UI elements based on width."""
+        # 1. Header Visibility
+        self.lbl_name.setVisible(not is_tiny)
+        
+        # 2. Grid Buttons Visibility
+        # Find all buttons that ARE NOT the auto button
+        for i in range(self.layout().count()):
+            item = self.layout().itemAt(i)
+            if item.layout() and isinstance(item.layout(), QGridLayout):
+                grid = item.layout()
+                for j in range(grid.count()):
+                    w = grid.itemAt(j).widget()
+                    if w and w != self.btn_auto:
+                        w.setVisible(not is_compact)
+                
+                # If compact, make auto button smaller to fit
+                if is_compact:
+                    self.btn_auto.setFixedSize(28, 28)
+                else:
+                    self.btn_auto.setFixedSize(28, 60)
+
     # Keyboard Controls
     def keyPressEvent(self, event):
         step = 0
@@ -281,6 +303,28 @@ class EnhancePanel(QWidget):
         scroll.setWidget(content)
 
     def resizeEvent(self, event):
+        width = self.width()
+        is_compact = width < 120
+        is_tiny = width < 80
+        
+        # 1. 直方图面板
+        if hasattr(self, 'histogram_panel'):
+            self.histogram_panel.setVisible(width > 100)
+            
+        # 2. 锁定复选框文字优化
+        if hasattr(self, 'chk_lock'):
+            self.chk_lock.setText("" if is_compact else tr("Lock enhancement parameters for all images (freeze auto-calculation)"))
+            
+        # 3. 遍历子控件分发尺寸变化
+        for i in range(self.layout().count()):
+            item = self.layout().itemAt(i)
+            if item.widget() and isinstance(item.widget(), QScrollArea):
+                scroll = item.widget()
+                content = scroll.widget()
+                if content:
+                    for child in content.findChildren(PercentageControlWidget):
+                        child.set_compact_mode(is_compact, is_tiny)
+
         super().resizeEvent(event)
 
     def retranslate_ui(self):
