@@ -1,6 +1,9 @@
 import sys
 import time
 import ctypes
+import multiprocessing
+import matplotlib
+matplotlib.use('QtAgg') # 显式设置后端，避免 macOS 上尝试使用 TkAgg 导致挂起
 import numpy as np
 from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                                QHBoxLayout, QLabel, QFileDialog, QDockWidget, QMenu, QMessageBox, QScrollArea, QFrame, QToolButton, QSizePolicy)
@@ -49,22 +52,17 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 def get_resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
-    # 1. Try _MEIPASS (one-file mode)
+    # 1. 优先检查 PyInstaller 的临时解压目录
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
     
-    # 2. Try adjacent to executable (one-dir mode, root)
+    # 2. 对于 macOS Bundle 结构，资源可能在 ../Resources (如果是从 MacOS 目录运行)
     exe_dir = os.path.dirname(sys.executable)
-    root_path = os.path.join(exe_dir, relative_path)
-    if os.path.exists(root_path):
-        return root_path
-
-    # 3. Try _internal folder (PyInstaller 6+ one-dir mode)
-    internal_path = os.path.join(exe_dir, "_internal", relative_path)
-    if os.path.exists(internal_path):
-        return internal_path
+    macos_bundle_res = os.path.join(exe_dir, "..", "Resources", relative_path)
+    if os.path.exists(macos_bundle_res):
+        return os.path.normpath(macos_bundle_res)
         
-    # 4. Default to current file's directory (dev mode)
+    # 3. 默认回退到开发环境路径
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 class SceneLoaderWorker(QThread):
@@ -4510,5 +4508,5 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
-    main()
+    multiprocessing.freeze_support() # 必须调用，防止 PyInstaller 打包后的进程递归
     main()
