@@ -6,6 +6,7 @@ from PyInstaller.utils.hooks import collect_submodules
 # 动态收集 src 下的所有子模块
 hidden_imports = collect_submodules('src')
 hidden_imports += [
+    'unittest',
     'PySide6.QtCore', 'PySide6.QtGui', 'PySide6.QtWidgets', 'PySide6.QtSvg',
     'numpy', 'cv2', 'tifffile', 'qimage2ndarray', 'skimage', 
     'scipy', 'pywt', 'matplotlib', 'matplotlib.backends.backend_qtagg',
