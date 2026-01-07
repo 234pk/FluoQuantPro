@@ -52,40 +52,14 @@ VSVersionInfo(
         f.write(version_info)
 
     # 3. Run PyInstaller
-    print("Starting PyInstaller Build...")
+    print("Starting PyInstaller Build using FluoQuantPro.spec...")
     
+    # 直接使用 Spec 文件，不再重复传递命令行参数
+    # 所有的 hidden-imports, datas, options 都应该在 Spec 文件中管理
     args = [
-        'main.py',
-        '--name=FluoQuantPro',
-        '--onefile',           # Request: Single EXE
-        '--noconsole',         # Request: No console
+        'FluoQuantPro.spec',
         '--clean',
-        '--add-data=resources;resources', # Add resources folder
-        '--add-data=src/resources/translations.json;src/resources', # Add translations
-        '--icon=resources/icon.ico',
-        '--version-file=version_info.txt',
-        
-        # Hidden Imports (Critical for Scientific Libraries)
-        '--hidden-import=skimage',
-        '--hidden-import=skimage.feature._orb_descriptor_positions',
-        '--hidden-import=skimage.filters.rank.core_cy_3d',
-        '--hidden-import=skimage.morphology._max_tree',
-        '--hidden-import=skimage.morphology.disk_decompositions',
-        '--hidden-import=skimage.morphology.ball_decompositions',
-        '--hidden-import=pywt',
-        '--hidden-import=scipy.special.cython_special',
-        '--hidden-import=scipy.linalg.cython_blas',
-        '--hidden-import=scipy.linalg.cython_lapack',
-        '--hidden-import=scipy.special._cdflib',
-        
-        # Optimization: Exclude heavy unused modules
-        '--exclude-module=tkinter',
-        '--exclude-module=ipython',
-        '--exclude-module=notebook',
-        '--exclude-module=jedi',
-        
-        # Search Paths
-        '--paths=.',
+        '--noconfirm',
     ]
     
     PyInstaller.__main__.run(args)
