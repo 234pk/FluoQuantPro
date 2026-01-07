@@ -129,6 +129,11 @@ class ROI:
         Reconstructs the QPainterPath from a list of points.
         This ensures that ROIs can be accurately mapped between coordinate systems.
         """
+        import time
+        from src.core.logger import Logger
+        start_time = time.perf_counter()
+        Logger.debug(f"[ROI.reconstruct_from_points] ENTER - ROI: {self.label}, Type: {roi_type or self.roi_type}, Points: {len(points)}")
+        
         if roi_type:
             self.roi_type = roi_type
             
@@ -137,6 +142,7 @@ class ROI:
         
         if not points:
             self.path = path
+            Logger.debug(f"[ROI.reconstruct_from_points] EXIT - Empty points list. Took {(time.perf_counter()-start_time)*1000:.2f}ms")
             return
             
         if self.roi_type in ["line_scan", "line", "arrow"] and len(points) >= 2:
@@ -163,6 +169,7 @@ class ROI:
                     path.lineTo(p)
                 path.closeSubpath()
                 self.path = path
+            Logger.debug(f"[ROI.reconstruct_from_points] EXIT - Polygon reconstructed. Took {(time.perf_counter()-start_time)*1000:.2f}ms")
             return # Skip default assignment
         elif self.roi_type == "point" and len(points) >= 1:
             # Circular point with radius from properties or default
@@ -172,6 +179,8 @@ class ROI:
             shape = self.properties.get('shape', 'circle')
             center = points[0]
             x, y = center.x(), center.y()
+            
+            Logger.debug(f"[ROI.reconstruct_from_points] Reconstructing POINT: shape={shape}, radius={r}, center=({x:.1f}, {y:.1f})")
             
             if shape == 'square':
                 path.addRect(x - r, y - r, 2*r, 2*r)
@@ -184,13 +193,32 @@ class ROI:
                 path.lineTo(p2)
                 path.lineTo(p3)
                 path.closeSubpath()
+            elif shape == 'diamond':
+                # Diamond shape
+                p1 = QPointF(x, y - r)
+                p2 = QPointF(x + r, y)
+                p3 = QPointF(x, y + r)
+                p4 = QPointF(x - r, y)
+                path.moveTo(p1)
+                path.lineTo(p2)
+                path.lineTo(p3)
+                path.lineTo(p4)
+                path.closeSubpath()
+            elif shape == 'cross':
+                # Cross shape (+)
+                path.moveTo(x - r, y)
+                path.lineTo(x + r, y)
+                path.moveTo(x, y - r)
+                path.lineTo(x, y + r)
             else:
                 path.addEllipse(center, r, r)
         else:
             # Default fallback (e.g. for wand which generates path directly)
+            Logger.debug(f"[ROI.reconstruct_from_points] Using default fallback for type: {self.roi_type}")
             pass
             
         self.path = path
+        Logger.debug(f"[ROI.reconstruct_from_points] EXIT - Path assigned. Took {(time.perf_counter()-start_time)*1000:.2f}ms")
 
     @classmethod
     def from_dict(cls, data):
@@ -312,17 +340,24 @@ class RoiManager(QObject):
 
     def add_roi(self, roi: ROI, undoable: bool = False):
         """Adds an ROI. Set undoable=True for user actions."""
+        from src.core.logger import Logger
+        Logger.debug(f"[RoiManager.add_roi] ENTER - ROI: {roi.label} ({roi.id}), undoable={undoable}")
         if undoable:
             self.undo_stack.push(AddRoiCommand(self, roi))
         else:
             self._add_roi_internal(roi)
+        Logger.debug(f"[RoiManager.add_roi] EXIT")
 
     def _add_roi_internal(self, roi: ROI):
         """Internal method for adding ROI without Undo stack modification."""
+        from src.core.logger import Logger
         if roi.id in self._rois:
+            Logger.debug(f"[RoiManager._add_roi_internal] ROI {roi.id} already exists, skipping.")
             return
         self._rois[roi.id] = roi
+        Logger.debug(f"[RoiManager._add_roi_internal] Emitting roi_added signal for {roi.id}")
         self.roi_added.emit(roi)
+        Logger.debug(f"[RoiManager._add_roi_internal] Done")
 
     def remove_roi(self, roi_id: str, undoable: bool = False):
         """Removes an ROI. Set undoable=True for user actions."""
