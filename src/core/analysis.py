@@ -4,6 +4,7 @@ from typing import List, Dict, Optional, Tuple
 from src.core.data_model import ImageChannel
 from src.core.roi_model import ROI
 from src.core.algorithms import qpath_to_mask
+from src.core.channel_config import get_rgb_mapping
 
 class MeasureEngine:
     """
@@ -38,24 +39,29 @@ class MeasureEngine:
                      bg_method: str = 'none',
                      bg_ring_width: int = 5) -> List[Dict]:
         """
-        Batch measures multiple ROIs.
-        Returns a list of dictionaries containing stats for each ROI.
+        Batch measures multiple ROIs using a thread pool for multi-core speedup.
         """
-        results = []
-        for roi in rois:
-            # Skip non-measurable types if any (though calling code should filter)
-            if roi.roi_type == 'line_scan':
-                continue
-                
-            stats = self.measure_roi(roi, channels, pixel_size, bg_method, bg_ring_width)
+        from concurrent.futures import ThreadPoolExecutor
+        
+        # Filter ROIs
+        measurable_rois = [r for r in rois if r.roi_type not in ['line_scan', 'point']]
+        if not measurable_rois:
+            return []
             
+        def _measure_worker(roi):
+            stats = self.measure_roi(roi, channels, pixel_size, bg_method, bg_ring_width)
             row_data = {
                 "ROI_ID": roi.id,
                 "Label": roi.label,
                 "Area": stats.get('Area', 0.0)
             }
             row_data.update(stats)
-            results.append(row_data)
+            return row_data
+
+        # Use ThreadPool for I/O bound and GIL-releasing CV2 operations
+        max_workers = min(len(measurable_rois), 8) # Avoid over-threading
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(_measure_worker, measurable_rois))
             
         return results
 
@@ -122,7 +128,7 @@ class MeasureEngine:
             # Extract ROI pixels (Raw Data)
             # Ensure grayscale for RGB inputs to get consistent intensity
             try:
-                data = ColocalizationEngine._ensure_grayscale(ch.raw_data)
+                data = ColocalizationEngine._ensure_grayscale(ch.raw_data, ch.name)
             except Exception as e:
                 Logger.error(f"[MeasureEngine] Failed to ensure grayscale for channel {ch.name}: {e}")
                 continue
@@ -212,10 +218,20 @@ class ColocalizationEngine:
     """
     
     @staticmethod
-    def _ensure_grayscale(data: np.ndarray) -> np.ndarray:
-        """Converts RGB/RGBA data to grayscale if necessary using Max Projection (No weighted mixing)."""
+    def _ensure_grayscale(data: np.ndarray, channel_name: Optional[str] = None) -> np.ndarray:
+        """
+        Converts RGB/RGBA data to grayscale if necessary.
+        If channel_name is provided, uses biological mapping rules.
+        Otherwise uses Max Projection (No weighted mixing).
+        """
         if data.ndim == 3:
-            # Handle RGB/RGBA via Max Projection to preserve scientific intensity integrity
+            # Try mapping-based extraction first if name is provided
+            if channel_name:
+                from src.core.image_loader import ImageLoader
+                # This will use the mapping logic we defined
+                return ImageLoader.extract_channel_data(data, channel_name)
+
+            # Fallback to Max Projection for unknown RGB
             if data.shape[2] in (3, 4):
                 # Using max across channels instead of weighted average (0.299R + 0.587G + 0.114B)
                 # as requested for scientific rigor in fluorescence analysis.
@@ -225,11 +241,13 @@ class ColocalizationEngine:
         return data
 
     @staticmethod
-    def calculate_pcc(ch1_data: np.ndarray, ch2_data: np.ndarray, mask: Optional[np.ndarray] = None) -> float:
+    def calculate_pcc(ch1_data: np.ndarray, ch2_data: np.ndarray, 
+                      ch1_name: Optional[str] = None, ch2_name: Optional[str] = None,
+                      mask: Optional[np.ndarray] = None) -> float:
         """Calculates Pearson Correlation Coefficient."""
         # Ensure grayscale for RGB inputs
-        ch1_gray = ColocalizationEngine._ensure_grayscale(ch1_data)
-        ch2_gray = ColocalizationEngine._ensure_grayscale(ch2_data)
+        ch1_gray = ColocalizationEngine._ensure_grayscale(ch1_data, ch1_name)
+        ch2_gray = ColocalizationEngine._ensure_grayscale(ch2_data, ch2_name)
 
         if mask is not None:
             c1 = ch1_gray[mask].astype(np.float64)
@@ -254,6 +272,7 @@ class ColocalizationEngine:
 
     @staticmethod
     def calculate_manders(ch1_data: np.ndarray, ch2_data: np.ndarray, 
+                          ch1_name: Optional[str] = None, ch2_name: Optional[str] = None,
                           mask: Optional[np.ndarray] = None,
                           threshold1: float = 0.0, threshold2: float = 0.0) -> Tuple[float, float]:
         """
@@ -262,8 +281,8 @@ class ColocalizationEngine:
         M2: Fraction of Ch2 that overlaps with Ch1.
         """
         # Ensure grayscale for RGB inputs
-        ch1_gray = ColocalizationEngine._ensure_grayscale(ch1_data)
-        ch2_gray = ColocalizationEngine._ensure_grayscale(ch2_data)
+        ch1_gray = ColocalizationEngine._ensure_grayscale(ch1_data, ch1_name)
+        ch2_gray = ColocalizationEngine._ensure_grayscale(ch2_data, ch2_name)
 
         if mask is not None:
             c1 = ch1_gray[mask].astype(np.float64)
@@ -295,14 +314,15 @@ class ColocalizationEngine:
 
     @staticmethod
     def generate_coloc_image(ch1_data: np.ndarray, ch2_data: np.ndarray, 
-                             threshold1: float, threshold2: float) -> np.ndarray:
+                             ch1_name: Optional[str] = None, ch2_name: Optional[str] = None,
+                             threshold1: float = 0.0, threshold2: float = 0.0) -> np.ndarray:
         """
         Generates an 8-bit image showing overlap intensity.
         Overlap appears as Yellow (Red + Green).
         """
         # Ensure grayscale for RGB inputs
-        ch1_gray = ColocalizationEngine._ensure_grayscale(ch1_data)
-        ch2_gray = ColocalizationEngine._ensure_grayscale(ch2_data)
+        ch1_gray = ColocalizationEngine._ensure_grayscale(ch1_data, ch1_name)
+        ch2_gray = ColocalizationEngine._ensure_grayscale(ch2_data, ch2_name)
 
         # Normalize to 0-1
         def norm(d):

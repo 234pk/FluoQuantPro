@@ -1,19 +1,117 @@
 import os
 import json
 import time
+from typing import Optional, List, Dict, Tuple
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QListWidget, QListWidgetItem, 
                                QLabel, QFileDialog, QInputDialog, QMenu, QMessageBox,
                                QSplitter, QAbstractItemView, QTreeWidget, QTreeWidgetItem,
                                QLineEdit, QHBoxLayout, QToolButton, QHeaderView,
-                               QSizePolicy, QColorDialog, QApplication, QToolTip)
-from PySide6.QtCore import Qt, Signal, QSize, QUrl, QSettings
+                               QSizePolicy, QColorDialog, QApplication, QToolTip,
+                               QDialog, QDialogButtonBox, QGridLayout, QComboBox, QRadioButton)
+from PySide6.QtCore import Qt, Signal, QSize, QUrl, QSettings, QTimer
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPixmap, QIcon, QAction, QPalette
 from src.gui.icon_manager import get_icon
+from src.gui.toggle_switch import ToggleSwitch
 from src.core.language_manager import LanguageManager, tr
 import tifffile
 import qimage2ndarray
 import numpy as np
-from src.core.project_model import ProjectModel
+import uuid
+from src.core.project_model import ProjectModel, SceneData, ChannelDef
+from src.core.channel_config import get_rgb_mapping
+from PySide6.QtGui import QUndoCommand
+import cv2
+
+class MergeSplitDialog(QDialog):
+    def __init__(self, file_path, channel_count, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Multi-Channel Image Detected"))
+        self.result_choice = None # 'split', 'keep', 'skip'
+        
+        layout = QVBoxLayout(self)
+        
+        msg = tr("The image '{0}' appears to have {1} channels.").format(os.path.basename(file_path), channel_count)
+        layout.addWidget(QLabel(msg))
+        
+        layout.addWidget(QLabel(tr("How would you like to handle it?")))
+        
+        self.btn_split = QRadioButton(tr("Split into separate channels (Recommended)"))
+        self.btn_keep = QRadioButton(tr("Keep as Single Channel (Merge View)"))
+        self.btn_skip = QRadioButton(tr("Skip this file"))
+        
+        self.btn_split.setChecked(True)
+        
+        layout.addWidget(self.btn_split)
+        layout.addWidget(self.btn_keep)
+        layout.addWidget(self.btn_skip)
+        
+        self.row_apply = QHBoxLayout()
+        self.lbl_apply = QLabel(tr("Apply to all remaining conflicts"))
+        self.apply_to_all = ToggleSwitch()
+        self.row_apply.addWidget(self.lbl_apply)
+        self.row_apply.addStretch()
+        self.row_apply.addWidget(self.apply_to_all)
+        layout.addLayout(self.row_apply)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+    def accept(self):
+        if self.btn_split.isChecked():
+            self.result_choice = 'split'
+        elif self.btn_keep.isChecked():
+            self.result_choice = 'keep'
+        else:
+            self.result_choice = 'skip'
+        super().accept()
+
+class ConvertFileToSampleCommand(QUndoCommand):
+    def __init__(self, model, file_path, color):
+        super().__init__(tr("Set as Single Channel Sample"))
+        self.model = model
+        self.file_path = file_path
+        self.color = color
+        self.scene_id = str(uuid.uuid4())
+        self.scene_name = os.path.splitext(os.path.basename(file_path))[0]
+        self.added_scene = None
+
+    def redo(self):
+        # Create SceneData
+        channel_def = ChannelDef(
+            path=self.file_path,
+            channel_type="unknown",
+            color=self.color
+        )
+        
+        # Ensure unique name
+        base_name = self.scene_name
+        counter = 1
+        while base_name in self.model._scene_map:
+            base_name = f"{self.scene_name}_{counter}"
+            counter += 1
+            
+        self.added_scene = SceneData(
+            id=base_name, # Use name as ID for consistency with manual creation or uuid? ProjectModel uses name as ID in _add_manual_scene_internal.
+            name=base_name,
+            channels=[channel_def],
+            status="Pending"
+        )
+        # Use uuid if ProjectModel supports it, but _add_manual_scene_internal uses name.
+        # Let's check SceneData definition. ID is string.
+        # ProjectModel._add_manual_scene_internal uses name as ID.
+        # We should probably stick to that convention or use UUID if we want.
+        # But wait, _add_manual_scene_internal: new_scene = SceneData(id=name, name=name)
+        
+        self.model.scenes.append(self.added_scene)
+        self.model._scene_map[self.added_scene.id] = self.added_scene
+        self.model.is_dirty = True
+        self.model.project_changed.emit()
+
+    def undo(self):
+        if self.added_scene:
+            self.model._remove_scene_internal(self.added_scene.id)
 
 class PreviewPopup(QLabel):
     def __init__(self, parent=None):
@@ -28,12 +126,20 @@ class FileListWidget(QListWidget):
     """Custom ListWidget that exposes file paths as URLs for Drag & Drop.
        Also supports Quick Look (Preview) on hover.
     """
+    delete_pressed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
         self._preview_popup = PreviewPopup(self)
         self._preview_cache = {} # path -> QPixmap
         self._current_hover_item = None
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Delete:
+            self.delete_pressed.emit()
+        else:
+            super().keyPressEvent(event)
         
     def mimeData(self, items):
         mime = super().mimeData(items)
@@ -214,8 +320,20 @@ class SampleListWidget(QWidget):
         self._drag_hint_last_key = None
         
         # Connect to model signals
-        self.project_model.project_changed.connect(self.refresh_list)
-        self.project_model.project_changed.connect(self.refresh_pool_list)
+        self.project_model.project_changed.connect(self.request_tree_refresh)
+        
+        # Debounced refresh for tree list
+        self._tree_refresh_timer = QTimer(self)
+        self._tree_refresh_timer.setSingleShot(True)
+        self._tree_refresh_timer.setInterval(100) # 100ms debounce
+        self._tree_refresh_timer.timeout.connect(self.refresh_list_actual)
+
+        # Debounced refresh for pool list to handle 1200+ files smoothly
+        self._pool_refresh_timer = QTimer(self)
+        self._pool_refresh_timer.setSingleShot(True)
+        self._pool_refresh_timer.setInterval(200) # 200ms debounce
+        self._pool_refresh_timer.timeout.connect(self.refresh_pool_list_actual)
+        self.project_model.project_changed.connect(self.request_pool_refresh)
         
         # Connect Language Change
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
@@ -241,6 +359,8 @@ class SampleListWidget(QWidget):
         
         self.lbl_title = QLabel(tr("Project Samples") + " (0)")
         self.lbl_title.setProperty("role", "title")
+        self.lbl_title.setMinimumWidth(0) # Allow title to shrink
+        self.lbl_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         header_layout.addWidget(self.lbl_title)
         
         header_layout.addStretch()
@@ -307,9 +427,10 @@ class SampleListWidget(QWidget):
         # Enable multiple columns for button layout (Column 0: Text, Column 1: Button)
         self.tree_widget.setColumnCount(2)
         self.tree_widget.setMinimumWidth(0)
-        self.tree_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.tree_widget.setMinimumHeight(100) # Ensure it doesn't collapse vertically
+        self.tree_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         header = self.tree_widget.header()
-        header.setMinimumSectionSize(10)
+        header.setMinimumSectionSize(10) # Allow columns to be very narrow
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tree_widget.setColumnWidth(1, 24)
@@ -347,6 +468,8 @@ class SampleListWidget(QWidget):
         pool_header.setContentsMargins(5, 5, 5, 0) # Keep header margin
         self.lbl_pool = QLabel(tr("Unassigned Images") + " (0)")
         self.lbl_pool.setProperty("role", "title")
+        self.lbl_pool.setMinimumWidth(0)
+        self.lbl_pool.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         pool_header.addWidget(self.lbl_pool)
         pool_header.addStretch()
 
@@ -359,6 +482,17 @@ class SampleListWidget(QWidget):
         self.btn_pool_auto_group.setToolTip(tr("Auto-group selected (or all if none selected) into samples"))
         self.btn_pool_auto_group.clicked.connect(self.auto_group_from_pool)
         pool_header.addWidget(self.btn_pool_auto_group)
+
+        # Batch Delete from Pool Button
+        self.btn_pool_delete = QToolButton()
+        self.btn_pool_delete.setIcon(get_icon("delete", "edit-delete"))
+        self.btn_pool_delete.setIconSize(QSize(20, 20))
+        self.btn_pool_delete.setFixedSize(28, 28)
+        self.btn_pool_delete.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_pool_delete.setToolTip(tr("Remove selected images from pool"))
+        self.btn_pool_delete.clicked.connect(self.remove_selected_from_pool)
+        self.btn_pool_delete.setEnabled(False)
+        pool_header.addWidget(self.btn_pool_delete)
         
         bottom_layout.addLayout(pool_header)
 
@@ -377,10 +511,15 @@ class SampleListWidget(QWidget):
         
         self.pool_list = FileListWidget()
         self.pool_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.pool_list.setMinimumWidth(0)
+        self.pool_list.setMinimumHeight(100)
+        self.pool_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.pool_list.setDragEnabled(True) # Enable dragging FROM here
         self.pool_list.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.pool_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.pool_list.customContextMenuRequested.connect(self.show_pool_context_menu)
+        self.pool_list.delete_pressed.connect(self.remove_selected_from_pool)
+        self.pool_list.itemSelectionChanged.connect(self.update_pool_actions_state)
         
         bottom_layout.addWidget(self.pool_list)
         self.splitter.addWidget(self.bottom_widget)
@@ -417,11 +556,49 @@ class SampleListWidget(QWidget):
         
         btn_layout.addStretch()
 
-        # self.btn_new_sample = QPushButton("New Sample (with Channels)")
+        # self.btn_new_sample = QPushButton(tr("New Sample (with Channels)"))
         # self.btn_new_sample.clicked.connect(self.create_manual_sample)
         # btn_layout.addWidget(self.btn_new_sample)
         
         self.layout.addLayout(btn_layout)
+
+    def set_active_channel(self, index):
+        """Highlights the specified channel for the currently selected scene."""
+        selected_items = self.tree_widget.selectedItems()
+        if not selected_items:
+            return
+
+        # Find the active scene ID from selection
+        active_scene_id = None
+        for item in selected_items:
+            active_scene_id = item.data(0, Qt.ItemDataRole.UserRole)
+            if active_scene_id:
+                break
+        
+        if not active_scene_id:
+            return
+
+        # Find the scene item and its channel child
+        self.tree_widget.blockSignals(True)
+        try:
+            for i in range(self.tree_widget.topLevelItemCount()):
+                scene_item = self.tree_widget.topLevelItem(i)
+                if scene_item.data(0, Qt.ItemDataRole.UserRole) == active_scene_id:
+                    # If index is -1 (Merge), we select the scene item itself
+                    if index == -1:
+                        scene_item.setSelected(True)
+                        self.tree_widget.setCurrentItem(scene_item)
+                    else:
+                        # Find the channel child
+                        for j in range(scene_item.childCount()):
+                            ch_item = scene_item.child(j)
+                            if ch_item.data(0, Qt.ItemDataRole.UserRole + 2) == index:
+                                ch_item.setSelected(True)
+                                self.tree_widget.setCurrentItem(ch_item)
+                                break
+                    break
+        finally:
+            self.tree_widget.blockSignals(False)
 
     def retranslate_ui(self):
         """Update all UI text when language changes."""
@@ -435,6 +612,7 @@ class SampleListWidget(QWidget):
         # Bottom Header
         self.lbl_pool.setText(tr("Unassigned Images ({0})").format(self.project_model.get_pool_count()))
         self.btn_pool_auto_group.setToolTip(tr("Auto-group selected (or all if none selected) into samples"))
+        self.btn_pool_delete.setToolTip(tr("Remove selected images from pool"))
         self.search_pool.setPlaceholderText(tr("Search pool files..."))
         
         # Bottom Buttons
@@ -676,71 +854,117 @@ class SampleListWidget(QWidget):
         else:
             self.tree_widget.collapseAll()
 
+    def request_pool_refresh(self):
+        """Requests a debounced refresh of the pool list."""
+        self._pool_refresh_timer.start()
+
     def refresh_pool_list(self):
+        """Deprecated: Use request_pool_refresh instead. Kept for signal compatibility if any."""
+        self.request_pool_refresh()
+
+    def refresh_pool_list_actual(self):
+        """The actual intensive refresh logic, now debounced and performance-optimized."""
         # Save scroll position and current item if any
         scrollbar = self.pool_list.verticalScrollBar()
         scroll_pos = scrollbar.value()
         
-        print(f"[SampleList] refresh_pool_list called. Pool files: {len(self.project_model.pool_files)}")
+        print(f"[SampleList] refresh_pool_list (actual) called. Pool files: {len(self.project_model.pool_files)}")
         
-        # We need to preserve the "visual" position of the dragging item if possible, 
-        # but since we are re-sorting, it's tricky.
-        # The user request is "keep list at dragging position", which implies 
-        # if I just dragged "image1.tif", I want to see where it went (bottom) or 
-        # at least not have the list jump to top.
+        # Optimization: Block signals and updates during mass insertion
+        self.pool_list.blockSignals(True)
+        self.pool_list.setUpdatesEnabled(False)
         
-        self.pool_list.clear()
-        files = self.project_model.pool_files 
-        
-        assigned_set = self.project_model.get_assigned_files()
-        print(f"[SampleList] Assigned files count: {len(assigned_set)}")
-        
-        # Separate files into unassigned and assigned
-        unassigned_files = [f for f in files if f not in assigned_set]
-        assigned_files = [f for f in files if f in assigned_set]
-        
-        # Sort both (optional but keeps it tidy)
-        unassigned_files.sort(key=lambda x: os.path.basename(x).lower())
-        assigned_files.sort(key=lambda x: os.path.basename(x).lower())
-        
-        sorted_files = unassigned_files + assigned_files
-        
-        # Count available files for label
-        available_count = len(unassigned_files)
-        self.lbl_pool.setText(tr("Unassigned Images ({0})").format(available_count))
-        
-        last_assigned_item = None
-        
-        for fpath in sorted_files:
-            fname = os.path.basename(fpath)
-            item = QListWidgetItem(fname)
-            item.setData(Qt.ItemDataRole.UserRole, fpath)
-            item.setToolTip(fpath)
+        try:
+            self.pool_list.clear()
+            files = self.project_model.pool_files 
             
-            if fpath in assigned_set:
-                # Use explicit gray color for better visibility of disabled state
-                # Force color using QBrush/QColor directly
-                item.setForeground(QColor(150, 150, 150)) 
+            assigned_set = {os.path.normpath(p) for p in self.project_model.get_assigned_files()}
+
+            # User Request: Hide assigned images completely instead of graying them out
+            # Only show files that are NOT in the assigned set
+            unassigned_files = []
+            for f in files:
+                if os.path.normpath(f) not in assigned_set:
+                    unassigned_files.append(f)
+
+            # Sort alphabetically
+            unassigned_files.sort(key=lambda x: os.path.basename(x).lower())
+
+            # Count available files for label
+            available_count = len(unassigned_files)
+            self.lbl_pool.setText(tr("Unassigned Images ({0})").format(available_count))
+
+            for fpath in unassigned_files:
+                fname = os.path.basename(fpath)
+                item = QListWidgetItem(fname)
+                item.setData(Qt.ItemDataRole.UserRole, fpath)
+                item.setToolTip(fpath)
                 
-                # Disable selection and drag
-                item.setFlags(Qt.ItemFlag.NoItemFlags) # Disable everything including Enabled state
-                
-                # Track the last assigned item added
-                last_assigned_item = item
-                # print(f"[SampleList] Item '{fname}' marked as assigned (grayed out).")
-            else:
+                # All visible items are unassigned, so they are selectable and draggable
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
+
+                self.pool_list.addItem(item)
                 
-            self.pool_list.addItem(item)
+            # Restore scroll position
+            scrollbar.setValue(scroll_pos)
             
-        # Restore scroll position
-        # If the list changed significantly (e.g. item moved to bottom), restoring exact pixel value 
-        # might be disorienting if the item is no longer there.
-        # But generally keeping the scroll bar position is the standard "least surprise" behavior.
-        scrollbar.setValue(scroll_pos)
-        print(f"[SampleList] refresh_pool_list completed. Unassigned: {len(unassigned_files)}, Assigned: {len(assigned_files)}")
+            # Re-apply search filter
+            if self.search_pool.text():
+                self.filter_pool_list(self.search_pool.text())
+                
+            print(f"[SampleList] refresh_pool_list completed. Visible Unassigned: {len(unassigned_files)}")
+        finally:
+            self.pool_list.setUpdatesEnabled(True)
+            self.pool_list.blockSignals(False)
+
+    def request_tree_refresh(self):
+        """Requests a debounced refresh of the sample tree."""
+        self._tree_refresh_timer.start()
 
     def refresh_list(self):
+        """Compatibility method. Use request_tree_refresh instead."""
+        self.request_tree_refresh()
+
+    def refresh_list_actual(self):
+        """Rebuilds the sample tree while attempting to preserve scroll position, expansion, and selection."""
+        # --- 1. Save current state ---
+        scrollbar = self.tree_widget.verticalScrollBar()
+        scroll_pos = scrollbar.value()
+        
+        # Optimization: Disable updates to reduce flicker
+        self.tree_widget.setUpdatesEnabled(False)
+        
+        expanded_ids = set()
+        for i in range(self.tree_widget.topLevelItemCount()):
+            item = self.tree_widget.topLevelItem(i)
+            if item.isExpanded():
+                scene_id = item.data(0, Qt.ItemDataRole.UserRole)
+                if scene_id:
+                    expanded_ids.add(scene_id)
+        
+        selected_keys = [] # List of (type, scene_id, optional ch_index)
+        for item in self.tree_widget.selectedItems():
+            item_type = item.data(0, Qt.ItemDataRole.UserRole + 1)
+            scene_id = item.data(0, Qt.ItemDataRole.UserRole)
+            if item_type == "Scene":
+                selected_keys.append(("Scene", scene_id))
+            elif item_type == "Channel":
+                ch_index = item.data(0, Qt.ItemDataRole.UserRole + 2)
+                selected_keys.append(("Channel", scene_id, ch_index))
+        
+        current_item = self.tree_widget.currentItem()
+        current_key = None
+        if current_item:
+            item_type = current_item.data(0, Qt.ItemDataRole.UserRole + 1)
+            scene_id = current_item.data(0, Qt.ItemDataRole.UserRole)
+            if item_type == "Scene":
+                current_key = ("Scene", scene_id)
+            elif item_type == "Channel":
+                ch_index = current_item.data(0, Qt.ItemDataRole.UserRole + 2)
+                current_key = ("Channel", scene_id, ch_index)
+
+        # --- 2. Rebuild the tree ---
+        self.tree_widget.blockSignals(True) # Avoid itemChanged during rebuild
         self.tree_widget.clear()
         self.lbl_title.setText(tr("Samples ({0})").format(len(self.project_model.scenes)))
         
@@ -756,19 +980,28 @@ class SampleListWidget(QWidget):
             status_text = tr("Measured") if scene.status == "Measured" else ""
             scene_item.setText(1, status_text)
             if scene.status == "Measured":
-                # Use role property for global styling
-                scene_item.setData(1, Qt.ItemDataRole.ForegroundRole, None) # Clear inline
-                scene_item.setData(1, Qt.ItemDataRole.UserRole + 3, "success") # Custom role for delegate
-                # For QTreeWidget items, we can't easily set properties that QSS picks up on the text itself
-                # unless we use a custom delegate. But we can set the foreground color from palette/theme.
+                scene_item.setData(1, Qt.ItemDataRole.UserRole + 3, "success")
                 palette = QApplication.palette()
-                success_color = QColor("#27ae60") # Default green
+                success_color = QColor("#27ae60")
                 if palette.color(QPalette.ColorRole.Window).lightness() < 128:
-                    success_color = QColor("#2ecc71") # Brighter green for dark theme
+                    success_color = QColor("#2ecc71")
                 scene_item.setForeground(1, success_color)
             
             scene_item.setData(0, Qt.ItemDataRole.UserRole, scene.id)
             scene_item.setData(0, Qt.ItemDataRole.UserRole + 1, "Scene")
+            
+            # Restore expansion
+            if scene.id in expanded_ids:
+                scene_item.setExpanded(True)
+            elif not expanded_ids and self.btn_expand_all.isChecked():
+                # Default expansion if no state saved
+                scene_item.setExpanded(True)
+            
+            # Restore selection for Scene
+            if ("Scene", scene.id) in selected_keys:
+                scene_item.setSelected(True)
+            if current_key == ("Scene", scene.id):
+                self.tree_widget.setCurrentItem(scene_item)
             
             # Channel Items
             for i, ch in enumerate(scene.channels):
@@ -785,27 +1018,23 @@ class SampleListWidget(QWidget):
                     fname = os.path.basename(ch.path)
                     ch_item.setText(0, tr("{0}: {1}").format(ch.channel_type, fname))
                     palette = QApplication.palette()
-                    ch_item.setForeground(0, palette.color(QPalette.ColorRole.Mid)) # Greyish for files
-                    ch_item.setIcon(0, get_icon("icon", "image-x-generic")) # Try standard icon
+                    ch_item.setForeground(0, palette.color(QPalette.ColorRole.Mid))
+                    ch_item.setIcon(0, get_icon("icon", "image-x-generic"))
                     
-                    # Add Clear Button
                     btn_clear = QToolButton()
                     btn_clear.setIcon(get_icon("clear", "edit-clear"))
                     btn_clear.setIconSize(QSize(16, 16))
                     btn_clear.setFixedSize(22, 22)
                     btn_clear.setToolTip(tr("Remove Image from Channel"))
-                    # btn_clear.setAutoRaise(True) # Disabled for consistent global styling
                     btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
                     btn_clear.clicked.connect(lambda _, s_id=scene.id, c_idx=i: self.clear_channel(s_id, c_idx))
                     actions_layout.addWidget(btn_clear)
                 
-                # Add Delete Button (always available for channels)
                 btn_delete = QToolButton()
                 btn_delete.setIcon(get_icon("delete", "edit-delete"))
                 btn_delete.setIconSize(QSize(16, 16))
                 btn_delete.setFixedSize(22, 22)
                 btn_delete.setToolTip(tr("Delete Channel Slot"))
-                # btn_delete.setAutoRaise(True) # Disabled for consistent global styling
                 btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn_delete.clicked.connect(lambda _, s_id=scene.id, c_idx=i: self.on_remove_channel_clicked(s_id, c_idx))
                 actions_layout.addWidget(btn_delete)
@@ -813,7 +1042,6 @@ class SampleListWidget(QWidget):
                 actions_layout.addStretch()
                 self.tree_widget.setItemWidget(ch_item, 1, actions_container)
                 
-                # Set color indicator (using a colored square icon)
                 pix = QPixmap(16, 16)
                 pix.fill(QColor(ch.color))
                 ch_item.setIcon(0, QIcon(pix))
@@ -822,24 +1050,28 @@ class SampleListWidget(QWidget):
                     # Empty Slot
                     ch_item.setText(0, tr("{0}: [{1}]").format(ch.channel_type, tr("Empty")))
                     palette = QApplication.palette()
-                    error_color = QColor("#e74c3c") # Default red
+                    error_color = QColor("#e74c3c")
                     if palette.color(QPalette.ColorRole.Window).lightness() < 128:
-                        error_color = QColor("#ff5555") # Brighter red for dark theme
-                    ch_item.setForeground(0, error_color) # Reddish for empty
+                        error_color = QColor("#ff5555")
+                    ch_item.setForeground(0, error_color)
                     
-                    # For empty slots, we might also want to show the color indicator? 
-                    # Yes, per user request (DAPI is blue even if empty)
                     pix = QPixmap(16, 16)
                     pix.fill(QColor(ch.color))
                     ch_item.setIcon(0, QIcon(pix))
                 
                 ch_item.setData(0, Qt.ItemDataRole.UserRole, scene.id)
                 ch_item.setData(0, Qt.ItemDataRole.UserRole + 1, "Channel")
-                ch_item.setData(0, Qt.ItemDataRole.UserRole + 2, i) # Index
+                ch_item.setData(0, Qt.ItemDataRole.UserRole + 2, i)
+                
+                # Restore selection for Channel
+                if ("Channel", scene.id, i) in selected_keys:
+                    ch_item.setSelected(True)
+                if current_key == ("Channel", scene.id, i):
+                    self.tree_widget.setCurrentItem(ch_item)
             
             # Add [+] Button Item
             add_item = QTreeWidgetItem(scene_item)
-            add_item.setFlags(Qt.ItemFlag.ItemIsEnabled) # Not selectable/dragable
+            add_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             
             btn_add = QToolButton()
             btn_add.setIcon(get_icon("add", "list-add"))
@@ -849,12 +1081,10 @@ class SampleListWidget(QWidget):
             btn_add.setToolTip(tr("Add new empty channel slot"))
             btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_add.setProperty("role", "subtle")
-            
             btn_add.clicked.connect(lambda _, s_id=scene.id: self.on_add_channel_clicked(s_id))
             
             widget_container = QWidget()
             h_layout = QHBoxLayout(widget_container)
-            # Indent to match channel text (icon is ~16px, spacing ~5px, so ~21-25px)
             h_layout.setContentsMargins(28, 0, 0, 0) 
             h_layout.setSpacing(0)
             h_layout.addWidget(btn_add)
@@ -862,8 +1092,12 @@ class SampleListWidget(QWidget):
             
             self.tree_widget.setItemWidget(add_item, 0, widget_container)
 
-            # Respect the expand/collapse all button state
-            scene_item.setExpanded(self.btn_expand_all.isChecked())
+        # --- 3. Restore scroll position ---
+        self.tree_widget.blockSignals(False)
+        self.tree_widget.setUpdatesEnabled(True)
+        
+        # Use a slightly longer delay to ensure layout is complete before restoring scroll
+        QTimer.singleShot(10, lambda: scrollbar.setValue(scroll_pos))
 
     def on_add_channel_clicked(self, scene_id):
         self.project_model.add_empty_channel(scene_id)
@@ -871,8 +1105,6 @@ class SampleListWidget(QWidget):
     def on_remove_channel_clicked(self, scene_id, channel_index):
         """Removes a channel slot from a scene."""
         self.project_model.remove_channel(scene_id, channel_index)
-        self.refresh_list()
-        self.refresh_pool_list()
         self.channel_removed.emit(scene_id, channel_index)
         # Reload scene if it's the current one
         self.scene_selected.emit(scene_id)
@@ -880,11 +1112,8 @@ class SampleListWidget(QWidget):
     def clear_channel(self, scene_id, channel_index):
         """Clears the assigned image from a channel slot."""
         self.project_model.update_channel_path(scene_id, channel_index, "")
-        self.refresh_list()
-        self.refresh_pool_list()
         self.channel_cleared.emit(scene_id, channel_index)
         # Optionally refresh scene if it's the current one
-        # But we don't have direct access to main window here easily without signal
         self.scene_selected.emit(scene_id) # Reload scene to reflect removal
 
     def on_item_clicked(self, item, column):
@@ -944,13 +1173,18 @@ class SampleListWidget(QWidget):
                     QToolTip.hideText()
                     self._drag_hint_last_key = None
 
-    def _check_image_channels(self, file_path: str) -> bool:
+    def _check_image_channels(self, file_path: str, channel_name: Optional[str] = None) -> bool:
         """
         Validates if an image is suitable for single-channel assignment.
         Returns True if grayscale or pseudo-RGB (only one non-zero channel).
-        Returns False and shows warning if multi-channel.
+        Also returns True if the channel_name has a biological mapping rule.
+        Returns False and shows warning if multi-channel and no mapping.
         """
         try:
+            # If we have a mapping for this channel, we can handle multi-channel images
+            if channel_name and get_rgb_mapping(channel_name) is not None:
+                return True
+
             import numpy as np
             ext = os.path.splitext(file_path)[1].lower()
             if ext in (".tif", ".tiff"):
@@ -1049,8 +1283,16 @@ class SampleListWidget(QWidget):
                 self.project_model.undo_stack.endMacro()
             elif item_type == "Channel":
                 # Dropped on Channel Slot -> Force Fill (First file only)
-                if self._check_image_channels(file_paths[0]):
-                    ch_index = target_item.data(0, Qt.ItemDataRole.UserRole + 2)
+                ch_index = target_item.data(0, Qt.ItemDataRole.UserRole + 2)
+                
+                # Get channel name to help with multi-channel validation
+                channel_name = None
+                if scene_id in self.project_model._scene_map:
+                    scene = self.project_model._scene_map[scene_id]
+                    if 0 <= ch_index < len(scene.channels):
+                        channel_name = scene.channels[ch_index].channel_type
+                
+                if self._check_image_channels(file_paths[0], channel_name=channel_name):
                     self.project_model.update_channel_path(scene_id, ch_index, file_paths[0])
                     self.refresh_list()
                     self.channel_file_assigned.emit(scene_id, ch_index, file_paths[0])
@@ -1251,11 +1493,321 @@ class SampleListWidget(QWidget):
     
     def show_pool_context_menu(self, pos):
         menu = QMenu(self)
+        
+        # Selection count
+        selected_items = self.pool_list.selectedItems()
+        count = len(selected_items)
+
+        # New Action: Set as Single Channel Sample
+        set_single_action = menu.addAction(tr("Set as Single Channel Sample"))
+        set_single_action.setEnabled(count > 0)
+        
         create_action = menu.addAction(tr("Create Sample from Selection"))
+        create_action.setEnabled(count > 0)
+        
+        menu.addSeparator()
+        
+        delete_action = menu.addAction(tr("Remove from Pool"))
+        delete_action.setIcon(get_icon("delete", "edit-delete"))
+        delete_action.setEnabled(count > 0)
+        
         action = menu.exec(self.pool_list.mapToGlobal(pos))
         
         if action == create_action:
             self.create_sample_from_pool_selection()
+        elif action == delete_action:
+            self.remove_selected_from_pool()
+        elif action == set_single_action:
+            self.convert_pool_items_to_samples()
+
+    def update_pool_actions_state(self):
+        """Enable/disable batch actions based on pool selection."""
+        count = len(self.pool_list.selectedItems())
+        self.btn_pool_delete.setEnabled(count > 0)
+
+    def remove_selected_from_pool(self):
+        """Removes selected files from the unassigned pool."""
+        items = self.pool_list.selectedItems()
+        if not items:
+            return
+            
+        file_paths = [item.data(Qt.ItemDataRole.UserRole) for item in items]
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, 
+            tr("Remove from Pool"),
+            tr("Are you sure you want to remove {0} selected images from the pool?\nThis only removes them from the project, not from your disk.").format(len(file_paths)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.project_model.remove_files_from_pool(file_paths)
+            # Model signal will trigger refresh
+
+    def _detect_rgb_color(self, file_path: str) -> str:
+        try:
+            # 1. Read Image
+            data = None
+            if file_path.lower().endswith(('.tif', '.tiff')):
+                try:
+                    data = tifffile.imread(file_path)
+                except:
+                    pass
+            
+            if data is None:
+                # Use cv2 for other formats, handle unicode paths
+                stream = np.fromfile(file_path, dtype=np.uint8)
+                data = cv2.imdecode(stream, cv2.IMREAD_UNCHANGED)
+                if data is not None and data.ndim == 3 and data.shape[2] == 3:
+                     data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
+            
+            if data is None:
+                return "#FFFFFF"
+
+            # 2. Analyze Dimensions
+            if data.ndim == 3:
+                # Heuristic: if dim0 is small (3 or 4), it's likely channels.
+                if data.shape[0] < data.shape[2] and data.shape[0] <= 4:
+                     data = np.transpose(data, (1, 2, 0)) # Convert to HWC
+                
+                # Subsample for speed
+                step = max(1, min(data.shape[0], data.shape[1]) // 100)
+                small_data = data[::step, ::step, :]
+                
+                # Calculate means per channel
+                means = np.mean(small_data, axis=(0, 1))
+                if len(means) >= 3:
+                    r, g, b = means[0], means[1], means[2]
+                    
+                    # Simple dominance check
+                    if r > 1.2 * g and r > 1.2 * b:
+                        return "#FF0000" # Red
+                    elif g > 1.2 * r and g > 1.2 * b:
+                        return "#00FF00" # Green
+                    elif b > 1.2 * r and b > 1.2 * g:
+                        return "#0000FF" # Blue
+                    elif r > 1.2 * b and g > 1.2 * b and abs(r - g) < 0.2 * max(r, g):
+                         return "#FFFF00" # Yellow
+                    elif r > 1.2 * g and b > 1.2 * g and abs(r - b) < 0.2 * max(r, b):
+                         return "#FF00FF" # Magenta
+                    elif g > 1.2 * r and b > 1.2 * r and abs(g - b) < 0.2 * max(g, b):
+                         return "#00FFFF" # Cyan
+            
+            return "#FFFFFF"
+        except Exception as e:
+            print(f"Error detecting color for {file_path}: {e}")
+            return "#FFFFFF"
+
+    def _check_multichannel(self, file_path: str) -> tuple[bool, int]:
+        """Checks if file has multiple channels and returns count."""
+        try:
+            # 1. Check TIF/TIFF metadata
+            if file_path.lower().endswith(('.tif', '.tiff')):
+                try:
+                    with tifffile.TiffFile(file_path) as tif:
+                        # Check series
+                        if len(tif.series) > 0:
+                            series = tif.series[0]
+                            shape = series.shape
+                            ndim = len(shape)
+                            
+                            # Heuristic for Dimensions
+                            # Common: (C, Y, X), (Z, C, Y, X), (T, Z, C, Y, X)
+                            # Or (Y, X, C) for RGB
+                            
+                            # If axes known
+                            if hasattr(series, 'axes'):
+                                axes = series.axes
+                                if 'C' in axes:
+                                    idx = axes.find('C')
+                                    c = shape[idx]
+                                    if c > 1: return True, c
+                                if 'S' in axes: # Samples/Channels
+                                    idx = axes.find('S')
+                                    c = shape[idx]
+                                    if c > 1: return True, c
+
+                            # Shape heuristics
+                            if ndim == 3:
+                                # (C, Y, X) or (Y, X, C) or (Z, Y, X)
+                                # Usually Channels are small number (<10)
+                                if shape[0] < 10 and shape[0] > 1: return True, shape[0] # C, Y, X
+                                if shape[2] < 10 and shape[2] > 1: return True, shape[2] # Y, X, C
+                            elif ndim > 3:
+                                # Likely 4D/5D
+                                return True, 0 # >1 definitely
+                except:
+                    pass
+
+            # 2. Check content (slow but accurate for RGB png/jpg)
+            stream = np.fromfile(file_path, dtype=np.uint8)
+            data = cv2.imdecode(stream, cv2.IMREAD_UNCHANGED)
+            if data is not None and data.ndim == 3:
+                h, w, c = data.shape
+                if c > 1:
+                    # Check if channels are identical (Grayscale saved as RGB)
+                    ch0 = data[:,:,0]
+                    is_diff = False
+                    for i in range(1, c):
+                        if not np.array_equal(ch0, data[:,:,i]):
+                            is_diff = True
+                            break
+                    if is_diff:
+                        return True, c
+            
+            return False, 1
+        except Exception:
+            return False, 1
+
+    def _split_and_create_sample(self, file_path: str):
+        """Splits a multi-channel image and creates a sample."""
+        try:
+            # 1. Load Data
+            data = None
+            is_tif = file_path.lower().endswith(('.tif', '.tiff'))
+            if is_tif:
+                try:
+                    data = tifffile.imread(file_path)
+                except:
+                    pass
+            
+            if data is None:
+                stream = np.fromfile(file_path, dtype=np.uint8)
+                data = cv2.imdecode(stream, cv2.IMREAD_UNCHANGED)
+                if data is not None and data.ndim == 3:
+                    # CV2 is HWC (BGR)
+                    data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB) # RGB
+            
+            if data is None:
+                return None
+                
+            # Normalize to list of (H, W) arrays
+            channels_data = []
+            
+            # Heuristic to detect C dim
+            if data.ndim == 3:
+                # (C, Y, X) or (Y, X, C)
+                # If loaded via TiffFile, it usually respects metadata, but imread returns numpy array.
+                # If (3, H, W) -> C=3. If (H, W, 3) -> C=3.
+                if data.shape[0] < data.shape[1] and data.shape[0] < data.shape[2] and data.shape[0] <= 10:
+                    # CHW
+                    for i in range(data.shape[0]):
+                        channels_data.append(data[i, :, :])
+                else:
+                    # HWC
+                    for i in range(data.shape[2]):
+                        channels_data.append(data[:, :, i])
+            elif data.ndim == 4:
+                 # (Z, C, Y, X) or (C, Z, Y, X)? 
+                 # Too complex for simple split. Just take max projection or fail?
+                 # Let's assume user knows what they are doing.
+                 # If we split, we probably split into stacks.
+                 # Let's skip complex dims for now or just take C if obvious.
+                 pass
+                 
+            if not channels_data:
+                return None
+                
+            # 2. Save split files
+            base_dir = os.path.dirname(file_path)
+            fname = os.path.splitext(os.path.basename(file_path))[0]
+            saved_paths = []
+            
+            # R, G, B, W
+            colors_map = ["#FF0000", "#00FF00", "#0000FF", "#FFFFFF"] 
+            
+            channel_defs = []
+            
+            for i, ch_img in enumerate(channels_data):
+                new_name = f"{fname}_ch{i+1}.tif"
+                new_path = os.path.join(base_dir, new_name)
+                
+                # Unique name
+                counter = 1
+                while os.path.exists(new_path):
+                     new_name = f"{fname}_ch{i+1}_{counter}.tif"
+                     new_path = os.path.join(base_dir, new_name)
+                     counter += 1
+                     
+                tifffile.imwrite(new_path, ch_img)
+                
+                color = colors_map[i] if i < len(colors_map) else "#FFFFFF"
+                ch_type = f"Ch{i+1}"
+                
+                channel_defs.append({
+                    'path': new_path,
+                    'type': ch_type,
+                    'color': color
+                })
+                
+            # 3. Create Scene
+            # We use add_manual_scene to create undoable scene
+            scene_id = self.project_model.add_manual_scene(fname)
+            
+            # Add channels
+            for ch_def in channel_defs:
+                self.project_model.add_channel_to_scene(scene_id, ch_def['path'], ch_def['type'], ch_def['color'])
+                
+            return scene_id
+            
+        except Exception as e:
+            print(f"Error splitting file: {e}")
+            return None
+
+    def convert_pool_items_to_samples(self):
+        items = self.pool_list.selectedItems()
+        if not items: return
+
+        self.project_model.undo_stack.beginMacro(tr("Set as Single Channel Samples"))
+        
+        file_paths_to_remove = []
+        apply_to_all_choice = None # 'split' or 'keep'
+        
+        for item in items:
+            file_path = item.data(Qt.ItemDataRole.UserRole)
+            if not file_path or not os.path.exists(file_path):
+                continue
+            
+            # 1. Check Multi-channel
+            is_multi, count = self._check_multichannel(file_path)
+            
+            if is_multi:
+                choice = apply_to_all_choice
+                
+                if choice is None:
+                    dlg = MergeSplitDialog(file_path, count, self)
+                    if dlg.exec():
+                        if dlg.apply_to_all.isChecked():
+                            apply_to_all_choice = dlg.result_choice
+                        choice = dlg.result_choice
+                    else:
+                        # Cancelled
+                        break
+                
+                if choice == 'split':
+                    sid = self._split_and_create_sample(file_path)
+                    if sid:
+                        file_paths_to_remove.append(file_path)
+                    continue
+                elif choice == 'skip':
+                    continue
+                # If keep, proceed to below
+                
+            # Detect color
+            color = self._detect_rgb_color(file_path)
+            
+            # Create command
+            cmd = ConvertFileToSampleCommand(self.project_model, file_path, color)
+            self.project_model.undo_stack.push(cmd)
+            
+            file_paths_to_remove.append(file_path)
+
+        if file_paths_to_remove:
+            self.project_model.remove_files_from_pool(file_paths_to_remove)
+            
+        self.project_model.undo_stack.endMacro()
+        self.refresh_pool_list()
 
     def create_sample_from_pool_selection(self):
         items = self.pool_list.selectedItems()
@@ -1315,12 +1867,11 @@ class SampleListWidget(QWidget):
             # Color Presets (Optional)
             preset_menu = menu.addMenu(tr("Presets"))
             presets = [
-                (tr("DAPI Blue"), "#0000ff"),
-                (tr("GFP Green"), "#009E73"),
-                (tr("YFP Gold"), "#F0E442"),
-                (tr("RFP Red"), "#D55E00"),
-                (tr("Magenta"), "#CC79A7"),
-                (tr("Cy5 / Far Red"), "#A2142F")
+                (tr("DAPI Blue"), "#0000FF"),
+                (tr("GFP Green"), "#00FF00"),
+                (tr("YFP Yellow"), "#FFFF00"),
+                (tr("RFP Red"), "#FF0000"),
+                (tr("CY5 Magenta"), "#FF00FF")
             ]
             
             for name, hex_code in presets:

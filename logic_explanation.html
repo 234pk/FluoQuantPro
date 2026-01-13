@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>FluoQuantPro 图像处理逻辑说明</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true, theme: 'neutral'});</script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; max-width: 1000px; margin: 0 auto; padding: 20px; background-color: #f4f7f6; }
+        h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #2980b9; margin-top: 30px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .pipeline { display: flex; align-items: center; justify-content: space-between; margin: 20px 0; overflow-x: auto; padding: 10px; }
+        .step { background: #3498db; color: white; padding: 15px; border-radius: 5px; text-align: center; min-width: 120px; font-weight: bold; position: relative; }
+        .arrow { font-size: 24px; color: #95a5a6; }
+        .scientific { border-left: 5px solid #27ae60; }
+        .visual { border-left: 5px solid #e67e22; }
+        code { background: #eee; padding: 2px 5px; border-radius: 3px; font-family: Consolas, monospace; }
+        .mapping-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        .mapping-table th, .mapping-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .mapping-table th { background-color: #f2f2f2; }
+        .color-box { display: inline-block; width: 15px; height: 15px; margin-right: 5px; border: 1px solid #000; vertical-align: middle; }
+    </style>
+</head>
+<body>
+
+<h1>FluoQuantPro 图像处理与测量逻辑</h1>
+
+<div class="card">
+    <p>为了确保荧光定量分析的<strong>科学严谨性</strong>，FluoQuantPro 采用了“双轨制”处理逻辑：<strong>测量轨（科学数据）</strong>与<strong>渲染轨（视觉展示）</strong>分离。</p>
+</div>
+
+<div class="card scientific">
+    <h2>1. 图像导入与通道映射 (Image Import & Mapping)</h2>
+    <p>当图片导入时，系统会根据通道名称（如 DAPI, GFP）自动应用预设的 RGB 映射规则：</p>
+    <div class="mermaid" style="display: flex; justify-content: center; margin: 20px 0;">
+    graph TD
+        A[输入图像 / Input Image] --> B{通道名匹配 / Channel Name}
+        B -- "DAPI/Hoechst" --> C[提取 Blue 通道]
+        B -- "GFP/FITC/488" --> D[提取 Green 通道]
+        B -- "RFP/TRITC/594" --> E[提取 Red 通道]
+        B -- "CY5/647" --> F[提取 Red+Blue 平均]
+        B -- "其他 / Unknown" --> G[提取 RGB 最大值]
+        
+        C --> H[原始科学数据 / Raw Science Data]
+        D --> H
+        E --> H
+        F --> H
+        G --> H
+    </div>
+    <table class="mapping-table">
+        <tr><th>通道名称</th><th>RGB 映射 (R, G, B)</th><th>处理逻辑</th></tr>
+        <tr><td>DAPI</td><td>[0, 0, 1]</td><td>仅提取蓝色通道数据作为科学强度</td></tr>
+        <tr><td>GFP / FITC</td><td>[0, 1, 0]</td><td>仅提取绿色通道数据</td></tr>
+        <tr><td>RFP / TRITC / CY3</td><td>[1, 0, 0]</td><td>仅提取红色通道数据</td></tr>
+        <tr><td>CY5</td><td>[1, 0, 1]</td><td>提取红色和蓝色通道的平均值</td></tr>
+        <tr><td>Unknown</td><td>Max Projection</td><td>若无法识别，取 RGB 三通道最大值以防信号丢失</td></tr>
+    </table>
+    <p><strong>关键点：</strong>导入后的 <code>raw_data</code> 保持原始位深（8-bit 或 16-bit），测量时直接从 <code>raw_data</code> 按上述规则提取数据，避免了视觉增强（如亮度调节）对测量结果的影响。</p>
+</div>
+
+<div class="card visual">
+    <h2>2. 渲染流程与性能优化 (Rendering & Optimization)</h2>
+    <p>渲染过程将科学数据转化为屏幕显示的 RGB 像素。为了保证流畅度，我们做了以下优化：</p>
+    <div class="pipeline">
+        <div class="step">Raw Data</div>
+        <div class="arrow">→</div>
+        <div class="step">Downsample<br>(预览优化)</div>
+        <div class="arrow">→</div>
+        <div class="step">Enhancement<br>(Top-Hat/CLAHE)</div>
+        <div class="arrow">→</div>
+        <div class="step">LUT Mapping<br>(Fast Gamma/Tint)</div>
+        <div class="arrow">→</div>
+        <div class="step">Display RGB</div>
+    </div>
+    <ul>
+        <li><strong>快速百分比拉伸：</strong>使用直方图计算分位数，比直接排序快 100 倍以上。</li>
+        <li><strong>LUT 加速：</strong>Gamma 校正和颜色映射通过预计算查找表（LUT）实现，避免逐像素浮点运算。</li>
+        <li><strong>GPU 加速 (OpenCL)：</strong>背景扣除（Top-Hat）和局部对比度（CLAHE）在显卡上并行计算。</li>
+    </ul>
+</div>
+
+<div class="card scientific">
+    <h2>3. 魔棒工具与动态分配 (Magic Wand & Dynamic)</h2>
+    <ul>
+        <li><strong>为什么不从 RGB 获取数据？</strong> 渲染后的 RGB 图像经过了 Gamma 变换和亮度拉伸，其像素值已不再线性反映荧光强度。因此，魔棒工具现在<strong>直接从原始科学数据</strong>进行分割，确保选区的准确性。</li>
+        <li><strong>动态通道分配：</strong> 如果您将一个 "Unknown" 通道重新指定为 "DAPI"，系统会<strong>即时更新</strong>映射规则。下一次点击测量或移动魔棒时，它会自动从蓝色通道重新提取数据，无需重新加载文件。</li>
+    </ul>
+</div>
+
+<div class="card">
+    <h2>4. 逻辑架构图 (Logic Architecture)</h2>
+    <div class="mermaid">
+    graph LR
+        File[图片文件 / Image File] --> Loader[ImageLoader]
+        Loader --> Mapping{通道识别 / Mapping}
+        Mapping --> Rule[映射规则库]
+        
+        Rule --> Channel[ImageChannel]
+        Loader --> Channel
+        
+        Channel --> Measure[测量轨 / Measurement]
+        Channel --> Render[渲染轨 / Rendering]
+        
+        subgraph "测量轨 (科学性)"
+            Measure --> Intensity[提取灰度强度]
+            Intensity --> Wand[魔棒分割/统计]
+        end
+        
+        subgraph "渲染轨 (可视化)"
+            Render --> Enhance[图像增强 / CLAHE]
+            Enhance --> LUT[LUT / Gamma]
+            LUT --> Display[屏幕显示 RGB]
+        end
+    </div>
+</div>
+
+</body>
+</html>

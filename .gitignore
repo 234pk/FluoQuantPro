@@ -1,5 +1,22 @@
-dist/
+# Environment
+.venv/
+venv/
+env/
+bin/
+lib/
+share/
+Include/
+Scripts/
+
+# Build caches and logs
+.nuitka-cache/
+Windows-Build-Logs/
+macOS-Build-Logs*/
+main.dist/
+main.onefile-build/
+nuitka-crash-report.xml
 build/
+dist/
 __pycache__/
 *.pyc
 *.pyo
@@ -7,9 +24,27 @@ __pycache__/
 *.dll
 *.exe
 logs/
+*.log
+
+# Mac specific files (Excluded for EXE version)
+macversion/
+mac_install_python312.sh
+mac_setup_and_run.sh
+build_mac_nuitka.sh
+copy_to_mac.py
+entitlements.mac.plist
+entitlements.plist
+.DS_Store
+
+# PyInstaller / Spec files
+FluoQuantPro.spec
+FluoQuantPro_Mac.spec
+
+# OS files
+Thumbs.db
 .vscode/
 .idea/
-*.log
+.trae/
 
 # Data and large files
 *.zip
@@ -23,17 +58,17 @@ logs/
 *.xlsx
 *.tif
 *.tiff
+*.md
+!README.md
+!FluoQuantPro_Win.spec
 
-# Environment
-.venv/
-venv/
-env/
-bin/
-lib/
-share/
-Include/
-Scripts/
-
-# OS files
-.DS_Store
-Thumbs.db
+# Other unnecessary files
+error
+warn-FluoQuantPro.txt
+reproduce_issue.py
+verify_color_change.py
+generate_icon*.py
+build_dist.py
+build_exe.py
+manual.html
+scripts/detect_redundancy.py

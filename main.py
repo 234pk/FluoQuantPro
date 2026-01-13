@@ -1,10 +1,37 @@
 import os
 import sys
+from pathlib import Path
 import multiprocessing
 
-if __name__ == '__main__':
-    # 必须在所有逻辑之前调用，防止 Windows 打包后的无限递归启动
-    multiprocessing.freeze_support()
+import time
+import ctypes
+import multiprocessing
+import matplotlib
+matplotlib.use('QtAgg')
+import numpy as np
+import cv2
+import tifffile
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
+                               QHBoxLayout, QLabel, QFileDialog, QDockWidget, QMenu, QMessageBox, QScrollArea, QFrame, QToolButton, QSizePolicy,
+                               QGraphicsDropShadowEffect, QPushButton, QStackedWidget)
+from PySide6.QtGui import QAction, QDesktopServices, QColor, QPalette
+from PySide6.QtCore import Qt, QTimer, QUrl, QSettings, QSize, QPropertyAnimation, QEasingCurve, QRect, QEvent, QPoint
+
+from src.core.language_manager import LanguageManager, tr
+
+# --- Splash Helper ---
+def update_splash(text=None, progress=None, close=False):
+    try:
+        import pyi_splash
+        if text:
+            pyi_splash.update_text(text)
+        if progress is not None:
+            pyi_splash.update_progress(progress)
+        if close:
+            pyi_splash.close()
+    except (ImportError, AttributeError, RuntimeError):
+        pass
 
 # Ensure the project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,20 +42,116 @@ import time
 import ctypes
 import multiprocessing
 import matplotlib
-matplotlib.use('QtAgg') # 显式设置后端，避免 macOS 上尝试使用 TkAgg 导致挂起
+matplotlib.use('QtAgg')
 import numpy as np
-from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
-                               QHBoxLayout, QLabel, QFileDialog, QDockWidget, QMenu, QMessageBox, QScrollArea, QFrame, QToolButton, QSizePolicy)
-from PySide6.QtGui import QAction, QDesktopServices, QColor
-from PySide6.QtCore import Qt, QTimer, QUrl, QSettings, QSize
-import csv
 import cv2
+import tifffile
+
+# 更新进度
+update_splash(tr("Loading GUI Components..."), 40)
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
+                               QHBoxLayout, QLabel, QFileDialog, QDockWidget, QMenu, QMessageBox, QScrollArea, QFrame, QToolButton, QSizePolicy,
+                               QGraphicsDropShadowEffect, QPushButton, QStackedWidget)
+from PySide6.QtGui import QAction, QDesktopServices, QColor, QPalette
+from PySide6.QtCore import Qt, QTimer, QUrl, QSettings, QSize, QPropertyAnimation, QEasingCurve, QRect, QEvent, QPoint
+
+class HoverEffectFilter(QFrame):
+    """
+    Event filter to provide advanced hover/press effects for buttons:
+    - Scaling (105% hover, 98% press)
+    - Dynamic Shadows (Blur/Opacity)
+    - Elastic Animations
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._animations = {}
+        self._shadows = {}
+
+    def eventFilter(self, obj, event):
+        # Strict type checking to avoid interfering with CanvasView or other widgets
+        if type(obj) not in (QPushButton, QToolButton):
+            return False
+
+        # Only handle basic mouse/hover events for buttons
+        if not obj.isEnabled():
+            return False
+
+        if event.type() == QEvent.Type.Enter:
+            self._apply_hover_effect(obj, True)
+        elif event.type() == QEvent.Type.Leave:
+            self._apply_hover_effect(obj, False)
+        elif event.type() == QEvent.Type.MouseButtonPress:
+            self._apply_press_effect(obj, True)
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            self._apply_press_effect(obj, False)
+            
+        return False # IMPORTANT: Never return True, always let the original widget handle the event
+
+    def _apply_hover_effect(self, btn, hovering):
+        # 1. Scaling Animation - Subtler scaling
+        scale = 1.02 if hovering else 1.0
+        self._animate_geometry(btn, scale, tilt=hovering)
+        
+        # 2. Shadow Effect - Subtler shadow
+        if hovering:
+            shadow = QGraphicsDropShadowEffect(btn)
+            shadow.setBlurRadius(10) # Reduced spread
+            shadow.setOffset(0, 3) # Reduced offset
+            shadow.setColor(QColor(0, 0, 0, 40)) # Lighter shadow
+            btn.setGraphicsEffect(shadow)
+            self._shadows[btn] = shadow
+        else:
+            btn.setGraphicsEffect(None)
+            if btn in self._shadows:
+                del self._shadows[btn]
+
+    def _apply_press_effect(self, btn, pressed):
+        scale = 0.98 if pressed else 1.02
+        self._animate_geometry(btn, scale, tilt=not pressed)
+
+    def _animate_geometry(self, btn, scale_factor, tilt=False):
+        base_geo = btn.property("base_geometry")
+        if base_geo is None:
+            base_geo = btn.geometry()
+            btn.setProperty("base_geometry", base_geo)
+
+        center = base_geo.center()
+        
+        # Add very slight offset for dynamic feel
+        if tilt:
+            center += QPoint(0, -1) # Move up only 1px on hover
+            
+        new_w = int(base_geo.width() * scale_factor)
+        new_h = int(base_geo.height() * scale_factor)
+        
+        target_geo = QRect(0, 0, new_w, new_h)
+        target_geo.moveCenter(center)
+
+        anim = self._animations.get(btn)
+        if anim:
+            anim.stop()
+        else:
+            anim = QPropertyAnimation(btn, b"geometry")
+            self._animations[btn] = anim
+
+        anim.setDuration(150) # Faster transition (150ms)
+        anim.setStartValue(btn.geometry())
+        anim.setEndValue(target_geo)
+        
+        # Use smoother curves without overshoot
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            
+        anim.start()
+import csv
 from src.core.logger import Logger  # Import Logger
-from src.core.data_model import Session, ImageChannel, GraphicAnnotation
+from src.core.data_model import Session, ImageChannel  
 from src.core.enums import DrawingMode
 from src.core.renderer import Renderer
+from src.core.performance_monitor import PerformanceMonitor
 from src.gui.multi_view import MultiViewWidget
-from src.gui.tools import MagicWandTool, PolygonSelectionTool, CropTool, RectangleSelectionTool, EllipseSelectionTool, PointCounterTool, LineScanTool, TextTool, BatchSelectionTool
+from src.gui.filmstrip_view import FilmstripWidget
+from src.gui.tools import MagicWandTool, PolygonTool, CropTool, PointCounterTool, LineScanTool, BatchSelectionTool, DrawToolFactory, BaseDrawTool
 from src.gui.import_dialog import FluorophoreAssignmentDialog
 from src.gui.project_dialog import ProjectSetupDialog
 from src.core.project_model import ProjectModel
@@ -39,7 +162,10 @@ from src.gui.result_widget import MeasurementResultWidget
 from src.gui.enhance_panel import EnhancePanel
 try:
     from src.gui.colocalization_panel import ColocalizationPanel
-except Exception:
+except Exception as e:
+    import traceback
+    print(f"CRITICAL ERROR: Failed to import ColocalizationPanel: {e}")
+    traceback.print_exc()
     ColocalizationPanel = None
 from src.gui.adjustment_panel import AdjustmentPanel
 from src.gui.annotation_panel import AnnotationPanel
@@ -48,10 +174,14 @@ from src.gui.calibration_dialog import CalibrationDialog
 from src.gui.export_settings_dialog import ExportSettingsDialog
 from src.gui.auto_save_dialog import AutoSaveSettingsDialog
 from src.gui.settings_dialog import SettingsDialog
-import tifffile
 import os
 
+# 更新进度
+update_splash(tr("Loading Resources..."), 70)
+
 from src.gui.icon_manager import IconManager, get_icon
+from src.gui.toggle_switch import ToggleSwitch
+from src.gui.theme_manager import ThemeManager
 from src.core.language_manager import LanguageManager, tr
 
 from PySide6.QtCore import QThread, Signal
@@ -125,51 +255,41 @@ class SceneLoaderWorker(QThread):
         return data
 
     def run(self):
-        print(f"[{time.strftime('%H:%M:%S')}] Worker: Started")
+        Logger.info("[Worker] Started")
         for i, ch_def in enumerate(self.channel_defs):
             if not self._is_running: return
             
             data = None
             if ch_def.path and os.path.exists(ch_def.path):
                 try:
-                    print(f"[{time.strftime('%H:%M:%S')}] Worker: Reading {os.path.basename(ch_def.path)}...")
-                    try:
-                        data = tifffile.imread(ch_def.path)
-                    except Exception:
-                        # Fallback to OpenCV for non-TIFF formats
-                        import cv2
-                        # data = cv2.imread(ch_def.path, cv2.IMREAD_UNCHANGED)
-                        # Fix for Unicode paths:
-                        data_stream = np.fromfile(ch_def.path, dtype=np.uint8)
-                        data = cv2.imdecode(data_stream, cv2.IMREAD_UNCHANGED)
-                        if data is not None:
-                            if data.ndim == 3 and data.shape[2] == 3:
-                                data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
-                            elif data.ndim == 3 and data.shape[2] == 4:
-                                data = cv2.cvtColor(data, cv2.COLOR_BGRA2RGBA)
+                    Logger.info(f"[Worker] Reading {os.path.basename(ch_def.path)}...")
+                    # Use the robust ImageLoader instead of raw tifffile
+                    from src.core.image_loader import ImageLoader
+                    data, is_rgb = ImageLoader.load_image(ch_def.path)
                     
-                    # Offload preprocessing (e.g. Max Projection) to thread
+                    # ImageLoader already handles 4D+ and basic dimension normalization
+                    # We still call preprocess_data for any extra user-defined logic (like Max Projection for 3D Z-stacks)
                     if data is not None:
                         data = self.preprocess_data(data)
                         
                 except Exception as e:
-                    print(f"Error loading {ch_def.path}: {e}")
+                    Logger.error(f"Error loading {ch_def.path}: {e}")
             
             if not self._is_running: return
             
             # Create ImageChannel object in worker thread (performs stats calculation)
             try:
-                    print(f"[{time.strftime('%H:%M:%S')}] Worker: Creating ImageChannel {i}...")
+                    Logger.info(f"[Worker] Creating ImageChannel {i}...")
                     # Note: ImageChannel is a data class, safe to create here if no Qt parents involved
                     ch_obj = ImageChannel(ch_def.path, ch_def.color, ch_def.channel_type, data=data, auto_contrast=False)
-                    print(f"[{time.strftime('%H:%M:%S')}] Worker: Emitting channel_loaded {i}")
+                    Logger.info(f"[Worker] Emitting channel_loaded {i}")
                     self.channel_loaded.emit(self.scene_id, i, ch_obj, ch_def)
             except Exception as e:
-                print(f"Error creating ImageChannel in worker: {e}")
+                Logger.error(f"Error creating ImageChannel in worker: {e}")
                 # Fallback to passing data if object creation fails (should not happen)
                 self.channel_loaded.emit(self.scene_id, i, data, ch_def)
 
-        print(f"[{time.strftime('%H:%M:%S')}] Worker: Finished")
+        Logger.info("[Worker] Finished")
         self.finished_loading.emit(self.scene_id)
 
     def stop(self):
@@ -183,9 +303,40 @@ class MainWindow(QMainWindow):
         Logger.setup()
         Logger.info("Application starting...")
         
-        self.setWindowTitle("FluoQuant Pro")
+        self.setWindowTitle(tr("FluoQuant Pro v3.0"))
         self.setWindowIcon(get_icon("wand")) # Using wand as app icon
-        self.resize(1600, 900)
+        
+        # Adaptive UI: Set initial size based on screen geometry
+        screen = QApplication.primaryScreen()
+        if screen:
+            # Use availableGeometry to respect taskbar
+            available_geo = screen.availableGeometry()
+            
+            # Use 90% of available space for a generous but safe default
+            width = int(available_geo.width() * 0.9)
+            height = int(available_geo.height() * 0.9)
+            
+            # Ensure it doesn't exceed available screen space
+            width = min(width, available_geo.width())
+            height = min(height, available_geo.height())
+            
+            # Minimum reasonable size
+            width = max(1024, width)
+            height = max(720, height)
+            
+            self.resize(width, height)
+            
+            # Center within the available workspace
+            self.move(
+                available_geo.x() + (available_geo.width() - width) // 2,
+                available_geo.y() + (available_geo.height() - height) // 2
+            )
+            
+            # On small screens (e.g. 1366x768), default to maximized for better UX
+            if available_geo.width() <= 1366:
+                QTimer.singleShot(0, self.showMaximized)
+        else:
+            self.resize(1280, 800)
         
         self.loader_worker = None
         self.current_project_path = None
@@ -202,15 +353,34 @@ class MainWindow(QMainWindow):
         self.session.data_changed.connect(self.refresh_display)
         self.project_model = ProjectModel(undo_stack=self.undo_stack)
 
+        # Initialize Hover Effect Filter
+        self.hover_filter = HoverEffectFilter(self)
+        QApplication.instance().installEventFilter(self.hover_filter)
+
         # Auto-Save Setup
         self.settings = QSettings("FluoQuantPro", "AppSettings")
-        self._last_titlebar_style = None
         self.auto_save_timer = QTimer(self)
         self.auto_save_timer.timeout.connect(self.auto_save_project)
         self.setup_auto_save()
         
+        # Performance Monitor
+        self.perf_monitor = PerformanceMonitor.instance()
+        self.perf_monitor.lag_detected.connect(self.show_recovery_dialog)
+        self.perf_monitor.performance_mode_changed.connect(self.on_performance_mode_changed)
+
         # OpenCL Initialization
         self.init_opencl()
+        
+        # 更新进度到完成
+        update_splash(tr("Finalizing UI..."), 100)
+        
+        # Debounce Timer for Display Refresh
+        # Prevents excessive re-rendering during rapid parameter changes
+        self.refresh_debounce_timer = QTimer(self)
+        self.refresh_debounce_timer.setSingleShot(True)
+        self.refresh_debounce_timer.setInterval(50) # 50ms debounce for smooth but responsive updates
+        self.refresh_debounce_timer.timeout.connect(self._perform_refresh_display)
+        self._pending_fit_view = False
         
         # Store accumulated measurements for all scenes
         # List of Dicts, with 'Scene' key added
@@ -225,31 +395,51 @@ class MainWindow(QMainWindow):
             'Min': True,
             'Max': True,
             'BgMean': False,
-            'CorrectedMean': False
+            'CorrectedMean': False,
+            'Accumulate': True
         }
         
         # UI Setup
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(0, 0, 0, 0)
+        # Add a small bottom margin to ensure status bar is always visible
+        # and not covered by any floating or expanding widgets.
+        self.layout.setContentsMargins(0, 0, 0, 10) 
         # Main Layout - Central Widget (Canvas Only)
-        # Left: MultiView (Canvas)
+        # We use a StackedWidget to toggle between Grid View and Filmstrip View
+        self.view_stack = QStackedWidget()
+        self.layout.addWidget(self.view_stack)
+
+        # 1. Grid View (Original MultiView)
         self.multi_view = MultiViewWidget(self.session)
-        self.layout.addWidget(self.multi_view)
+        self.view_stack.addWidget(self.multi_view)
+
+        # 2. Filmstrip View
+        self.filmstrip_view = FilmstripWidget(self.session)
+        self.view_stack.addWidget(self.filmstrip_view)
+
+        # List of all view containers for agnostic operations
+        self.view_containers = [self.multi_view, self.filmstrip_view]
+
+        # Default to Grid View
+        self.view_stack.setCurrentWidget(self.multi_view)
         
-        # Connect Empty State signals
-        self.multi_view.new_project_requested.connect(self.new_project)
-        self.multi_view.open_project_requested.connect(self.open_project)
-        self.multi_view.open_recent_requested.connect(self.load_project) # Connect recent project signal
-        self.multi_view.import_folder_requested.connect(self.import_folder_auto)
-        self.multi_view.import_merge_requested.connect(self.on_import_merge)
+        # Connect Empty State signals for ALL view containers
+        for container in self.view_containers:
+            container.new_project_requested.connect(self.new_project)
+            container.open_project_requested.connect(self.open_project)
+            container.open_recent_requested.connect(self.load_project)
+            container.import_folder_requested.connect(self.import_folder_auto)
+            container.import_merge_requested.connect(self.on_import_merge)
+            if hasattr(container, 'import_requested'):
+                container.import_requested.connect(lambda: self.sample_list.load_images_to_pool())
         
         # --- Sidebar: Sample List ---
-        self.sample_dock = QDockWidget("Project Samples", self)
+        self.sample_dock = QDockWidget(tr("Project Samples"), self)
         self.sample_dock.setObjectName("SampleDock") # Important for state saving
         self.sample_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
-        self.sample_dock.setMinimumWidth(250)
+        self.sample_dock.setMinimumWidth(50) # Unified minimum width for compression
         self.sample_list = SampleListWidget(self.project_model)
         self.sample_list.scene_selected.connect(self.load_scene)
         self.sample_list.channel_selected.connect(self.on_sample_channel_selected)
@@ -264,8 +454,11 @@ class MainWindow(QMainWindow):
         self.sample_dock.setWidget(self.sample_list)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sample_dock)
         
+        # Unified minimum width for docks to allow extreme compression
+        self.sample_dock.setMinimumWidth(50)
+        
         # --- Right Sidebar: Tabbed Control Panel ---
-        self.right_dock = QDockWidget("Controls", self)
+        self.right_dock = QDockWidget(tr("Controls"), self)
         self.right_dock.setObjectName("ControlDock")
         self.right_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self.right_dock.setMinimumWidth(0) # Allow free resizing (User request)
@@ -274,38 +467,22 @@ class MainWindow(QMainWindow):
                                     QDockWidget.DockWidgetFeature.DockWidgetFloatable | 
                                     QDockWidget.DockWidgetFeature.DockWidgetClosable)
         
-        # Tabs
-        from PySide6.QtWidgets import QTabWidget, QStyle
-        self.control_tabs = QTabWidget()
-        # USER REQUEST: Use Corner Widgets for Tab Navigation (Previous/Next)
-        self.control_tabs.setUsesScrollButtons(True) # Enable scrolling for shrinking
-        Logger.debug("[Main] Control Tabs configured to allow scrolling (shrinkable)")
-
-        # Create Navigation Buttons
-        self.btn_tab_prev = QToolButton(self.control_tabs)
-        self.btn_tab_prev.setObjectName("nav_btn")
-        # Use Standard Icon to ensure visibility (Red Circle fix)
-        self.btn_tab_prev.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowLeft)) 
-        self.btn_tab_prev.setToolTip(tr("Previous Tab"))
-        self.btn_tab_prev.setIconSize(QSize(12, 12)) 
-        self.btn_tab_prev.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_tab_prev.clicked.connect(self._on_prev_tab_clicked)
-
-        self.btn_tab_next = QToolButton(self.control_tabs)
-        self.btn_tab_next.setObjectName("nav_btn")
-        # Use Standard Icon for consistency
-        self.btn_tab_next.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
-        self.btn_tab_next.setToolTip(tr("Next Tab"))
-        self.btn_tab_next.setIconSize(QSize(12, 12)) 
-        self.btn_tab_next.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_tab_next.clicked.connect(self._on_next_tab_clicked)
-
-        # Set as Corner Widgets
-        self.control_tabs.setCornerWidget(self.btn_tab_prev, Qt.Corner.TopLeftCorner)
-        self.control_tabs.setCornerWidget(self.btn_tab_next, Qt.Corner.TopRightCorner)
+        # Sidebar Panel
+        from src.gui.sidebar_panel import RightSidebarControlPanel
+        self.control_tabs = RightSidebarControlPanel()
+        self.control_tabs.setMinimumWidth(0)
+        Logger.debug("[Main] Control Tabs replaced with RightSidebarControlPanel")
 
         self.right_dock.setWidget(self.control_tabs)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.right_dock)
+
+        # Adaptive Right Dock Initial Width
+        if screen:
+             # Initially allocate around 20% for controls if screen is large
+             initial_right_width = int(width * 0.22)
+             self.resizeDocks([self.right_dock], [initial_right_width], Qt.Horizontal)
+        
+        self.right_dock.setMinimumWidth(50) # Unified minimum width for compression
         
         # 1. Toolbox Tab
         self.roi_toolbox = None # Initialized later when actions are ready
@@ -326,7 +503,8 @@ class MainWindow(QMainWindow):
         self.annotation_panel.settings_changed.connect(self.on_overlay_settings_changed)
         self.annotation_panel.annotation_tool_selected.connect(self.on_annotation_tool_selected)
         self.annotation_panel.clear_annotations_requested.connect(self.on_clear_annotations)
-        self.annotation_panel.annotation_updated.connect(self.on_annotation_updated)
+        #self.annotation_panel.annotation_updated.connect(self.on_annotation_updated)
+        self.annotation_panel.annotation_selected.connect(self.select_view_annotation) # Forward Association
         
         # Menu Bar
         self.create_actions()
@@ -338,34 +516,20 @@ class MainWindow(QMainWindow):
         # Now create the toolbox widget since actions exist
         self.roi_toolbox = RoiToolbox(self)
         
-        # Connect MultiView signals
-        self.multi_view.connect_signals(self)
+        # Close splash screen if present (PyInstaller)
+        update_splash(close=True)
         
         # Connect session signals (Combined)
         manager = self.session.roi_manager
         
-        # Cleanup any existing connections to these slots to prevent duplicates
-        try:
-            manager.roi_added.disconnect(self.on_roi_added)
-            manager.roi_removed.disconnect(self.on_roi_removed)
-            manager.roi_updated.disconnect(self.on_roi_updated)
-            manager.selection_changed.disconnect(self.on_roi_selection_changed)
-        except:
-            pass # Not connected yet
-            
+        # 稳固连接信号，不再尝试 disconnect（因为此时是初始化阶段）
         manager.roi_added.connect(self.on_roi_added)
         manager.roi_removed.connect(self.on_roi_removed)
         manager.roi_updated.connect(self.on_roi_updated)
         manager.selection_changed.connect(self.on_roi_selection_changed)
         
         # Connect toolbox to manager signals
-        if hasattr(self, 'roi_toolbox'):
-            try:
-                manager.roi_added.disconnect(self.roi_toolbox.update_counts_summary)
-                manager.roi_removed.disconnect(self.roi_toolbox.update_counts_summary)
-                manager.roi_updated.disconnect(self.roi_toolbox.update_counts_summary)
-            except:
-                pass
+        if hasattr(self, 'roi_toolbox') and self.roi_toolbox:
             manager.roi_added.connect(self.roi_toolbox.update_counts_summary)
             manager.roi_removed.connect(self.roi_toolbox.update_counts_summary)
             manager.roi_updated.connect(self.roi_toolbox.update_counts_summary)
@@ -448,71 +612,88 @@ class MainWindow(QMainWindow):
         # Status Bar
         self.setStatusBar(self.statusBar())
         self.lbl_status = QLabel(tr("Ready"))
-        self.statusBar().addWidget(self.lbl_status)
+        self.statusBar().addWidget(self.lbl_status, 1) # Stretch factor 1 to take available space
         
+        # Zoom Label
+        self.lbl_zoom = QLabel("100%")
+        self.lbl_zoom.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.lbl_zoom.setMinimumWidth(60)
+        # Add to status bar as a permanent widget (right side)
+        self.statusBar().addPermanentWidget(self.lbl_zoom)
+
+        # Memory Label
+        self.lbl_memory = QLabel(tr("RAM: 0 MB"))
+        self.lbl_memory.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.lbl_memory.setMinimumWidth(120)
+        self.lbl_memory.setStyleSheet("margin-right: 10px; color: #666;")
+        self.statusBar().addPermanentWidget(self.lbl_memory)
+
+        # Connect Performance Monitor Signals
+        self.perf_monitor.memory_status_updated.connect(self.update_memory_label)
+        self.perf_monitor.memory_threshold_exceeded.connect(self.on_memory_warning)
+
         # Connect Adjustment Panel -> MultiView selection sync
         # Use channel_activated which is defined in AdjustmentPanel
         if hasattr(self.adjustment_panel, 'channel_activated'):
-            self.adjustment_panel.channel_activated.connect(self.multi_view.select_channel)
+            self.adjustment_panel.channel_activated.connect(self.select_view_channel)
         else:
             print("WARNING: AdjustmentPanel has no 'channel_activated' signal")
 
-        # Connect Channel Selection
-        self.multi_view.channel_selected.connect(self.on_channel_selected)
-        self.multi_view.channel_selected.connect(self.adjustment_panel.set_active_channel)
-        self.multi_view.channel_selected.connect(self.enhance_panel.set_active_channel)
-        
-        self.multi_view.channel_file_dropped.connect(self.handle_channel_file_drop)
-        self.multi_view.mouse_moved_on_view.connect(self.update_status_mouse_info)
-        self.multi_view.annotation_created.connect(self.on_annotation_created)
-        self.multi_view.annotation_modified.connect(self.on_annotation_modified)
-        self.multi_view.tool_cancelled.connect(self.on_tool_cancelled)
-        
-        # Connect Empty State Import Action
-        if hasattr(self.multi_view, 'import_requested'):
-            self.multi_view.import_requested.connect(lambda: self.sample_list.load_images_to_pool())
+        # Connect View Container Signals
+        for container in self.view_containers:
+            container.channel_selected.connect(self.on_channel_selected)
+            container.channel_selected.connect(self.adjustment_panel.set_active_channel)
+            container.channel_selected.connect(self.enhance_panel.set_active_channel)
+            container.channel_file_dropped.connect(self.handle_channel_file_drop)
+            container.mouse_moved_on_view.connect(self.update_status_mouse_info)
+            container.tool_cancelled.connect(self.on_tool_cancelled)
+            container.zoom_changed.connect(self.update_zoom_label)
+            if hasattr(container, 'import_requested'):
+                container.import_requested.connect(lambda: self.sample_list.load_images_to_pool())
         
         # Connect Enhance Panel -> MultiView selection sync
-        self.enhance_panel.channel_activated.connect(self.multi_view.select_channel)
+        self.enhance_panel.channel_activated.connect(self.select_view_channel)
         
         # Tools
         self.wand_tool = MagicWandTool(self.session)
-        self.wand_tool.preview_changed.connect(self.multi_view.update_all_previews)
+        self.wand_tool.preview_changed.connect(self.on_tool_preview_changed)
         self.wand_tool.tolerance_changed.connect(self.handle_wand_tolerance_changed)
         self.wand_tool.committed.connect(lambda msg: self.lbl_status.setText(msg))
         
-        self.polygon_tool = PolygonSelectionTool(self.session)
-        self.polygon_tool.preview_changed.connect(self.multi_view.update_all_previews)
+        self.polygon_tool = PolygonTool(self.session)
+        self.polygon_tool.preview_changed.connect(self.on_tool_preview_changed)
         self.polygon_tool.committed.connect(lambda msg: self.lbl_status.setText(msg))
         
-        self.rect_tool = RectangleSelectionTool(self.session)
-        self.rect_tool.preview_changed.connect(self.multi_view.update_all_previews)
+        self.rect_tool = DrawToolFactory.create(self.session, "rect")
+        self.rect_tool.preview_changed.connect(self.on_tool_preview_changed)
         self.rect_tool.committed.connect(lambda msg: self.lbl_status.setText(msg))
         
-        self.ellipse_tool = EllipseSelectionTool(self.session)
-        self.ellipse_tool.preview_changed.connect(self.multi_view.update_all_previews)
+        self.ellipse_tool = DrawToolFactory.create(self.session, "ellipse")
+        self.ellipse_tool.preview_changed.connect(self.on_tool_preview_changed)
         self.ellipse_tool.committed.connect(lambda msg: self.lbl_status.setText(msg))
         
         self.count_tool = PointCounterTool(self.session)
-        self.count_tool.preview_changed.connect(self.multi_view.update_all_previews)
+        self.count_tool.preview_changed.connect(self.on_tool_preview_changed)
         self.count_tool.committed.connect(lambda msg: self.lbl_status.setText(msg))
         
         self.line_scan_tool = LineScanTool(self.session)
-        self.line_scan_tool.preview_changed.connect(self.multi_view.update_all_previews)
+        self.line_scan_tool.preview_changed.connect(self.on_tool_preview_changed)
         if self.colocalization_panel:
             self.line_scan_tool.line_updated.connect(self.colocalization_panel.on_line_updated)
-        self.line_scan_tool.committed.connect(lambda msg: self.lbl_status.setText(msg))
+        self.line_scan_tool.committed.connect(self._on_tool_committed)
         
         self.crop_tool = CropTool(self.session)
         
-        self.text_tool = TextTool(self.session)
-        self.text_tool.preview_changed.connect(self.multi_view.update_all_previews)
-        self.text_tool.committed.connect(lambda msg: self.lbl_status.setText(msg))
-        self.text_tool.committed.connect(lambda: self.annotation_panel.update_annotation_list())
-        self.text_tool.committed.connect(lambda: self.multi_view.set_annotations(self.session.annotations))
+        self.text_tool = DrawToolFactory.create(self.session, "text")
+        self.text_tool.preview_changed.connect(self.on_tool_preview_changed)
+        self.text_tool.committed.connect(self._on_tool_committed)
+
+        self.arrow_tool = DrawToolFactory.create(self.session, "arrow")
+        self.arrow_tool.preview_changed.connect(self.on_tool_preview_changed)
+        self.arrow_tool.committed.connect(self._on_tool_committed)
 
         self.batch_tool = BatchSelectionTool(self.session)
-        self.batch_tool.preview_changed.connect(self.multi_view.update_all_previews)
+        self.batch_tool.preview_changed.connect(self.on_tool_preview_changed)
         self.batch_tool.selection_made.connect(self.on_batch_selection_made)
 
         # Apply Modern Interactivity Stylesheet
@@ -520,6 +701,9 @@ class MainWindow(QMainWindow):
         
         # Connect Language Change
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
+        
+        # Connect Theme Change
+        ThemeManager.instance().theme_changed.connect(self.on_theme_changed)
         
         # Restore UI State (Geometry, Docks, Splitters)
         self.restore_ui_state()
@@ -533,7 +717,7 @@ class MainWindow(QMainWindow):
 
     def retranslate_ui(self):
         """Update all UI text when language changes."""
-        self.setWindowTitle(tr("FluoQuant Pro"))
+        self.setWindowTitle(tr("FluoQuant Pro v1.1"))
         
         # Update Dock Titles
         self.sample_dock.setWindowTitle(tr("Project Samples"))
@@ -736,28 +920,46 @@ class MainWindow(QMainWindow):
     def update_tab_visibility(self):
         """Updates control panel tab visibility based on settings."""
         settings = QSettings("FluoQuantPro", "AppSettings")
+        # Change 'overlay' to 'annotation' in default string to match new panel name
         visible_tabs_str = settings.value("interface/visible_tabs", "toolbox,adjustments,enhance,colocalization,annotation,results")
-        visible_tabs_list = visible_tabs_str.split(',')
+        visible_list = visible_tabs_str.split(",")
         
-        # Handle backward compatibility
-        if "overlay" in visible_tabs_list and "annotation" not in visible_tabs_list:
-            visible_tabs_list.append("annotation")
+        # Remember current index to restore it if possible
+        current_tab_name = None
+        current_idx = self.control_tabs.currentIndex()
+        if current_idx >= 0:
+            # Find the key for the current widget
+            current_widget = self.control_tabs.widget(current_idx)
+            for key, widget, label in self.all_tabs_data:
+                if widget == current_widget:
+                    current_tab_name = key
+                    break
         
         # Clear all tabs
         self.control_tabs.clear()
         
         # Add only visible ones
-        for tab_id, widget, label in self.all_tabs_data:
-            if tab_id in visible_tabs_list:
-                self.control_tabs.addTab(widget, label)
+        for key, widget, label in self.all_tabs_data:
+            if key in visible_list:
+                self.control_tabs.add_tab(key, widget, label)
+                
+        # Restore index if the tab is still visible
+        if current_tab_name:
+            for i in range(self.control_tabs.count()):
+                widget = self.control_tabs.widget(i)
+                # Find which key this widget corresponds to
+                for key, w, label in self.all_tabs_data:
+                    if w == widget and key == current_tab_name:
+                        self.control_tabs.setCurrentIndex(i)
+                        break
 
     def on_annotation_tool_selected(self, mode):
         """Handles graphic annotation tool selection."""
-        print(f"\n\nDEBUG: [Main] on_annotation_tool_selected called with mode: {mode} (FORCE LOG)\n")
+        Logger.debug(f"[Main] on_annotation_tool_selected called with mode: {mode}")
         
         # 1. 检查是否正在进行 ROI 工具切换（状态锁）
         if getattr(self, '_is_switching_roi_tool', False) and mode == 'none':
-            print("DEBUG: [Main] Ignoring annotation reset because we are currently switching ROI tools.")
+            Logger.debug("[Main] Ignoring annotation reset because we are currently switching ROI tools.")
             return
 
         try:
@@ -775,81 +977,61 @@ class MainWindow(QMainWindow):
                 
                 # 如果当前有 ROI 工具，不要退回到 Pan
                 if is_any_roi_tool_active:
-                    print(f"DEBUG: [Main] Ignoring annotation reset because an ROI tool is checked.")
+                    Logger.debug(f"[Main] Ignoring annotation reset because an ROI tool is checked.")
                     return
 
                 # --- 优化：不再武断地切回手型工具 ---
                 # 即使没有 ROI 工具，我们也只是清理当前视图的工具状态，而不是强制选中 action_pan
                 # 这样可以避免信号回环导致的“抢夺焦点”问题
-                print("DEBUG: [Main] Mode is none, clearing view tools (NOT forcing Pan)")
-                self.multi_view.set_tool(None)
+                Logger.debug("[Main] Mode is none, clearing view tools (NOT forcing Pan)")
+                self.set_view_tool(None)
                 return
 
-            # Map annotation mode to ROI tools (The "Nuclear Option")
+            # Annotation 模式仅保留箭头/文字，其它形状通过 ROI 工具
             tool_to_use = None
-            
-            if mode == 'rect':
-                tool_to_use = self.rect_tool
-            elif mode == 'ellipse' or mode == 'circle':
-                 tool_to_use = self.ellipse_tool
-            elif mode == 'polygon':
-                 tool_to_use = self.polygon_tool
-            elif mode == 'arrow' or mode == 'line':
-                 # Use LineScanTool for lines and arrows
-                 if hasattr(self, 'line_scan_tool'):
-                     tool_to_use = self.line_scan_tool
-                 else:
-                     print("ERROR: [Main] line_scan_tool not found!")
-            elif mode == 'text':
-                 # Fallback to TextTool for text (no ROI equivalent)
-                 tool_to_use = self.text_tool
-            
-            elif mode == 'batch_select':
-                 # Use BatchSelectionTool
-                 if hasattr(self, 'batch_tool'):
-                     tool_to_use = self.batch_tool
-                 
-            if tool_to_use:
-                print(f"DEBUG: [Main] Activating tool: {tool_to_use}")
-                # Set the pending mode so on_roi_added knows to convert it
-                self.pending_annotation_mode = mode
-                
-                # Force tool setting
-                self.multi_view.set_tool(tool_to_use)
-                
-                # Check if tool was actually set in views
-                # We can't easily check all views here, but we trust set_tool
+            from src.gui.tools import DrawToolFactory
+            if mode in ['arrow', 'text']:
+                # 直接进入注解上下文，由视图创建工具
+                self.set_view_annotation_mode(mode)
+                self.pending_annotation_mode = None
+                tool_to_use = None
                 
                 # Uncheck main toolbar tools to reflect state
                 if self.tools_action_group.checkedAction():
                     self.tools_action_group.setExclusive(False)
                     self.tools_action_group.checkedAction().setChecked(False)
                     self.tools_action_group.setExclusive(True)
-                    
+            elif mode == 'batch_select':
+                if hasattr(self, 'batch_tool'):
+                    tool_to_use = self.batch_tool
+            else:
+                # 其它类型不在注解面板中创建
+                self.set_view_annotation_mode('none')
+                tool_to_use = None
+                 
+            if tool_to_use:
+                Logger.debug(f"[Main] Activating batch selection tool")
+                self.pending_annotation_mode = None
+                self.set_view_tool(tool_to_use)
+                # Uncheck main toolbar tools to reflect state
+                if self.tools_action_group.checkedAction():
+                    self.tools_action_group.setExclusive(False)
+                    self.tools_action_group.checkedAction().setChecked(False)
+                    self.tools_action_group.setExclusive(True)
                 self.lbl_status.setText(tr("Annotation Mode: {0}").format(mode.capitalize()))
             else:
-                print(f"DEBUG: [Main] No tool found for mode: {mode}")
+                # Arrow/Text 已在上面设置；其它类型维持 ROI 面板
+                self.lbl_status.setText(tr("Annotation Mode: {0}").format(mode.capitalize()))
         except Exception as e:
-            print(f"ERROR: [Main] Exception in on_annotation_tool_selected: {e}")
-            import traceback
-            traceback.print_exc()
-        
-    def on_annotation_created(self, ann):
-        """Handles new graphic annotation creation."""
-        self.session.annotations.append(ann)
+            Logger.error(f"[Main] Exception in on_annotation_tool_selected: {e}", exc_info=True)
+    
+    def _on_tool_committed(self, msg: str):
+        self.lbl_status.setText(msg)
         self.annotation_panel.update_annotation_list()
-        self.multi_view.set_annotations(self.session.annotations)
-        print(f"DEBUG: Annotation created and added to session: {ann.type}")
         
-    def on_annotation_updated(self):
-        """Handles updates to existing annotations."""
-        self.multi_view.set_annotations(self.session.annotations)
-
     def on_overlay_settings_changed(self):
         """Handles changes to scale bar or global annotation settings."""
-        self.multi_view.update_scale_bar(self.session.scale_bar_settings)
-        # Update annotations too, in case visibility was toggled
-        self.multi_view.set_annotations(self.session.annotations)
+        self.update_all_scale_bars(self.session.scale_bar_settings)
         
         # Sync properties to TextTool
         if hasattr(self, 'text_tool') and hasattr(self, 'annotation_panel'):
@@ -857,212 +1039,24 @@ class MainWindow(QMainWindow):
             self.text_tool.color = props.get('color', '#FFFF00')
             self.text_tool.font_size = props.get('arrow_head_size', 12)
 
+
     def on_roi_added(self, roi):
-        """Sync ROI to annotations if enabled OR convert to annotation if in annotation mode."""
-        print(f"CRITICAL_DEBUG: Entering Main.on_roi_added for ROI {roi.id}")
-        import sys
-        sys.stdout.flush()
-        from src.core.logger import Logger
-        Logger.debug(f"[Main.on_roi_added] ENTER - ROI: {roi.label} ({roi.id})")
-        
-        try:
-            # 1. Check if we are in "Annotation Mode" (Hijacking ROI tools)
-            if getattr(self, 'pending_annotation_mode', None):
-                mode = self.pending_annotation_mode
-                print(f"DEBUG: Converting ROI {roi.id} to Annotation ({mode})")
-                
-                # Convert ROI points to annotation points
-                points = [(p.x(), p.y()) for p in roi.points]
-                if not points and roi.line_points:
-                    p1, p2 = roi.line_points
-                    points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
-                
-                # Create UUID
-                import uuid
-                ann_id = str(uuid.uuid4())
-                
-                # Map mode to annotation type
-                ann_type = mode # 'rect', 'ellipse', 'arrow', 'line', 'polygon'
-                
-                # User Request: "Dual Attributes" - ROI should also have the specific type
-                # so RoiGraphicsItem can render it correctly (e.g. arrow head).
-                roi.roi_type = ann_type
-                
-                # Get properties from Annotation Panel
-                props = self.annotation_panel.get_current_properties()
-                
-                # Create Annotation
-                ann = GraphicAnnotation(
-                    id=ann_id,
-                    type=ann_type,
-                    points=points,
-                    color=props.get('color', "#FFFF00"), 
-                    thickness=props.get('thickness', 2),
-                    visible=True
-                )
-                
-                # Apply additional properties (style, arrow size)
-                ann.style = props.get('style', 'solid')
-                ann.export_only = props.get('export_only', False)
-                if ann_type == 'arrow':
-                    # Scale default size (15.0) by display scale so it looks correct on screen
-                    scale = 1.0
-                    if hasattr(self, 'multi_view'):
-                        active_view = self.multi_view.views.get(self.multi_view.active_channel_id)
-                        if active_view:
-                            scale = active_view.display_scale
-                        elif self.multi_view.views:
-                            scale = next(iter(self.multi_view.views.values())).display_scale
-                    
-                    base_size = props.get('arrow_head_size', 15.0)
-                    if scale > 0:
-                        ann.properties['arrow_head_size'] = base_size / scale
-                    else:
-                        ann.properties['arrow_head_size'] = base_size
-                
-                # 【核心修复】避免重影：隐藏原始 ROI 并建立关联
-                roi.visible = False
-                ann.roi_id = roi.id
-                ann.roi = roi 
-                
-                self.session.annotations.append(ann)
-                self.annotation_panel.update_annotation_list()
-                self.multi_view.set_annotations(self.session.annotations)
-                
-                # 触发 ROI 状态更新信号
-                self.session.roi_manager.roi_updated.emit(roi.id)
-                Logger.debug(f"[Main.on_roi_added] ROI converted to annotation successfully")
-                return
-
-            if getattr(self, '_suppress_roi_annotation_sync', False):
-                return
-
-            # 2. Normal ROI Sync (if enabled)
-            if hasattr(self, 'roi_toolbox') and self.roi_toolbox.chk_sync_rois.isChecked():
-                # Don't sync point ROIs if they are part of point counter (they are too many)
-                if roi.roi_type == "point":
-                    return
-                # Convert ROI points to annotation points
-                points = [(p.x(), p.y()) for p in roi.points]
-                if not points and roi.line_points:
-                    p1, p2 = roi.line_points
-                    points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
-                
-                # Map ROI types to annotation types
-                ann_type = 'roi_ref'
-                if roi.roi_type == 'rectangle': ann_type = 'rect'
-                elif roi.roi_type == 'ellipse': ann_type = 'ellipse'
-                elif roi.roi_type == 'line_scan' or roi.roi_type == 'line': ann_type = 'line'
-                elif roi.roi_type == 'polygon': ann_type = 'polygon'
-                elif roi.roi_type == 'arrow': ann_type = 'arrow'
-                elif roi.roi_type == 'point': ann_type = 'circle'
-                elif roi.roi_type == 'circle': ann_type = 'circle'
-                
-                # Special handling for points
-                if roi.roi_type == 'point' and len(points) == 1:
-                    p1 = points[0]
-                    points = [p1, (p1[0] + 5, p1[1] + 5)]
-                
-                ann = GraphicAnnotation(
-                    id=f"ann_{roi.id}",
-                    type=ann_type,
-                    points=points,
-                    color=roi.color.name(),
-                    thickness=2,
-                    roi_id=roi.id
-                )
-                ann.roi = roi
-                
-                if hasattr(roi, 'properties'):
-                    ann.properties.update(roi.properties)
-                
-                self.session.annotations.append(ann)
-                self.annotation_panel.update_annotation_list()
-                self.multi_view.set_annotations(self.session.annotations)
-                Logger.debug(f"[Main.on_roi_added] ROI synced to annotation successfully")
-                
-        except Exception as e:
-            Logger.error(f"[Main.on_roi_added] Error processing ROI addition: {e}")
-            import traceback
-            Logger.error(traceback.format_exc())
-        
-        Logger.debug(f"[Main.on_roi_added] EXIT")
+        """Handle new ROI addition."""
+        Logger.debug(f"[Main.on_roi_added] ROI added: {roi.label}")
         
     def on_roi_removed(self, roi_id):
-        """Remove linked annotation if ROI is removed."""
-        self.session.annotations = [a for a in self.session.annotations if a.roi_id != roi_id]
-        self.annotation_panel.update_annotation_list()
-        self.multi_view.update_all_previews()
+        """Handle ROI removal."""
+        Logger.debug(f"[Main.on_roi_removed] ROI removed: {roi_id}")
 
     def on_roi_updated(self, roi_or_id):
-        """Update linked annotation if ROI is updated."""
-        # 修复：区分传入的是对象还是 ID 字符串
-        if isinstance(roi_or_id, str):
-            roi_id = roi_or_id
-            roi = self.session.roi_manager.get_roi(roi_id)
-            if not roi:
-                return # 没找到，忽略
-        else:
-            roi = roi_or_id # 假设它是对象
-            
-        if getattr(self, '_suppress_roi_annotation_sync', False):
-             return
-             
-        for ann in self.session.annotations:
-            if ann.roi_id == roi.id:
-                # 【核心修复】确保内存引用始终有效
-                ann.roi = roi 
-                
-                # Update geometry
-                # 修复循环更新：检查坐标误差
-                new_points = [(p.x(), p.y()) for p in roi.points]
-                if not new_points and roi.line_points:
-                    p1, p2 = roi.line_points
-                    new_points = [(p1.x(), p1.y()), (p2.x(), p2.y())]
-                
-                # 计算差异
-                has_changed = False
-                if len(ann.points) != len(new_points):
-                    has_changed = True
-                else:
-                    for p1, p2 in zip(ann.points, new_points):
-                        if abs(p1[0] - p2[0]) > 0.1 or abs(p1[1] - p2[1]) > 0.1:
-                            has_changed = True
-                            break
-                
-                if not has_changed:
-                    # 坐标未变，无需触发后续更新循环
-                    continue
-                    
-                ann.points = new_points
-                
-                # Update color
-                ann.color = roi.color.name()
-                
-                # Update type if it changed (e.g. from generic to specific)
-                ann_type = 'roi_ref'
-                if roi.roi_type == 'rectangle': ann_type = 'rect'
-                elif roi.roi_type == 'ellipse': ann_type = 'ellipse'
-                elif roi.roi_type == 'line_scan' or roi.roi_type == 'line': ann_type = 'line'
-                elif roi.roi_type == 'polygon': ann_type = 'polygon'
-                elif roi.roi_type == 'arrow': ann_type = 'arrow' # Support arrow
-                elif roi.roi_type == 'point': ann_type = 'circle'
-                elif roi.roi_type == 'circle': ann_type = 'circle'
-                ann.type = ann_type
-                
-                # Special handling for points
-                if roi.roi_type == 'point' and len(ann.points) == 1:
-                    p1 = ann.points[0]
-                    ann.points = [p1, (p1[0] + 5, p1[1] + 5)]
-                
-                # Update properties
-                if hasattr(roi, 'properties'):
-                    ann.properties.update(roi.properties)
-                
-                self.annotation_panel.update_annotation_list()
-                # Optimized sync: Update single annotation instead of full reload
-                self.multi_view.sync_annotation(ann)
-                break
+        """Handle ROI updates."""
+        roi_id = roi_or_id if isinstance(roi_or_id, str) else roi_or_id.id
+        Logger.debug(f"[Main.on_roi_updated] ROI updated: {roi_id}")
+        
+        # Propagate to ALL view containers to keep them in sync
+        for container in self.view_containers:
+            if hasattr(container, '_on_roi_updated'):
+                container._on_roi_updated(roi_or_id)
 
     def on_roi_selection_changed(self):
         """
@@ -1125,6 +1119,21 @@ class MainWindow(QMainWindow):
                     ch_name, metric = key.rsplit("_", 1)
                     display_data[f"Intersection ({ch_name})_{metric}"] = val
 
+            # Add "Only" stats for each ROI
+            area1_only_stats = result.get("area1_only_stats") or {}
+            for key, val in area1_only_stats.items():
+                if key in ["Area", "PixelCount"] or "_" not in key:
+                    continue
+                ch_name, metric = key.rsplit("_", 1)
+                display_data[f"{label_1}_Only ({ch_name})_{metric}"] = val
+
+            area2_only_stats = result.get("area2_only_stats") or {}
+            for key, val in area2_only_stats.items():
+                if key in ["Area", "PixelCount"] or "_" not in key:
+                    continue
+                ch_name, metric = key.rsplit("_", 1)
+                display_data[f"{label_2}_Only ({ch_name})_{metric}"] = val
+
             pair = sorted([str(roi1.id), str(roi2.id)])
             entry_id = f"overlap_{pair[0]}_{pair[1]}"
             self.result_widget.add_overlap_entry(sample_name, roi1.id, entry_id, display_data)
@@ -1134,103 +1143,24 @@ class MainWindow(QMainWindow):
             Logger.error(f"[Main] Overlap analysis failed: sample={sample_name} roi1={roi1.id} roi2={roi2.id} err={e}")
 
     def on_annotation_modified(self, update_data):
-        """Handles updates from direct interaction with annotation items."""
-        ann_id = update_data.get('id')
-        new_points = update_data.get('points')
-        
-        # DEBUG: Track modification
-        # print(f"DEBUG: [Main] on_annotation_modified id={ann_id}")
+        """Deprecated."""
+        pass
 
-        found = False
-        for ann in self.session.annotations:
-            if ann.id == ann_id:
-                found = True
-                if new_points:
-                    # print(f"DEBUG: [Main] Updating Annotation {ann_id} points: {ann.points} -> {new_points}")
-                    Logger.info(f"Updated Annotation {ann.id} points: {ann.points} -> {new_points}")
-                    ann.points = new_points
-                    # print(f"DEBUG: [Main] Persisted annotation move for {ann.id}. New points: {ann.points}")
-                
-                # If we had properties to update
-                if 'properties' in update_data:
-                    ann.properties.update(update_data['properties'])
-                
-                # Update dragging state for performance optimization
-                ann.is_dragging = update_data.get('is_dragging', False)
-                    
-                # If linked to ROI, should we update ROI?
-                # Ideally yes, but ROI model is strict about shape.
-                # If we moved an 'roi_ref' annotation, we should update the ROI.
-                if ann.roi_id and self.session.roi_manager:
-                    # Sync back to ROI
-                    # We need to map annotation points back to ROI points.
-                    # Since Scene Coordinates are Full Resolution, and ROI expects Full Resolution,
-                    # we can use them directly (as QPointF).
-                    
-                    try:
-                        roi = self.session.roi_manager.get_roi(ann.roi_id)
-                        if roi:
-                            # print(f"DEBUG: Syncing Annotation {ann.id} back to ROI {roi.id}")
-                            
-                            # Convert tuples back to QPointF
-                            qpoints = [QPointF(p[0], p[1]) for p in ann.points]
-                            
-                            # Update ROI geometry
-                            # Note: roi.reconstruct_from_points handles type-specific logic (e.g. line_scan vs polygon)
-                            # But we need to pass the correct type if we want to enforce it.
-                            # Usually roi.roi_type is already set.
-                            roi.reconstruct_from_points(qpoints)
-                            
-                            # IMPORTANT: We must update the manager to trigger signals?
-                            # Or just update the object?
-                            # Ideally, calling roi_manager.update_roi(roi) is best.
-                            # But update_roi might trigger on_roi_updated which triggers on_annotation_modified... LOOP?
-                            
-                            # Let's check canvas_view._on_roi_updated.
-                            # It checks 'is_dragging'.
-                            # But here we are DRAGGING the ANNOTATION item. The ROI item is hidden (due to our previous fix).
-                            # So ROI item won't be dragging.
-                            
-                            # If we trigger update_roi -> on_roi_updated -> updates ROI item path.
-                            # And on_roi_updated -> updates annotation (in main.py)?
-                            # Yes, main.py has on_roi_updated which updates annotation points.
-                            
-                            # We need to suppress the loop.
-                            # We can set a flag on main_window?
-                            self._suppress_roi_annotation_sync = True
-                            self.session.roi_manager.roi_updated.emit(roi)
-                            self._suppress_roi_annotation_sync = False
-                            
-                    except Exception as e:
-                        print(f"ERROR: Failed to sync Annotation back to ROI: {e}")
-                
-                self.annotation_panel.update_annotation_list()
-                
-                # Sync changes to all views (efficiently)
-                if hasattr(self.multi_view, 'sync_annotation'):
-                    self.multi_view.sync_annotation(ann)
-                else:
-                    self.multi_view.set_annotations(self.session.annotations)
-                
-                break
-        
     def on_clear_annotations(self):
-        """Clears all graphic annotations."""
+        """Clears all ROIs (Unified Model)."""
         from PySide6.QtWidgets import QMessageBox
-        if not self.session.annotations:
+        
+        rois = self.session.roi_manager.get_all_rois()
+        if not rois:
             return
-            
+
         ret = QMessageBox.question(
-            self, tr("Clear Annotations"),
-            tr("Are you sure you want to clear all graphic annotations?"),
+            self, tr("Clear ROIs"),
+            tr("Are you sure you want to clear all ROIs/Annotations?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
         if ret == QMessageBox.StandardButton.Yes:
-            self.session.annotations = []
-            self.annotation_panel.update_annotation_list()
-            self.multi_view.set_annotations([]) # Force clear in view
-            # Also clear previews if needed? set_annotations([]) handles it.
+            self.session.roi_manager.clear()
 
     def create_actions(self):
         """Initialize all actions with icons, shortcuts, and status tips."""
@@ -1449,6 +1379,12 @@ class MainWindow(QMainWindow):
         self.action_export_settings.setIcon(get_icon("export_settings", "preferences-system"))
         self.action_export_settings.triggered.connect(self.open_export_settings)
 
+        self.action_refresh = QAction(tr("Refresh Display"), self)
+        self.action_refresh.setShortcut("F5")
+        self.action_refresh.setStatusTip(tr("Force a re-render of all views"))
+        self.action_refresh.setIcon(get_icon("refresh", "view-refresh"))
+        self.action_refresh.triggered.connect(lambda: self.refresh_display())
+
         # View Actions
         self.action_toggle_sidebar = self.sample_dock.toggleViewAction()
         self.action_toggle_sidebar.setShortcut("Ctrl+B")
@@ -1463,6 +1399,33 @@ class MainWindow(QMainWindow):
         self.action_toggle_theme.setStatusTip(tr("Toggle between Dark and Light UI themes"))
         self.action_toggle_theme.setIcon(get_icon("theme", "preferences-desktop-theme"))
         self.action_toggle_theme.triggered.connect(self.toggle_theme)
+
+        self.action_fit_width = QAction(tr("Fit Width"), self)
+        self.action_fit_width.setStatusTip(tr("Zoom to fit image width to viewport"))
+        self.action_fit_width.setIcon(get_icon("fit_width", "zoom-fit-width"))
+        self.action_fit_width.triggered.connect(self.on_fit_to_width)
+
+        self.action_fit_height = QAction(tr("Fit Height"), self)
+        self.action_fit_height.setStatusTip(tr("Zoom to fit image height to viewport"))
+        self.action_fit_height.setIcon(get_icon("fit_height", "zoom-fit-height"))
+        self.action_fit_height.triggered.connect(self.on_fit_to_height)
+
+        # View Mode Actions
+        self.view_mode_group = QActionGroup(self)
+        self.view_mode_group.setExclusive(True)
+
+        self.action_grid_view = QAction(tr("Grid View"), self)
+        self.action_grid_view.setCheckable(True)
+        self.action_grid_view.setChecked(True)
+        self.action_grid_view.setIcon(get_icon("grid", "view-grid"))
+        self.action_grid_view.triggered.connect(lambda: self.switch_view_mode("grid"))
+        self.view_mode_group.addAction(self.action_grid_view)
+
+        self.action_filmstrip_view = QAction(tr("Filmstrip View"), self)
+        self.action_filmstrip_view.setCheckable(True)
+        self.action_filmstrip_view.setIcon(get_icon("filmstrip", "view-filmstrip"))
+        self.action_filmstrip_view.triggered.connect(lambda: self.switch_view_mode("filmstrip"))
+        self.view_mode_group.addAction(self.action_filmstrip_view)
 
         # Help Actions
         self.action_about = QAction(tr("About FluoQuant Pro"), self)
@@ -1485,59 +1448,61 @@ class MainWindow(QMainWindow):
         # Shortcuts changed to Ctrl+F1 to avoid conflict with Manual (standard F1)
         self.action_shortcuts.setShortcut("Ctrl+F1")
 
-    def on_fixed_size_toggled(self, checked):
-        """Callback for ROI fixed size checkbox."""
-        if hasattr(self, 'rect_tool'):
-            self.rect_tool.set_fixed_size_mode(checked)
-            # Update toolbox inputs enabled state
-            self.roi_toolbox.spin_width.setEnabled(checked)
-            self.roi_toolbox.spin_height.setEnabled(checked)
+    def get_active_view_container(self):
+        """Returns the currently visible view container (MultiView or Filmstrip)."""
+        return self.view_stack.currentWidget()
 
-    def _on_prev_tab_clicked(self):
-        """Switch to previous tab."""
-        count = self.control_tabs.count()
-        if count > 0:
-            current = self.control_tabs.currentIndex()
-            # Wrap around or stop? Standard is wrap.
-            new_idx = (current - 1) % count
-            self.control_tabs.setCurrentIndex(new_idx)
+    def get_active_canvas_view(self):
+        """Returns the currently active CanvasView for interaction."""
+        container = self.get_active_view_container()
+        if container and hasattr(container, 'get_active_view'):
+            return container.get_active_view()
+        return None
 
-    def _on_next_tab_clicked(self):
-        """Switch to next tab."""
-        count = self.control_tabs.count()
-        if count > 0:
-            current = self.control_tabs.currentIndex()
-            new_idx = (current + 1) % count
-            self.control_tabs.setCurrentIndex(new_idx)
+    def switch_view_mode(self, mode):
+        """Switches between Grid View and Filmstrip View."""
+        if mode == "grid":
+            self.view_stack.setCurrentWidget(self.multi_view)
+            self.action_grid_view.setChecked(True)
+        else:
+            self.view_stack.setCurrentWidget(self.filmstrip_view)
+            self.action_filmstrip_view.setChecked(True)
+            # Ensure filmstrip is initialized/rendered
+            if self.session.channels:
+                self.initialize_all_views()
+                self.update_all_view_containers()
+
+    def on_filmstrip_channel_selected(self, index):
+        """DEPRECATED: Use on_channel_selected instead."""
+        self.on_channel_selected(index)
 
     def on_tab_changed(self, index):
         """Handle tab switching events."""
-        tab_text = self.control_tabs.tabText(index)
-        
-        # Trigger lazy loading for Enhance Panel
-        current_widget = self.control_tabs.widget(index)
-        if current_widget == self.enhance_panel:
-            self.enhance_panel.on_panel_shown()
+        self._is_switching_tab = True
+        try:
+            tab_text = self.control_tabs.tabText(index)
             
-        # If switching AWAY from Toolbox, default to Hand/Pan tool
-        if tab_text != tr("Toolbox"):
-            # Check if current tool is a TextTool OR if we are in hijacked annotation mode
-            is_annotation = isinstance(self.multi_view.current_tool, TextTool) or (getattr(self, 'pending_annotation_mode', None) is not None)
+            # Trigger lazy loading for Enhance Panel
+            current_widget = self.control_tabs.widget(index)
+            if current_widget == self.enhance_panel:
+                self.enhance_panel.on_panel_shown()
+                
+            # If switching AWAY from Toolbox, maybe we want to default to Hand/Pan tool?
+            # --- USER REQUEST: No longer automatically switch to Pan tool when switching tabs ---
+            # This prevents "jumping back" and allows using tools while adjusting settings in other tabs.
+            """
+            if tab_text != tr("Toolbox"):
+                ...
+            """
+            pass
             
-            # If we are in Annotation Mode, DO NOT switch to Pan tool.
-            # Only switch if we are in a regular ROI tool mode.
-            if not is_annotation and self.multi_view.current_tool is not None:
-                # Trigger Pan action (which is a toggle, so if it's not checked, check it)
-                if hasattr(self, 'action_pan'):
-                    self.action_pan.setChecked(True) 
-                    if self.action_pan.isChecked():
-                        self.multi_view.set_tool(None)
-        
-        # If switching TO Overlay (Annotation) tab, ensure we don't accidentally clear tool
-        # unless it was an ROI tool.
-        if tab_text == tr("Annotation"):
-             # Maybe we want to keep the current annotation tool active?
-             pass
+            # If switching TO Overlay (Annotation) tab, ensure we don't accidentally clear tool
+            # unless it was an ROI tool.
+            if tab_text == tr("Annotation"):
+                 # Maybe we want to keep the current annotation tool active?
+                 pass
+        finally:
+            self._is_switching_tab = False
                         
     def setup_menu(self):
         menu_bar = self.menuBar()
@@ -1578,7 +1543,16 @@ class MainWindow(QMainWindow):
         self.menu_view.addAction(self.action_toggle_sidebar)
         self.menu_view.addAction(self.action_toggle_controls)
         self.menu_view.addSeparator()
+        self.menu_view.addAction(self.action_fit_width)
+        self.menu_view.addAction(self.action_fit_height)
+        self.menu_view.addSeparator()
         self.menu_view.addAction(self.action_toggle_theme)
+        
+        self.menu_view.addSeparator()
+        self.menu_view.addAction(self.action_refresh)
+        self.menu_view.addSeparator()
+        self.menu_view.addAction(self.action_grid_view)
+        self.menu_view.addAction(self.action_filmstrip_view)
         
         # Analysis Menu
         self.menu_analysis = menu_bar.addMenu(tr("Analysis"))
@@ -1627,6 +1601,19 @@ class MainWindow(QMainWindow):
         btn_redo.setFixedSize(28, 28)
         menu_actions_layout.addWidget(btn_redo)
         
+        # Fit Width (Refresh) Button
+        self.btn_fit = QToolButton()
+        self.btn_fit.setObjectName("fit_btn")
+        # Connect to a custom lambda to both refresh display and fit width
+        self.btn_fit.clicked.connect(lambda: (self.refresh_display(), self.on_fit_to_width()))
+        self.btn_fit.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_fit.setIconSize(QSize(20, 20))
+        self.btn_fit.setFixedSize(28, 28)
+        self.btn_fit.setToolTip(tr("Refresh Display and Fit Width"))
+        # Change icon to a refresh/reload style if available, otherwise use fit_width
+        self.btn_fit.setIcon(get_icon("refresh", "view-refresh")) 
+        menu_actions_layout.addWidget(self.btn_fit)
+        
         # Export Button (Requested by User)
         btn_export = QToolButton()
         btn_export.setObjectName("export_btn")
@@ -1661,6 +1648,23 @@ class MainWindow(QMainWindow):
         btn_settings.setIconSize(QSize(20, 20))
         btn_settings.setFixedSize(28, 28)
         menu_actions_layout.addWidget(btn_settings)
+
+        # View Mode Toggle Group
+        menu_actions_layout.addSpacing(10)
+        
+        btn_grid = QToolButton()
+        btn_grid.setDefaultAction(self.action_grid_view)
+        btn_grid.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        btn_grid.setIconSize(QSize(20, 20))
+        btn_grid.setFixedSize(28, 28)
+        menu_actions_layout.addWidget(btn_grid)
+        
+        btn_filmstrip = QToolButton()
+        btn_filmstrip.setDefaultAction(self.action_filmstrip_view)
+        btn_filmstrip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        btn_filmstrip.setIconSize(QSize(20, 20))
+        btn_filmstrip.setFixedSize(28, 28)
+        menu_actions_layout.addWidget(btn_filmstrip)
 
         # Add to MenuBar as a Corner Widget (Right side)
         menu_bar.setCornerWidget(self.menu_actions_widget, Qt.Corner.TopRightCorner)
@@ -1732,7 +1736,7 @@ class MainWindow(QMainWindow):
                 self.session.scale_bar_settings.pixel_size = new_pixel_size
                 self.lbl_status.setText(tr("Scale set to {0:.4f} um/px").format(new_pixel_size))
                 # Refresh views (scale bar)
-                self.multi_view.update_all_previews()
+                self.update_all_scale_bars(self.session.scale_bar_settings)
 
     def open_auto_save_settings(self):
         """Opens the Auto Save configuration dialog."""
@@ -1741,688 +1745,57 @@ class MainWindow(QMainWindow):
             self.setup_auto_save()
 
     def apply_stylesheet(self):
-        """Applies a professional theme (Dark or Light) with high interactivity."""
-        theme = self.settings.value("ui_theme", "light")
+        """Sets the application stylesheet based on the current theme."""
+        ThemeManager.instance().apply_theme(self)
+
+    def on_theme_changed(self, new_theme):
+        """Callback when theme is changed via settings or toggle."""
+        # Refresh all icons to match new theme colors
+        self.refresh_icons()
         
-        # Clear icon cache to force regeneration with new theme colors
-        IconManager._cache.clear()
+        # 额外刷新各个面板的图标
+        if hasattr(self, 'roi_toolbox') and self.roi_toolbox:
+            self.roi_toolbox.refresh_icons()
+        if hasattr(self, 'annotation_panel') and self.annotation_panel:
+            self.annotation_panel.refresh_icons()
+        if hasattr(self, 'adjustment_panel') and self.adjustment_panel:
+            self.adjustment_panel.refresh_icons()
+        if hasattr(self, 'enhance_panel') and self.enhance_panel:
+            self.enhance_panel.refresh_icons()
         
-        if theme == "dark":
-            bg_color = "#2b2b2b"
-            text_color = "#dcdcdc"
-            header_bg = "#333333"
-            header_text = "#dcdcdc"
-            toolbar_bg = "#333333"
-            border_color = "#1a1a1a"
-            item_hover = "#444444"
-            input_bg = "#1e1e1e"
-            group_border = "#555555"
-            accent_color = "#4a90e2"
-            tab_bg = "#333333"
-            tab_selected = "#2b2b2b"
-            button_bg = "#3c3c3c"
-            button_hover = "#505050"
-        else:
-            # PPT / Office Style Light Theme
-            bg_color = "#f3f3f3"
-            text_color = "#202020"
-            accent_color = "#C43E1C" # PowerPoint Orange/Red
-            header_bg = "#E0E0E0" # Grey Header (User Request)
-            header_text = "#333333"
-            toolbar_bg = "#ffffff"
-            border_color = "#d0d0d0"
-            item_hover = "#e6e6e6"
-            input_bg = "#ffffff"
-            group_border = "#c0c0c0"
-            tab_bg = "#f0f0f0"
-            tab_selected = "#ffffff"
-            button_bg = "#ffffff"
-            button_hover = "#fdfdfd"
+        # Update status bar
+        theme_display_names = ThemeManager.instance().THEMES
+        self.lbl_status.setText(tr("Theme switched to {0}").format(theme_display_names.get(new_theme, new_theme)))
 
-        # Update application palette for system-aware widgets and IconManager
-        palette = QApplication.palette()
-        palette.setColor(palette.ColorGroup.All, palette.ColorRole.Window, QColor(bg_color))
-        palette.setColor(palette.ColorGroup.All, palette.ColorRole.WindowText, QColor(text_color))
-        palette.setColor(palette.ColorGroup.All, palette.ColorRole.Base, QColor(input_bg))
-        palette.setColor(palette.ColorGroup.All, palette.ColorRole.Text, QColor(text_color))
-        palette.setColor(palette.ColorGroup.All, palette.ColorRole.Button, QColor(header_bg))
-        palette.setColor(palette.ColorGroup.All, palette.ColorRole.ButtonText, QColor(header_text))
-        palette.setColor(palette.ColorGroup.All, palette.ColorRole.Highlight, QColor(accent_color))
-        QApplication.setPalette(palette)
-
-        qss = f"""
-        /* Main Window and General */
-        QMainWindow, QDialog, QWidget {{{{
-            background-color: {bg_color};
-            color: {text_color};
-            font-family: "Segoe UI", "Roboto", "Helvetica Neue", sans-serif;
-        }}}}
+    def refresh_icons(self):
+        """Re-sets icons for all major buttons to match the current theme."""
+        # Update Main Toolbar/Actions
+        self.action_undo.setIcon(get_icon("undo"))
+        self.action_redo.setIcon(get_icon("redo"))
+        self.action_fit_width.setIcon(get_icon("fit-width"))
+        self.action_export_images.setIcon(get_icon("export"))
+        self.action_save_project.setIcon(get_icon("save"))
+        self.action_toggle_theme.setIcon(get_icon("theme"))
+        self.action_settings.setIcon(get_icon("settings"))
         
-        /* Modern Border for Main Window */
-        QMainWindow {{{{
-            border: 1px solid {border_color};
-        }}}}
+        if hasattr(self, 'btn_fit'):
+            self.btn_fit.setIcon(get_icon("refresh", "view-refresh"))
         
-        QLabel {{{{
-            background-color: transparent; /* Remove background shading from text */
-        }}}}
+        # Update other icons if necessary...
+        # Note: retranslate_ui also sets some text, but refresh_icons focuses on colors.
         
-        /* Menu Bar */
-        QMenuBar {{{{
-            background-color: {header_bg};
-            color: {header_text};
-            border-bottom: none;
-            padding: 4px;
-        }}}}
-        QMenuBar::item {{{{
-            background-color: transparent;
-            padding: 6px 12px;
-            border-radius: 4px;
-            color: {header_text};
-        }}}}
-        QMenuBar::item:selected {{{{
-            background-color: rgba(255, 255, 255, 0.2);
-            color: {header_text};
-        }}}}
-        QMenuBar::item:pressed {{{{
-            background-color: rgba(0, 0, 0, 0.1);
-            color: {header_text};
-        }}}}
-
-        /* Menu dropdown */
-        QMenu {{{{
-            background-color: {bg_color};
-            border: 1px solid {border_color};
-            padding: 4px;
-        }}}}
-        QMenu::item {{{{
-            padding: 6px 28px 6px 28px;
-            border-radius: 4px;
-            color: {text_color};
-        }}}}
-        QMenu::item:selected {{{{
-            background-color: {accent_color};
-            color: white;
-        }}}}
-        QMenu::separator {{{{
-            height: 1px;
-            background-color: {border_color};
-            margin: 4px 8px;
-        }}}}
-        QMenu::icon {{{{
-            padding-left: 10px;
-        }}}}
-        
-        /* ToolBar */
-        QToolBar {{{{
-            background-color: {toolbar_bg};
-            border-bottom: 1px solid {border_color};
-            border-right: 1px solid {border_color};
-            spacing: 8px;
-            padding: 4px;
-        }}}}
-        QToolBar QToolButton {{{{
-            background-color: transparent;
-            border: 1px solid transparent;
-            border-radius: 4px;
-            width: 28px;
-            height: 28px;
-            padding: 0px;
-            color: {text_color};
-        }}}}
-        QToolBar QToolButton:hover {{{{
-            background-color: {item_hover};
-            border: 1px solid {accent_color};
-        }}}}
-        QToolBar QToolButton:checked {{{{
-            background-color: {accent_color};
-            border: 1px solid {accent_color};
-            color: white;
-        }}}}
-        QToolBar QToolButton:pressed {{{{
-            background-color: {border_color};
-        }}}}
-        
-        /* Dock Widgets */
-        QDockWidget {{{{
-            color: {text_color};
-            font-weight: bold;
-            border: none;
-        }}}}
-        QDockWidget::title {{{{
-            background-color: {bg_color};
-            padding: 6px 8px;
-            text-align: left;
-            border-bottom: 1px solid {border_color};
-            color: {accent_color}; /* Brand color for dock titles */
-        }}}}
-        
-        /* Splitter */
-        QSplitter::handle {{{{
-            background-color: {border_color};
-            margin: 1px;
-        }}}}
-        QSplitter::handle:horizontal {{{{ width: 1px; }}}}
-        QSplitter::handle:vertical {{{{ height: 1px; }}}}
-        QSplitter::handle:hover {{{{ background-color: {accent_color}; }}}}
-
-        /* Tool Buttons (General) */
-        QToolButton {{{{
-            background-color: {button_bg};
-            border: 1px solid {group_border};
-            border-radius: 4px;
-            width: 28px;
-            height: 28px;
-            padding: 0px;
-            margin: 1px;
-            color: {text_color};
-        }}}}
-        QToolButton:hover {{{{
-            background-color: {button_hover};
-            border: 1px solid {accent_color};
-        }}}}
-        QToolButton:pressed {{{{
-            background-color: {border_color};
-        }}}}
-        QToolButton:checked {{{{
-            background-color: {accent_color};
-            color: white;
-            border: 1px solid {accent_color};
-        }}}}
-        QToolButton:disabled {{{{
-            opacity: 0.3;
-        }}}}
-        
-        /* Specific Tool Button IDs for corner actions - Cleaner look */
-        #undo_btn, #redo_btn, #save_btn, #settings_btn, #theme_btn, #action_btn {{{{
-            border: none;
-            padding: 4px;
-            background: transparent;
-            min-width: 28px;
-            min-height: 28px;
-            border-radius: 4px;
-        }}}}
-        #undo_btn:hover, #redo_btn:hover, #save_btn:hover, #settings_btn:hover, #theme_btn:hover, #action_btn:hover {{{{
-            background-color: {item_hover};
-        }}}}
-        
-        /* Specialized Hero/Action Button (High Emphasis) */
-        QPushButton#action_btn {{{{
-            background-color: {accent_color};
-            color: white;
-            border: 1px solid {accent_color};
-            border-radius: 4px;
-            padding: 6px 16px;
-            font-weight: bold;
-        }}}}
-        QPushButton#action_btn:hover {{{{
-            background-color: {accent_color};
-            border: 1px solid {accent_color};
-            opacity: 0.85;
-        }}}}
-        QPushButton#action_btn:pressed {{{{
-            background-color: {border_color};
-        }}}}
-        QPushButton#action_btn:disabled {{{{
-            background-color: {border_color};
-            color: {group_border};
-            border: 1px solid {border_color};
-        }}}}
-        
-        /* Tab Widget */
-        QTabWidget::pane {{{{
-            border: 1px solid {border_color};
-            background-color: {bg_color};
-            border-radius: 4px;
-            top: -1px;
-        }}}}
-        QTabBar::tab {{{{
-            background-color: {tab_bg};
-            color: {text_color};
-            padding: 8px 16px;
-            border: 1px solid {border_color};
-            border-bottom: none;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            margin-right: 2px;
-        }}}}
-        QTabBar::tab:selected {{{{
-            background-color: {bg_color};
-            border-bottom: 2px solid {accent_color};
-            font-weight: bold;
-            color: {accent_color};
-        }}}}
-        QTabBar::tab:hover:!selected {{{{
-            background-color: {item_hover};
-        }}}}
-        /* Hide default scroll buttons */
-        QTabBar::scroller {{{{
-            width: 0px;
-            height: 0px;
-        }}}}
-
-        /* Tooltip */
-        QToolTip {{{{
-            background-color: {bg_color};
-            color: {text_color};
-            border: 1px solid {accent_color};
-            padding: 4px;
-            border-radius: 4px;
-        }}}}
-
-        /* Tree and List Widgets */
-        QTreeWidget, QListWidget {{{{
-            background-color: {input_bg};
-            border: 1px solid {border_color};
-            border-radius: 4px;
-            outline: none;
-        }}}}
-        QTreeWidget::item, QListWidget::item {{{{
-            padding: 4px;
-            border: none;
-            color: {text_color};
-        }}}}
-        QTreeWidget::item:hover, QListWidget::item:hover {{{{
-            background-color: {item_hover};
-        }}}}
-        QTreeWidget::item:selected, QListWidget::item:selected {{{{
-            background-color: {accent_color};
-            color: white;
-        }}}}
-
-        /* ScrollBar - Minimalist */
-        QScrollBar:vertical {{{{
-            border: none;
-            background: {bg_color};
-            width: 10px;
-            margin: 0px;
-        }}}}
-        QScrollBar::handle:vertical {{{{
-            background: {group_border};
-            min-height: 20px;
-            border-radius: 5px;
-        }}}}
-        QScrollBar::handle:vertical:hover {{{{
-            background: {accent_color};
-        }}}}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{{{
-            height: 0px;
-        }}}}
-        QScrollBar:horizontal {{{{
-            border: none;
-            background: {bg_color};
-            height: 10px;
-            margin: 0px;
-        }}}}
-        QScrollBar::handle:horizontal {{{{
-            background: {group_border};
-            min-width: 20px;
-            border-radius: 5px;
-        }}}}
-        QScrollBar::handle:horizontal:hover {{{{
-            background: {accent_color};
-        }}}}
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{{{
-            width: 0px;
-        }}}}
-        
-        QFrame#menu_sep {{{{
-            background-color: {border_color};
-            margin: 6px 4px;
-            width: 1px;
-        }}}}
-
-        /* Input Fields */
-        QDoubleSpinBox, QSpinBox, QLineEdit, QComboBox, QPushButton {{{{
-            background-color: {input_bg};
-            border: 1px solid {group_border};
-            border-radius: 4px;
-            padding: 6px;
-            color: {text_color};
-        }}}}
-        QPushButton:hover {{{{
-            background-color: {button_hover};
-            border: 1px solid {accent_color};
-        }}}}
-        QPushButton:pressed {{{{
-            background-color: {border_color};
-        }}}}
-        QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus, QComboBox:focus, QPushButton:focus {{{{
-            border: 1px solid {accent_color};
-        }}}}
-        
-        /* Sliders */
-        QSlider::groove:horizontal {{{{
-            border: 1px solid {border_color};
-            height: 4px;
-            background: {group_border};
-            margin: 2px 0;
-            border-radius: 2px;
-        }}}}
-        QSlider::handle:horizontal {{{{
-            background: {accent_color};
-            border: 1px solid {accent_color};
-            width: 14px;
-            height: 14px;
-            margin: -6px 0;
-            border-radius: 7px;
-        }}}}
-
-        /* Group Boxes - Refined Style */
-        QGroupBox {{{{
-            border: 1px solid {group_border};
-            border-radius: 6px;
-            margin-top: 4px;
-            padding: 4px;
-            font-weight: normal;
-            color: {accent_color};
-            background-color: {bg_color};
-        }}}}
-        QGroupBox::title {{{{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            padding: 0 5px;
-            left: 6px;
-            font-size: 12px;
-            font-weight: normal;
-            background-color: {bg_color};
-        }}}}
-
-        /* Card Style for Panels */
-        QWidget#card, QWidget[role="card"] {{{{
-            background-color: {bg_color};
-            border: 1px solid {border_color};
-            border-radius: 8px;
-            padding: 10px;
-        }}}}
-
-        /* Label Roles */
-        QLabel[role="title"] {{{{
-            font-weight: bold;
-            font-size: 14px;
-            color: {accent_color};
-        }}}}
-        QLabel[role="subtitle"] {{{{
-            font-weight: bold;
-            font-size: 12px;
-            color: {text_color};
-            opacity: 0.8;
-        }}}}
-
-        /* Status Indicators */
-        QLabel[role="status"] {{{{
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-weight: bold;
-            background-color: {input_bg};
-            border: 1px solid {border_color};
-        }}}}
-        QLabel[role="success"] {{{{
-            color: #27ae60;
-            background-color: rgba(46, 204, 113, 0.15);
-            border: 1px solid #2ecc71;
-        }}}}
-        QLabel[role="warning"] {{{{
-            color: #e67e22;
-            background-color: rgba(230, 126, 34, 0.15);
-            border: 1px solid #e67e22;
-        }}}}
-        QLabel[role="error"] {{{{
-            color: #e74c3c;
-            background-color: rgba(231, 76, 60, 0.15);
-            border: 1px solid #e74c3c;
-        }}}}
-
-        /* Hero Buttons (Large Action Buttons) */
-        QPushButton[role="hero"] {{{{
-            background-color: {accent_color};
-            color: white;
-            border-radius: 8px;
-            padding: 12px 24px;
-            font-size: 15px;
-            font-weight: bold;
-            border: none;
-            min-width: 220px;
-        }}}}
-        QPushButton[role="hero"]:hover {{{{
-            background-color: {button_hover};
-            border: 1px solid {accent_color};
-        }}}}
-
-        /* Recent Projects List */
-        QListWidget[role="recent"] {{{{
-            background-color: transparent;
-            border: 1px solid {border_color};
-            border-radius: 4px;
-            color: {text_color};
-        }}}}
-        QListWidget[role="recent"]::item {{{{
-            padding: 8px;
-            border-bottom: 1px solid {border_color};
-        }}}}
-        QListWidget[role="recent"]::item:hover {{{{
-            background-color: {input_bg};
-            color: {accent_color};
-        }}}}
-
-        /* Loading Overlay */
-        QLabel[role="overlay"] {{{{
-            background-color: rgba(0, 0, 0, 180);
-            color: white;
-            font-size: 24px;
-            font-weight: bold;
-        }}}}
-        
-        /* Preview Overlay */
-        QLabel[role="preview"] {{{{
-            border: 2px solid {accent_color};
-            background-color: black;
-        }}}}
-        QPushButton[role="hero"]:pressed {{{{
-            background-color: {border_color};
-        }}}}
-
-        /* Tabs Style */
-        QTabWidget::pane {{{{
-            border: 1px solid {border_color};
-            background-color: {bg_color};
-            border-radius: 4px;
-        }}}}
-        QTabBar::tab {{{{
-            background: {input_bg};
-            border: 1px solid {border_color};
-            border-bottom-color: {border_color};
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            padding: 4px 10px;
-            min-width: 60px;
-            color: {text_color};
-        }}}}
-        QTabBar::tab:hover {{{{
-            background: {button_hover};
-        }}}}
-        QTabBar::tab:selected {{{{
-            background: {bg_color};
-            border-bottom-color: {bg_color};
-            font-weight: bold;
-            color: {accent_color};
-        }}}}
-
-        /* Tool Buttons */
-        QToolButton {{{{
-            border: 1px solid {border_color};
-            border-radius: 4px;
-            background-color: {input_bg};
-            padding: 2px;
-        }}}}
-        QToolButton:hover {{{{
-            background-color: {button_hover};
-            border: 1px solid {accent_color};
-        }}}}
-        QToolButton:pressed {{{{
-            background-color: {border_color};
-        }}}}
-        QToolButton#nav_btn {{{{
-            border: 1px solid {border_color};
-            border-radius: 4px;
-            background-color: {input_bg};
-            padding: 2px;
-        }}}}
-        QToolButton#nav_btn:hover {{{{
-            background-color: {button_hover};
-            border: 1px solid {accent_color};
-        }}}}
-
-        /* Splitter Style */
-        QSplitter::handle {{{{
-            background-color: {border_color};
-        }}}}
-
-        /* Label Roles */
-        QLabel[role="accent"] {{{{
-            color: {accent_color};
-            font-weight: bold;
-        }}}}
-        QLabel[role="description"] {{{{
-            color: {text_color};
-            opacity: 0.6;
-            font-size: 11px;
-            padding-left: 20px;
-        }}}}
-
-        /* Color Pickers / Color Indicator Buttons */
-        QPushButton[role="color_picker"], QToolButton[role="color_picker"] {{{{
-            border: 1px solid {border_color};
-            border-radius: 4px;
-            min-width: 20px;
-            min-height: 20px;
-            max-width: 20px;
-            max-height: 20px;
-        }}}}
-        QPushButton[role="color_picker"]:hover, QToolButton[role="color_picker"]:hover {{{{
-            border: 1px solid {accent_color};
-        }}}}
-        
-        /* Separator */
-        QFrame[frameShape="4"], QFrame[frameShape="5"] {{{{
-            color: {border_color};
-            background-color: {border_color};
-            max-height: 1px;
-            opacity: 0.3;
-        }}}}
-
-        /* Navigation Toolbar (Matplotlib) */
-        [class*="NavigationToolbar"] {{{{
-            background-color: transparent;
-            border: none;
-        }}}}
-
-        /* Tooltips */
-        QToolTip, PreviewPopup {{{{
-            background-color: {input_bg};
-            color: {text_color};
-            border: 1px solid {border_color};
-            padding: 4px;
-            border-radius: 4px;
-        }}}}
-
-        /* Tree Widget */
-        QTreeWidget {{{{
-            border: 1px solid {border_color};
-            background-color: {bg_color};
-            border-radius: 4px;
-        }}}}
-        QTreeWidget::item {{{{
-            padding: 4px;
-            border-bottom: 1px solid {group_border};
-        }}}}
-        QTreeWidget::item:selected {{{{
-            background-color: {button_hover};
-            color: {accent_color};
-        }}}}
-
-        /* Specific Tool Button Roles */
-        QToolButton[role="subtle"] {{{{
-            border: none;
-            background: transparent;
-            color: {text_color};
-            font-size: 11px;
-            padding: 2px 5px;
-            border-radius: 4px;
-        }}}}
-        QToolButton[role="subtle"]:hover {{{{
-            background-color: {button_hover};
-            color: {accent_color};
-        }}}}
-        QToolButton[role="accent"] {{{{
-            color: {accent_color};
-            font-weight: bold;
-        }}}}
-        QToolButton:checked {{{{
-            background-color: {accent_color};
-            color: white;
-            border: 1px solid {accent_color};
-        }}}}
-        """
-        self.setStyleSheet(qss)
-        if hasattr(self, 'menu_actions_widget'):
-            self.menu_actions_widget.setStyleSheet(qss)
-        self._last_titlebar_style = (header_bg, border_color, header_text)
-        if self.isVisible():
-            self._apply_windows_titlebar_style(header_bg, border_color, header_text)
-        else:
-            QTimer.singleShot(0, lambda: self._apply_windows_titlebar_style(header_bg, border_color, header_text))
-
     def showEvent(self, event):
         super().showEvent(event)
-        if self._last_titlebar_style:
-            header_bg, border_color, header_text = self._last_titlebar_style
-            QTimer.singleShot(0, lambda: self._apply_windows_titlebar_style(header_bg, border_color, header_text))
-
-    def _apply_windows_titlebar_style(self, caption_hex: str, border_hex: str, text_hex: str):
-        try:
-            if sys.platform != "win32":
-                return
-
-            hwnd = int(self.winId())
-
-            def to_colorref(hex_color: str) -> int:
-                s = (hex_color or "").strip()
-                if s.startswith("#"):
-                    s = s[1:]
-                if len(s) != 6:
-                    return 0
-                r = int(s[0:2], 16)
-                g = int(s[2:4], 16)
-                b = int(s[4:6], 16)
-                return (b << 16) | (g << 8) | r
-
-            dwmapi = ctypes.windll.dwmapi
-            set_attr = dwmapi.DwmSetWindowAttribute
-
-            DWMWA_BORDER_COLOR = 34
-            DWMWA_CAPTION_COLOR = 35
-            DWMWA_TEXT_COLOR = 36
-
-            caption = ctypes.c_uint(to_colorref(caption_hex))
-            border = ctypes.c_uint(to_colorref(border_hex))
-            text = ctypes.c_uint(to_colorref(text_hex))
-
-            set_attr(hwnd, DWMWA_CAPTION_COLOR, ctypes.byref(caption), ctypes.sizeof(caption))
-            set_attr(hwnd, DWMWA_BORDER_COLOR, ctypes.byref(border), ctypes.sizeof(border))
-            set_attr(hwnd, DWMWA_TEXT_COLOR, ctypes.byref(text), ctypes.sizeof(text))
-
-            Logger.debug(f"[Main] Windows titlebar styled: caption={caption_hex} border={border_hex} text={text_hex}")
-        except Exception as e:
-            Logger.debug(f"[Main] Windows titlebar styling skipped: {e}")
+        # Ensure titlebar style is applied after window is shown
+        theme = ThemeManager.instance()
+        if theme._last_titlebar_style:
+            header_bg, border_color, header_text = theme._last_titlebar_style
+            QTimer.singleShot(0, lambda: theme.apply_windows_titlebar_style(self, header_bg, border_color, header_text))
 
     def toggle_theme(self):
-        """Toggles between dark and light themes."""
-        current = self.settings.value("ui_theme", "dark")
-        new_theme = "light" if current == "dark" else "dark"
-        self.settings.setValue("ui_theme", new_theme)
-        self.apply_stylesheet()
-        self.lbl_status.setText(tr("Theme switched to {0}").format(new_theme.capitalize()))
+        """Toggles through all available UI themes."""
+        ThemeManager.instance().toggle_theme()
+
 
 
     def check_unsaved_changes(self) -> bool:
@@ -2442,10 +1815,79 @@ class MainWindow(QMainWindow):
                 return False
         return True
 
+    def show_recovery_dialog(self, duration):
+        """
+        Triggered when PerformanceMonitor detects a UI freeze > 500ms.
+        Offers the user options to optimize performance.
+        """
+        # USER REQUEST: Check suppression flag
+        if getattr(self.perf_monitor, 'suppress_warnings', False):
+            Logger.debug(f"[Performance] Freeze of {duration:.2f}s detected but suppressed by user.")
+            return
+
+        msg = f"System recovered from a {duration:.2f}s freeze."
+        Logger.warning(msg)
+        
+        if duration > 2.0:
+             # Severe freeze
+             msg_box = QMessageBox(self)
+             msg_box.setIcon(QMessageBox.Icon.Warning)
+             msg_box.setWindowTitle(tr("Performance Alert"))
+             msg_box.setText(tr("The application stopped responding for {0:.1f} seconds.\n\n"
+                                "Do you want to enable 'High Performance Mode' (reduces visual quality) "
+                                "to prevent further lags?").format(duration))
+             
+             msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+             msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+             
+             # USER REQUEST: Add "No longer pop up" toggle switch
+             container = QWidget()
+             layout = QHBoxLayout(container)
+             layout.setContentsMargins(10, 0, 10, 0)
+             lbl = QLabel(tr("Don't show again this session"))
+             cb = ToggleSwitch()
+             layout.addWidget(lbl)
+             layout.addStretch()
+             layout.addWidget(cb)
+             msg_box.layout().addWidget(container, msg_box.layout().rowCount(), 0, 1, msg_box.layout().columnCount())
+             
+             reply = msg_box.exec()
+             
+             if cb.isChecked():
+                 self.perf_monitor.suppress_warnings = True
+                 Logger.info("[Performance] User chose to suppress further warnings for this session.")
+             
+             if reply == QMessageBox.StandardButton.Yes:
+                 self.perf_monitor.optimize_for_speed()
+        else:
+            # Minor freeze - Auto-optimize silently or just log
+            # But user said "Pop up... when > 500ms"
+            # Maybe a small toast is better than a blocking box for 500ms lag.
+            self.lbl_status.setText(tr("Performance Warning: Lag detected ({0:.1f}s). Optimizing...").format(duration))
+            # Auto-optimize if not already
+            if self.perf_monitor.dynamic_quality:
+                self.perf_monitor.optimize_for_speed()
+
+    def on_performance_mode_changed(self, high_perf_mode):
+        if high_perf_mode:
+            self.lbl_status.setText(tr("High Performance Mode Enabled: Antialiasing Disabled."))
+        else:
+            self.lbl_status.setText(tr("High Quality Mode Restored."))
+        
+        # Optimization: Don't force a global refresh immediately if we just entered high-performance mode.
+        # This prevents a "lag -> optimize -> refresh -> more lag" loop.
+        # The next render (either from user action or auto-refresh) will use the new setting.
+        if not high_perf_mode:
+            self.refresh_display()
+
     def closeEvent(self, event):
         if not self.check_unsaved_changes():
             event.ignore()
         else:
+            # --- Stop Performance Monitor (Ensure Threads Exit) ---
+            from src.core.performance_monitor import PerformanceMonitor
+            PerformanceMonitor.instance().stop()
+            
             # --- Save UI State (Geometry, Docks, Splitters) ---
             settings = QSettings("FluoQuantPro", "Window")
             settings.setValue("geometry", self.saveGeometry())
@@ -2487,7 +1929,7 @@ class MainWindow(QMainWindow):
             
             self.sample_list.refresh_list()
             self.sample_list.refresh_pool_list()
-            self.multi_view.initialize_views()
+            self.initialize_all_views()
             self.result_widget.clear()
             
             # Set new template
@@ -2575,7 +2017,7 @@ class MainWindow(QMainWindow):
         """Updates all UI components after a project is loaded."""
         self.sample_list.refresh_list()
         self.sample_list.refresh_pool_list()
-        self.multi_view.initialize_views()
+        self.initialize_all_views()
         self.update_window_title()
 
     def handle_scene_deletion(self, scene_id):
@@ -2590,11 +2032,10 @@ class MainWindow(QMainWindow):
             Logger.info(f"[Main] Deleted active scene {scene_id}. Clearing views.")
             self.current_scene_id = None
             self.session.clear() # Clear session data
-            self.multi_view.initialize_views() # Re-init views (clears images)
-            
-            # Optionally, select the next available scene?
-            # SampleList might handle selection of next item, which triggers load_scene.
-            # But if no items left, we are clear.
+            self.initialize_all_views() # Re-init views (clears images)
+            self.lbl_status.setText(tr("Scene {0} deleted and view cleared.").format(scene_id))
+        else:
+            self.lbl_status.setText(tr("Scene {0} removed from project.").format(scene_id))
             
     def on_channel_cleared(self, scene_id, ch_index):
         """
@@ -2609,7 +2050,7 @@ class MainWindow(QMainWindow):
                 ch.is_placeholder = True
                 ch.stats = {}
                 self.session.data_changed.emit()
-                self.multi_view.update_view(ch_index)
+                self.update_all_view_containers(ch_index)
 
     def on_channel_removed(self, scene_id, ch_index):
         """
@@ -2626,18 +2067,21 @@ class MainWindow(QMainWindow):
             pname = os.path.basename(self.current_project_path)
             self.setWindowTitle(tr("FluoQuantPro - {0}").format(pname))
         else:
-            self.setWindowTitle("FluoQuantPro")
+            self.setWindowTitle(tr("FluoQuantPro"))
 
     def load_project(self, folder):
         """Internal helper to load a project folder."""
         if not folder or not os.path.exists(folder):
             return False
             
-        json_path = os.path.join(folder, "project.json")
+        json_path = os.path.join(folder, "project.fluo")
+        if not os.path.exists(json_path):
+            json_path = os.path.join(folder, "project.json") # Fallback
+            
         if not os.path.exists(json_path):
             # NEW LOGIC: Auto-initialize if missing (Restore "Open Folder -> Auto Read" workflow)
             reply = QMessageBox.question(self, tr("Initialize Project"), 
-                                         tr("No project.json found. Initialize new project and import images from this folder?"),
+                                         tr("No project file found. Initialize new project and import images from this folder?"),
                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             
             if reply == QMessageBox.StandardButton.Yes:
@@ -2676,7 +2120,7 @@ class MainWindow(QMainWindow):
             self.current_project_path = folder
             self.sample_list.refresh_list()
             self.sample_list.refresh_pool_list()
-            self.multi_view.initialize_views()
+            self.initialize_all_views()
             self.add_to_recent_projects(folder)
             self.lbl_status.setText(tr("Project Loaded: {0}").format(folder))
             self.update_window_title()
@@ -2721,10 +2165,10 @@ class MainWindow(QMainWindow):
         if not folder:
             return False
             
-        # Check for existing project.json
-        if os.path.exists(os.path.join(folder, "project.json")):
+        # Check for existing project file
+        if os.path.exists(os.path.join(folder, "project.fluo")) or os.path.exists(os.path.join(folder, "project.json")):
              res = QMessageBox.warning(self, tr("Existing Project"), 
-                                      tr("This folder already contains a project. Overwrite?"),
+                                      tr("This folder already contains a project file. Overwrite?"),
                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
              if res == QMessageBox.StandardButton.No:
                  return False
@@ -2732,18 +2176,43 @@ class MainWindow(QMainWindow):
         self.project_model.set_root_path(folder)
         return self.save_project()
 
-    def save_project(self) -> bool:
-        """Saves project structure and current scene state."""
+    def save_project(self, manual: bool = True) -> bool:
+        """
+        Saves project structure and current scene state.
+        
+        Args:
+            manual: If True (default), forces ROI persistence regardless of settings.
+                   If False (e.g. auto-save or save-on-close), respects user settings.
+        """
         if not self.project_model.root_path:
-            # If no root path (e.g. started without project), ask to save as new
             return self.save_project_as()
 
-        # 1. Capture Current Scene State
+        # 1. Determine if we should capture ROIs based on settings/manual flag
+        include_rois = True
+        if not manual:
+            settings = QSettings("FluoQuantPro", "AppSettings")
+            save_on_close = settings.value("roi/save_on_close", False, type=bool)
+            save_on_switch = settings.value("roi/save_on_switch", False, type=bool)
+            include_rois = save_on_close or save_on_switch
+
+        # 2. Capture Current Scene State (Update in-memory ProjectModel)
         if self.current_scene_id:
-            # Always sync current ROIs to ProjectModel memory first
-            # (ProjectModel.save_project will decide whether to write them to disk based on flag)
-            rois = self.session.roi_manager.serialize_rois()
-            
+            # If include_rois is False, we might want to preserve annotations anyway
+            # or just skip updating ROIs in memory for this save.
+            if include_rois:
+                rois = self.session.roi_manager.serialize_rois()
+            else:
+                # USER REQUEST: Persist only annotations even if measurement ROIs are not auto-saved
+                all_rois = self.session.roi_manager.get_all_rois()
+                annotation_types = ['arrow', 'text', 'line_scan', 'line', 'polygon', 'general', 'point', 'circle', 'rectangle', 'rect', 'ellipse', 'magic_wand']
+                persistent_rois = [r for r in all_rois if r.roi_type in annotation_types]
+                
+                from src.core.roi_model import RoiManager
+                temp_manager = RoiManager()
+                for r in persistent_rois:
+                    temp_manager.add_roi(r)
+                rois = temp_manager.serialize_rois()
+                
             # Get Display Settings
             display_settings = []
             for ch in self.session.channels:
@@ -2753,39 +2222,26 @@ class MainWindow(QMainWindow):
                     "max_val": s.max_val,
                     "gamma": s.gamma,
                     "visible": s.visible,
-                    "color": s.color
+                    "color": s.color,
+                    "enhance_percents": getattr(s, 'enhance_percents', {}),
+                    "enhance_params": getattr(s, 'enhance_params', {})
                 }
-                if hasattr(s, 'enhance_params'):
-                     pass # USER REQUEST: Do NOT save enhance params. Temporary only.
-                     # s_dict['enhance_params'] = s.enhance_params
                 display_settings.append(s_dict)
                 
-            annotations = self.session.serialize_annotations()
-            self.project_model.save_scene_state(self.current_scene_id, rois, display_settings, annotations=annotations)
+            # Update memory state
+            self.project_model.save_scene_state(self.current_scene_id, rois, display_settings)
         
-        # 2. Save to JSON
+        # 3. Save to JSON
         try:
-            # Check persistence setting for DISK storage
-            settings = QSettings("FluoQuantPro", "AppSettings")
-            save_on_close = settings.value("roi/save_on_close", False, type=bool)
-            
-            self.project_model.save_project(include_rois=save_on_close)
+            self.project_model.save_project()
             self.add_to_recent_projects(self.project_model.root_path)
-            self.lbl_status.setText(tr("Project Saved to {0}").format(self.project_model.root_path))
+            
+            if manual:
+                self.lbl_status.setText(tr("Project Saved to {0}").format(self.project_model.root_path))
             return True
         except Exception as e:
             QMessageBox.critical(self, tr("Error"), tr("Failed to save project: {0}").format(e))
             return False
-
-    def handle_scene_deletion(self, scene_id):
-        """Clears the view if the deleted scene was the current one."""
-        if self.current_scene_id == scene_id:
-            self.current_scene_id = None
-            self.session.clear()
-            self.multi_view.initialize_views()
-            self.lbl_status.setText(tr("Scene {0} deleted and view cleared.").format(scene_id))
-        else:
-            self.lbl_status.setText(tr("Scene {0} removed from project.").format(scene_id))
 
     def update_active_channel_color(self, scene_id, ch_index, new_color):
         """
@@ -2908,8 +2364,8 @@ class MainWindow(QMainWindow):
         
         # 4. Final Polish
         self.lbl_status.setText(tr("Assigned {0} to channel {1}").format(os.path.basename(file_path), channel_index + 1))
-        self.multi_view.flash_channel(channel_index)
-        self.multi_view.fit_views()
+        self.flash_view_channel(channel_index)
+        self.fit_all_views()
 
     def on_channel_file_assigned(self, scene_id, ch_index, file_path):
         """
@@ -2928,17 +2384,11 @@ class MainWindow(QMainWindow):
             # 1. Update Session channel info
             if 0 <= ch_index < len(self.session.channels):
                 try:
-                    # Load data
-                    data = None
-                    if file_path.lower().endswith(('.tif', '.tiff')):
-                        data = tifffile.imread(file_path)
-                    else:
-                        # data = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-                        # Fix for Unicode paths:
-                        data_stream = np.fromfile(file_path, dtype=np.uint8)
-                        data = cv2.imdecode(data_stream, cv2.IMREAD_UNCHANGED)
-                        
-                        if data is not None:
+                    # Use robust ImageLoader instead of raw imread
+                    from src.core.image_loader import ImageLoader
+                    data, is_rgb = ImageLoader.load_image(file_path)
+                    
+                    if data is not None:
                             if data.ndim == 3 and data.shape[2] == 3:
                                 data = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
                             elif data.ndim == 3 and data.shape[2] == 4:
@@ -2959,13 +2409,22 @@ class MainWindow(QMainWindow):
                         
                         from src.core.analysis import calculate_channel_stats
                         ch.stats = calculate_channel_stats(data)
-                        ch.reset_display_settings() 
+                        
+                        # INHERIT SETTINGS: Check if this file has existing settings in the project model pool
+                        pool_settings = self.project_model.pool_display_settings.get(os.path.normpath(file_path))
+                        if pool_settings:
+                            Logger.info(f"[Main] Inheriting display settings for {os.path.basename(file_path)}")
+                            ch.display_settings.min_val = pool_settings.get('min_val', ch.display_settings.min_val)
+                            ch.display_settings.max_val = pool_settings.get('max_val', ch.display_settings.max_val)
+                            ch.display_settings.gamma = pool_settings.get('gamma', ch.display_settings.gamma)
+                        else:
+                            ch.reset_display_settings() 
                         
                         Logger.info(f"[Main] Data loaded for channel {ch_index}. Triggering view update.")
                         self.session.data_changed.emit() 
                         
                         # Also refresh the view explicitly to ensure update
-                        self.multi_view.update_view(ch_index)
+                        self.update_all_view_containers(ch_index)
                         
                 except Exception as e:
                     Logger.error(f"[Main] Error reloading channel {ch_index}: {e}")
@@ -2988,36 +2447,10 @@ class MainWindow(QMainWindow):
         
         # --- Save Previous Scene State (In-Memory) ---
         if self.current_scene_id and self.current_scene_id != scene_id:
-            # Check ROI persistence settings
-            settings = QSettings("FluoQuantPro", "AppSettings")
-            save_rois_on_switch = settings.value("roi/save_on_switch", False, type=bool)
-            
-            if save_rois_on_switch:
-                rois = self.session.roi_manager.serialize_rois()
-            else:
-                # USER REQUEST: Best not to save previous ROIs (persist only annotations)
-                # We pass empty list for ROIs so they are cleared in the project model (or not saved)
-                rois = [] 
-                
-            annotations = self.session.serialize_annotations()
-            
-            # Get Display Settings
-            display_settings = []
-            for ch in self.session.channels:
-                s = ch.display_settings
-                s_dict = {
-                    "min_val": s.min_val,
-                    "max_val": s.max_val,
-                    "gamma": s.gamma,
-                    "visible": s.visible,
-                    "color": s.color
-                }
-                if hasattr(s, 'enhance_params'):
-                     pass # USER REQUEST: Do NOT save enhance params. Temporary only.
-                     # s_dict['enhance_params'] = s.enhance_params
-                display_settings.append(s_dict)
-                
-            self.project_model.save_scene_state(self.current_scene_id, rois, display_settings, annotations=annotations)
+            # We use save_project(manual=False) to handle persistence logic 
+            # (respecting settings like save_on_switch).
+            # This avoids redundant serialization code here.
+            self.save_project(manual=False)
         
         self.current_scene_id = scene_id
         
@@ -3027,10 +2460,16 @@ class MainWindow(QMainWindow):
              return
 
         self.session.clear()
+
+        # Auto-detect Mode (Must be set AFTER clear, as clear() resets it)
+        if len(scene_data.channels) == 1:
+            self.session.is_single_channel_mode = True
+        else:
+            self.session.is_single_channel_mode = False
         
         # Reset View (Empty)
-        self.multi_view.initialize_views()
-        self.multi_view.show_loading(tr("Loading {0}...").format(scene_id)) # Show overlay
+        self.initialize_all_views()
+        self.show_view_loading(tr("Loading {0}...").format(scene_id)) # Show overlay
         self.lbl_status.setText(tr("Loading scene: {0}...").format(scene_id))
         
         # Start Async Loader
@@ -3041,7 +2480,7 @@ class MainWindow(QMainWindow):
 
     def on_channel_loaded(self, scene_id, index, data_or_obj, ch_def):
         """Called when a single channel finishes loading in background."""
-        print(f"[{time.strftime('%H:%M:%S')}] UI: Received channel_loaded signal for index {index}")
+        Logger.info(f"[UI] Received channel_loaded signal for index {index}")
         if scene_id != self.current_scene_id:
             return # Ignore old signals
             
@@ -3065,39 +2504,39 @@ class MainWindow(QMainWindow):
                 ch.display_settings.color = ds.get("color", ch.display_settings.color)
                 
                 # Restore Enhance Params
-                # USER REQUEST: Do not restore enhance params from disk.
-                # Just ensure they are reset.
-                ch.display_settings.enhance_percents = {} 
-                ch.display_settings.enhance_params = {}
-                # print(f"[{time.strftime('%H:%M:%S')}] UI: Reset enhancements to OFF (Policy: No Persistence).")
+                ch.display_settings.enhance_percents = ds.get("enhance_percents", {})
+                ch.display_settings.enhance_params = ds.get("enhance_params", {})
+                
+                if ch.display_settings.enhance_percents:
+                    Logger.info(f"[UI] Restored enhancement parameters for channel {index}")
 
             # Restore ROIs & Annotations ONLY when the first channel is loaded (to set reference shape)
             scene_data = self.project_model.get_scene(scene_id)
             if index == 0:
-                # USER REQUEST: Best not to save/restore previous ROIs.
-                # if scene_data.rois:
-                #    self.session.roi_manager.set_rois(scene_data.rois)
-                settings = QSettings("FluoQuantPro", "AppSettings")
-                save_rois_on_switch = settings.value("roi/save_on_switch", False, type=bool)
-                if save_rois_on_switch and scene_data.rois:
+                # USER REQUEST: Always restore ROIs if present in project data
+                # settings = QSettings("FluoQuantPro", "AppSettings")
+                # save_rois_on_switch = settings.value("roi/save_on_switch", False, type=bool)
+                
+                if scene_data.rois:
                     self._suppress_roi_annotation_sync = True
                     try:
                         self.session.roi_manager.set_rois(scene_data.rois)
                     finally:
                         self._suppress_roi_annotation_sync = False
-                if scene_data.annotations:
-                    self.session.set_annotations(scene_data.annotations)
-                    self.annotation_panel.update_annotation_list()
+                
+                # Sync ROI selection state
+                if hasattr(self.session, 'roi_manager'):
+                    self.session.roi_manager.selection_changed.emit()
             
             # Update UI incrementally
             # We initialize views for every channel to ensure the layout updates (1-view, 2-view, etc.)
             # and to ensure the view objects exist for rendering.
-            self.multi_view.initialize_views()
+            self.initialize_all_views()
             
             if index == 0:
-                print(f"[{time.strftime('%H:%M:%S')}] UI: Initializing first channel view...")
-                self.multi_view.fit_views()
-                self.multi_view.select_channel(0)
+                Logger.info("[UI] Initializing first channel view...")
+                self.fit_all_views()
+                self.select_view_channel(0)
             
             # Trigger immediate render for this channel
             # Note: initialize_views() already calls render_all(), but we call it again 
@@ -3105,13 +2544,13 @@ class MainWindow(QMainWindow):
             self.refresh_display()
             
             # Update overlay text (shows progress)
-            self.multi_view.show_loading(tr("Loading... ({0}/{1})").format(index+1, len(scene_data.channels))) 
+            self.show_view_loading(tr("Loading... ({0}/{1})").format(index+1, len(scene_data.channels))) 
             self.lbl_status.setText(tr("Loaded channel {0}/{1}").format(index+1, len(scene_data.channels)))
             
-            print(f"[{time.strftime('%H:%M:%S')}] UI: on_channel_loaded done for index {index}")
+            Logger.info(f"[UI] on_channel_loaded done for index {index}")
             
         except Exception as e:
-            print(f"Error in on_channel_loaded for index {index}: {e}")
+            Logger.error(f"Error in on_channel_loaded for index {index}: {e}")
             import traceback
             traceback.print_exc()
             
@@ -3128,27 +2567,31 @@ class MainWindow(QMainWindow):
 
     def on_scene_loading_finished(self, scene_id):
         if scene_id != self.current_scene_id: return
-        print(f"[{time.strftime('%H:%M:%S')}] UI: Scene loading finished signal received")
+        Logger.info("[UI] Scene loading finished signal received")
         
         try:
             # Final refresh: Initialize views with ALL loaded channels
-            print(f"[{time.strftime('%H:%M:%S')}] UI: Final view initialization...")
-            self.multi_view.initialize_views()
-            self.multi_view.fit_views()
-            print(f"[{time.strftime('%H:%M:%S')}] UI: Final view initialization done")
+            Logger.info("[UI] Final view initialization...")
+            self.initialize_all_views()
+            self.fit_all_views()
+            Logger.info("[UI] Final view initialization done")
             
             # Update Tool Targets
             self.update_point_counter_targets()
             
             # Update Overlays
-            self.multi_view.update_scale_bar(self.session.scale_bar_settings)
-            self.multi_view.set_annotations(self.session.annotations)
+            self.update_all_scale_bars(self.session.scale_bar_settings)
+            
+            # Ensure Annotation Panel is in sync
+            if hasattr(self, 'annotation_panel'):
+                self.annotation_panel.update_annotation_list()
+            
         except Exception as e:
             print(f"Error in on_scene_loading_finished: {e}")
             import traceback
             traceback.print_exc()
         finally:
-            self.multi_view.hide_loading() # Hide overlay
+            self.hide_view_loading()
             self.lbl_status.setText(tr("Scene loaded: {0}").format(scene_id))
 
     def update_point_counter_targets(self):
@@ -3191,35 +2634,17 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QPainterPath
         from PySide6.QtWidgets import QGraphicsItem
         
-        print(f"DEBUG: [Main] on_batch_selection_made with rect: {rect}, channel_idx: {channel_index}")
+        Logger.debug(f"[Main] on_batch_selection_made with rect: {rect}, channel_idx: {channel_index}")
         
-        active_view = None
+        active_view = self.get_active_canvas_view()
         
-        # 1. Try to get view from channel_index
-        if channel_index >= 0:
-            # MultiView uses "Ch{index+1}" as key for channel views
-            view_id = f"Ch{channel_index + 1}"
-            if view_id in self.multi_view.views:
-                active_view = self.multi_view.views[view_id]
-        elif channel_index == -1:
-             # Merge view
-             if "Merge" in self.multi_view.views:
-                 active_view = self.multi_view.views["Merge"]
-        
-        # 2. Fallback
-        if not active_view:
-             if self.multi_view.active_channel_id:
-                 active_view = self.multi_view.views.get(self.multi_view.active_channel_id)
-             elif self.multi_view.views:
-                 active_view = next(iter(self.multi_view.views.values()))
-                 
         if active_view:
              path = QPainterPath()
              path.addRect(rect)
              
              # Get items in the rect (this uses QGraphicsScene logic)
              items = active_view.scene.items(path, Qt.ItemSelectionMode.IntersectsItemShape)
-             print(f"DEBUG: [Main] Found {len(items)} items in selection rect")
+             Logger.debug(f"[Main] Found {len(items)} items in selection rect")
              
              # Clear current selection first
              active_view.scene.clearSelection()
@@ -3239,7 +2664,7 @@ class MainWindow(QMainWindow):
                          count += 1
                      
              self.lbl_status.setText(tr("Selected {0} items.").format(count))
-             print(f"DEBUG: [Main] Selected {count} valid ROI items: {selected_ids}")
+             Logger.debug(f"[Main] Selected {count} valid ROI items: {selected_ids}")
              
              # Force update RoiManager selection state immediately
              # This is critical because QGraphicsScene selectionChanged might be async or blocked
@@ -3263,8 +2688,8 @@ class MainWindow(QMainWindow):
             
         # Reset mode
         self.pending_annotation_mode = None
-        self.multi_view.set_tool(None)
-        self.multi_view.set_annotation_mode('none')
+        self.set_view_tool(None)
+        self.set_view_annotation_mode('none')
         self.lbl_status.setText(tr("Ready"))
 
     def on_tool_toggled(self, tool_action, checked):
@@ -3315,26 +2740,26 @@ class MainWindow(QMainWindow):
                 
             # Update toolbox UI
             if hasattr(self, 'roi_toolbox'):
-                print(f"DEBUG: [Main.on_tool_toggled] Toggling toolbox for action: {tool_action.text() if tool_action else 'None'}")
-                import sys
-                sys.stdout.flush()
+                Logger.debug(f"[Main.on_tool_toggled] Toggling toolbox for action: {tool_action.text() if tool_action else 'None'}")
                 
                 self.roi_toolbox.set_active_tool(tool_action)
                 
                 # AUTO-SWITCH TAB: If an ROI tool is selected, switch to ROI Toolbox tab
-                for i in range(self.control_tabs.count()):
-                    tab_text = self.control_tabs.tabText(i)
-                    is_toolbox_tab = False
-                    for tab_id, _, title in self.all_tabs_data:
-                        if tab_id == "toolbox" and title == tab_text:
-                            is_toolbox_tab = True
+                # USER REQUEST: Do NOT switch for LineScan
+                # Also do NOT switch if we are already in the process of switching tabs (avoids loops)
+                if tool_action != self.action_line_scan and not getattr(self, '_is_switching_tab', False):
+                    for i in range(self.control_tabs.count()):
+                        tab_text = self.control_tabs.tabText(i)
+                        is_toolbox_tab = False
+                        for tab_id, _, title in self.all_tabs_data:
+                            if tab_id == "toolbox" and title == tab_text:
+                                is_toolbox_tab = True
+                                break
+                        
+                        if is_toolbox_tab:
+                            self.control_tabs.setCurrentIndex(i)
+                            Logger.debug(f"[Main.on_tool_toggled] Switched to tab {i} ({tab_text})")
                             break
-                    
-                    if is_toolbox_tab:
-                        self.control_tabs.setCurrentIndex(i)
-                        print(f"DEBUG: [Main.on_tool_toggled] Switched to tab {i} ({tab_text})")
-                        break
-                sys.stdout.flush()
 
             # Clear annotation tool selection if a regular ROI tool is selected
             if hasattr(self, 'annotation_panel'):
@@ -3347,35 +2772,44 @@ class MainWindow(QMainWindow):
             self._is_switching_roi_tool = False
 
         if tool_action == self.action_wand:
-            self.lbl_status.setText("Mode: Magic Wand (Click to Auto-Select, Drag horizontally to adjust tolerance)")
+            self.lbl_status.setText(tr("Mode: Magic Wand (Click to Auto-Select, Drag horizontally to adjust tolerance)"))
             # Sync settings from UI
             self.wand_tool.base_tolerance = self.roi_toolbox.spin_wand_tol.value()
             self.wand_tool.smoothing = self.roi_toolbox.spin_wand_smooth.value()
             self.wand_tool.relative = self.roi_toolbox.chk_wand_relative.isChecked()
-            self.multi_view.set_tool(self.wand_tool)
+            if hasattr(self.roi_toolbox, 'chk_wand_largest'):
+                self.wand_tool.keep_largest = self.roi_toolbox.chk_wand_largest.isChecked()
+            if hasattr(self.roi_toolbox, 'chk_wand_split'):
+                self.wand_tool.split_regions = self.roi_toolbox.chk_wand_split.isChecked()
+            if hasattr(self.roi_toolbox, 'chk_wand_polygon'):
+                self.wand_tool.convert_to_polygon = self.roi_toolbox.chk_wand_polygon.isChecked()
+            if hasattr(self.roi_toolbox, 'chk_wand_smooth_contour'):
+                self.wand_tool.contour_smoothing = self.roi_toolbox.chk_wand_smooth_contour.isChecked()
+            
+            self.set_view_tool(self.wand_tool)
         elif tool_action == self.action_polygon:
-            self.lbl_status.setText("Mode: Polygon Lasso (Left Click to Add, Right Click to Finish")
-            self.multi_view.set_tool(self.polygon_tool)
+            self.lbl_status.setText(tr("Mode: Polygon Lasso (Left Click to Add, Right Click to Finish)"))
+            self.set_view_tool(self.polygon_tool)
             # Sync fixed size state
             if hasattr(self.polygon_tool, 'set_fixed_size_mode'):
                 self.polygon_tool.set_fixed_size_mode(self.roi_toolbox.chk_fixed_size.isChecked())
         elif tool_action == self.action_rect:
-            self.lbl_status.setText("Mode: Rectangle Selection (Drag to Draw")
-            self.multi_view.set_tool(self.rect_tool)
+            self.lbl_status.setText(tr("Mode: Rectangle Selection (Drag to Draw)"))
+            self.set_view_tool(self.rect_tool)
             # Sync fixed size state
             self.rect_tool.set_fixed_size_mode(self.roi_toolbox.chk_fixed_size.isChecked())
         elif tool_action == self.action_ellipse:
-            self.lbl_status.setText("Mode: Ellipse Selection (Drag to Draw")
-            self.multi_view.set_tool(self.ellipse_tool)
+            self.lbl_status.setText(tr("Mode: Ellipse Selection (Drag to Draw)"))
+            self.set_view_tool(self.ellipse_tool)
             # Sync fixed size state
             self.ellipse_tool.set_fixed_size_mode(self.roi_toolbox.chk_fixed_size.isChecked())
         elif tool_action == self.action_count:
-            self.lbl_status.setText("Mode: Point Counter (Click to count spots in current channel or merge view)")
+            self.lbl_status.setText(tr("Mode: Point Counter (Click to count spots in current channel or merge view)"))
             self.count_tool.radius = self.roi_toolbox.spin_count_radius.value()
-            self.multi_view.set_tool(self.count_tool)
+            self.set_view_tool(self.count_tool)
         elif tool_action == self.action_line_scan:
-            self.lbl_status.setText("Mode: Line Scan (Drag to Draw Line for Colocalization)")
-            self.multi_view.set_tool(self.line_scan_tool)
+            self.lbl_status.setText(tr("Mode: Line Scan (Drag to Draw Line for Colocalization)"))
+            self.set_view_tool(self.line_scan_tool)
             # Sync fixed size state
             if hasattr(self.line_scan_tool, 'set_fixed_size_mode'):
                 self.line_scan_tool.set_fixed_size_mode(self.roi_toolbox.chk_fixed_size.isChecked())
@@ -3383,14 +2817,14 @@ class MainWindow(QMainWindow):
             if self.colocalization_panel:
                 self.control_tabs.setCurrentWidget(self.colocalization_panel)
         elif tool_action == self.action_batch_select:
-            self.lbl_status.setText("Mode: Batch Select (Drag to select multiple items)")
-            self.multi_view.set_tool(self.batch_tool)
+            self.lbl_status.setText(tr("Mode: Batch Select (Drag to select multiple items)"))
+            self.set_view_tool(self.batch_tool)
         elif tool_action == self.action_pan:
-            self.lbl_status.setText("Mode: Pan/Hand (Drag to Move View/ROI)")
-            self.multi_view.set_tool(None) # Setting tool to None enables Pan mode in CanvasView
+            self.lbl_status.setText(tr("Mode: Pan/Hand (Drag to Move View/ROI)"))
+            self.set_view_tool(None) # Setting tool to None enables Pan mode in CanvasView
         else:
-            self.multi_view.set_tool(None)
-            self.lbl_status.setText("Mode: View/Pan")
+            self.set_view_tool(None)
+            self.lbl_status.setText(tr("Mode: View/Pan"))
 
     def on_channel_selected(self, index):
         """Syncs the selected channel across the UI and tools."""
@@ -3401,8 +2835,17 @@ class MainWindow(QMainWindow):
                 self.lbl_status.setText(tr("Selected: {0}").format(ch_name))
             elif index == -1:
                 self.lbl_status.setText(tr("Selected: Merge"))
+                    
             Logger.debug(f"[Main] Channel selected: {index}")
-            self.multi_view.flash_channel(index)
+            
+            # Update visual state in ALL view containers
+            self.flash_view_channel(index)
+            self.select_view_channel(index)
+            
+            # Also sync to sample list for visual feedback
+            if hasattr(self, 'sample_list'):
+                self.sample_list.set_active_channel(index)
+                
         except Exception as e:
             Logger.debug(f"[Main] Channel selected UI feedback failed: {e}")
         
@@ -3416,7 +2859,7 @@ class MainWindow(QMainWindow):
         if scene_id == self.current_scene_id:
             # Just switch the view if it's the same scene
             print(f"DEBUG: Switching to channel {channel_index} in scene {scene_id} without reload")
-            self.multi_view.select_channel(channel_index)
+            self.select_view_channel(channel_index)
             # Also sync with panels
             self.adjustment_panel.set_active_channel(channel_index)
             self.enhance_panel.set_active_channel(channel_index)
@@ -3431,13 +2874,16 @@ class MainWindow(QMainWindow):
 
 
     def on_fixed_size_toggled(self, checked):
-        """Updates tool fixed size mode."""
-        self.rect_tool.set_fixed_size_mode(checked)
-        self.ellipse_tool.set_fixed_size_mode(checked)
-        if hasattr(self.line_scan_tool, 'set_fixed_size_mode'):
-            self.line_scan_tool.set_fixed_size_mode(checked)
-        if hasattr(self.polygon_tool, 'set_fixed_size_mode'):
-            self.polygon_tool.set_fixed_size_mode(checked)
+        """Updates tool fixed size mode and toolbox UI state."""
+        # Update toolbox inputs enabled state
+        if hasattr(self, 'roi_toolbox'):
+            self.roi_toolbox.spin_width.setEnabled(checked)
+            self.roi_toolbox.spin_height.setEnabled(checked)
+            
+        # Update all applicable tools
+        for tool in [self.rect_tool, self.ellipse_tool, self.line_scan_tool, self.polygon_tool]:
+            if hasattr(tool, 'set_fixed_size_mode'):
+                tool.set_fixed_size_mode(checked)
 
     def select_all_rois(self):
         """Selects all ROIs in the current session."""
@@ -3450,7 +2896,7 @@ class MainWindow(QMainWindow):
         Creates a NEW sample with the cropped data instead of overwriting.
         Supports MBR and Perspective Transform for rotated ROIs, with Masking for Polygons.
         """
-        print("DEBUG: [Main] crop_to_selection called")
+        Logger.debug("[Main] crop_to_selection called")
         rois = self.session.roi_manager.get_all_rois()
         if not rois:
             self.lbl_status.setText(tr("No selection to crop."))
@@ -3459,7 +2905,7 @@ class MainWindow(QMainWindow):
             
         # Use the LAST ROI
         roi = rois[-1]
-        print(f"DEBUG: [Main] Cropping to ROI: {roi.label}, Type: {roi.roi_type}")
+        Logger.debug(f"[Main] Cropping to ROI: {roi.label}, Type: {roi.roi_type}")
         
         # --- Advanced Crop Logic (MBR + Perspective + Mask) ---
         import cv2
@@ -3487,7 +2933,7 @@ class MainWindow(QMainWindow):
             # Use path points if they define a shape (>= 3 points)
             if len(path_points) >= 3:
                 points = path_points
-                print(f"DEBUG: [Main] Extracted {len(points)} points from ROI path (overriding insufficient roi.points).")
+                Logger.debug(f"[Main] Extracted {len(points)} points from ROI path (overriding insufficient roi.points).")
         
         
         src_pts_ordered = None
@@ -3496,75 +2942,138 @@ class MainWindow(QMainWindow):
         w, h = 0, 0
         x, y = 0, 0
         
+        # 2. Determine Crop Strategy based on ROI Type
+        # User Feedback: "Polygon crop sometimes distorts coordinates."
+        # Cause: minAreaRect + Warp rotates the image, which is unexpected for generic polygons.
+        # Fix: Use Axis-Aligned Bounding Rect for Polygons/Freehand/Rectangles.
+        #      Only use minAreaRect (Rotation) for explicitly Rotated Rectangles (if implemented).
+        
+        use_rotation = False
+        # If we had a specific 'rotated_rect' type, we would set use_rotation = True
+        # Currently, 'rectangle', 'polygon', 'freehand', 'magic_wand', 'ellipse' 
+        # are best served by Axis-Aligned Crop + Mask.
+        
         if len(points) < 3:
              # Fallback to simple bounding rect if not enough points
-             print("DEBUG: [Main] Not enough points for advanced crop. Using bounding rect.")
+             Logger.debug("[Main] Not enough points for advanced crop. Using bounding rect.")
              rect = roi.path.boundingRect()
-             x, y, w, h = int(rect.x()), int(rect.y()), int(rect.width()), int(rect.height())
-        else:
+             # Use floor/ceil to ensure we capture the full area and avoid 1px shifts
+             x_f, y_f, w_f, h_f = rect.x(), rect.y(), rect.width(), rect.height()
+             x, y = int(np.floor(x_f)), int(np.floor(y_f))
+             w, h = int(np.ceil(x_f + w_f)) - x, int(np.ceil(y_f + h_f)) - y
+        
+        elif not use_rotation:
+             # Axis-Aligned Strategy
+             Logger.debug(f"[Main] Using Axis-Aligned Crop for ROI Type: {roi.roi_type}")
              pts_array = np.array(points, dtype=np.float32)
+             x_min, y_min, w_val, h_val = cv2.boundingRect(pts_array)
+             # Robust integer conversion
+             x, y = int(np.floor(x_min)), int(np.floor(y_min))
+             w, h = int(np.ceil(x_min + w_val)) - x, int(np.ceil(y_min + h_val)) - y
+             
+             # No perspective transform needed
+             M = None
+             
+             # Destination points are just 0..w, 0..h (implicit)
+             # We need to shift polygon points for the mask
+             # (Handled in mask generation below: subtract x,y)
+             
+        else:
+             # Rotated Strategy (Original Logic)
+            pts_array = np.array(points, dtype=np.float32)
              
              # 2. Minimum Bounding Rectangle (Rotated)
-             rect_rotated = cv2.minAreaRect(pts_array)
-             (center, (w_rot, h_rot), angle) = rect_rotated
+            rect_rotated = cv2.minAreaRect(pts_array)
+            (center, (w_rot, h_rot), angle) = rect_rotated
              
-             print(f"DEBUG: [Main] MBR Center: {center}, Size: {w_rot:.2f}x{h_rot:.2f}, Angle: {angle:.2f}")
+            Logger.debug(f"[Main] MBR Center: {center}, Size: {w_rot:.2f}x{h_rot:.2f}, Angle: {angle:.2f}")
              
              # Check aspect ratio to ensure consistent orientation
-             if w_rot < h_rot:
-                 w_rot, h_rot = h_rot, w_rot
-                 angle += 90
+            if w_rot < h_rot:
+                w_rot, h_rot = h_rot, w_rot
+                angle += 90
              
-             w, h = int(w_rot), int(h_rot)
+            w, h = int(w_rot), int(h_rot)
              
              # 3. Source Points (The 4 corners of the rotated rect)
-             box = cv2.boxPoints(rect_rotated)
-             src_pts = np.float32(box)
+            box = cv2.boxPoints(rect_rotated)
+            src_pts = np.float32(box)
              
              # 4. Destination Points
              # Sort src_pts
-             s = src_pts.sum(axis=1)
-             diff = np.diff(src_pts, axis=1)
+            s = src_pts.sum(axis=1)
+            diff = np.diff(src_pts, axis=1)
              
-             tl = src_pts[np.argmin(s)]
-             br = src_pts[np.argmax(s)]
-             tr_ = src_pts[np.argmin(diff)]
-             bl = src_pts[np.argmax(diff)]
+            tl = src_pts[np.argmin(s)]
+            br = src_pts[np.argmax(s)]
+            tr_ = src_pts[np.argmin(diff)]
+            bl = src_pts[np.argmax(diff)]
              
-             src_pts_ordered = np.float32([tl, tr_, br, bl])
+            src_pts_ordered = np.float32([tl, tr_, br, bl])
              
              # Destination: (0,0), (w,0), (w,h), (0,h)
-             dst_pts = np.float32([
+            dst_pts = np.float32([
                  [0, 0],
                  [w - 1, 0],
                  [w - 1, h - 1],
                  [0, h - 1]
-             ])
+            ])
              
              # Calculate Transform Matrix
-             M = cv2.getPerspectiveTransform(src_pts_ordered, dst_pts)
-             print(f"DEBUG: [Main] Perspective Matrix:\n{M}")
+            M = cv2.getPerspectiveTransform(src_pts_ordered, dst_pts)
+            Logger.debug(f"[Main] Perspective Matrix:\n{M}")
              
         # Check bounds
+        img_h, img_w = 0, 0
+        for ch in self.session.channels:
+            if ch.raw_data is not None:
+                img_h, img_w = ch.raw_data.shape[:2]
+                break
+        
+        if img_h > 0 and img_w > 0:
+            # Clip x, y to [0, img_w/img_h]
+            orig_x, orig_y = x, y
+            x = max(0, min(img_w - 1, x))
+            y = max(0, min(img_h - 1, y))
+            # Clip w, h so x+w, y+h stay within bounds
+            w = max(1, min(img_w - x, w + (orig_x - x)))
+            h = max(1, min(img_h - y, h + (orig_y - y)))
+            Logger.debug(f"[Main] Clipped Crop Rect: x={x}, y={y}, w={w}, h={h}")
+
         if w < 1 or h < 1:
-            print("DEBUG: [Main] Invalid crop dimensions.")
+            Logger.debug("[Main] Invalid crop dimensions.")
             return
             
         # Prepare Mask (for Polygons/Irregular shapes)
-        # If M is present, we warp the polygon to create the mask in destination coordinates
         mask = None
-        if M is not None and (roi.roi_type == 'polygon' or roi.roi_type == 'freehand'):
+        if roi.roi_type in ['polygon', 'freehand', 'magic_wand', 'ellipse']:
             try:
-                # Transform original points to crop coordinates
-                pts_reshaped = pts_array.reshape(-1, 1, 2)
-                warped_pts = cv2.perspectiveTransform(pts_reshaped, M)
-                
-                # Create mask (white on black)
                 mask = np.zeros((h, w), dtype=np.uint8)
-                cv2.fillPoly(mask, [np.int32(warped_pts)], 255)
-                print("DEBUG: [Main] Polygon mask generated.")
+                
+                if roi.roi_type == 'ellipse':
+                    # Special handling for Ellipse: Use cv2.ellipse
+                    center_x, center_y = (w / 2), (h / 2)
+                    axes = (w // 2, h // 2)
+                    # For ellipse, we fill the entire bounding box with an oval mask
+                    cv2.ellipse(mask, (int(center_x), int(center_y)), axes, 0, 0, 360, 255, -1)
+                    print("DEBUG: [Main] Ellipse mask generated.")
+                elif M is not None:
+                    # Transform original points to crop coordinates using Perspective Matrix
+                    pts_reshaped = pts_array.reshape(-1, 1, 2)
+                    warped_pts = cv2.perspectiveTransform(pts_reshaped, M)
+                    cv2.fillPoly(mask, [np.int32(warped_pts)], 255)
+                    print("DEBUG: [Main] Warped Polygon mask generated.")
+                elif 'pts_array' in locals():
+                    # Simple Translation (x, y are top-left of crop)
+                    # Shift points by -x, -y
+                    shifted_pts = pts_array - [x, y]
+                    cv2.fillPoly(mask, [np.int32(shifted_pts)], 255)
+                    print("DEBUG: [Main] Translated Polygon mask generated.")
+                else:
+                    # Fallback for ROI with path but no points array
+                    print(f"WARNING: [Main] Mask requested for {roi.roi_type} but pts_array is missing.")
             except Exception as e:
-                print(f"ERROR: [Main] Failed to generate mask: {e}")
+                print(f"ERROR: [Main] Failed to generate mask for {roi.roi_type}: {e}")
             
         # Prepare new sample name
         current_name = self.current_scene_id
@@ -3653,7 +3162,15 @@ class MainWindow(QMainWindow):
                     'path': save_path,
                     'type': ch.channel_type,
                     'color': ch.display_settings.color,
-                    'visible': ch.display_settings.visible
+                    'display_settings': {
+                        'min_val': ch.display_settings.min_val,
+                        'max_val': ch.display_settings.max_val,
+                        'gamma': ch.display_settings.gamma,
+                        'visible': ch.display_settings.visible,
+                        'opacity': ch.display_settings.opacity,
+                        'enhance_percents': getattr(ch.display_settings, 'enhance_percents', {}),
+                        'enhance_params': getattr(ch.display_settings, 'enhance_params', {})
+                    }
                 })
             except Exception as e:
                 print(f"ERROR: [Main] Error processing channel {i}: {e}")
@@ -3753,17 +3270,19 @@ class MainWindow(QMainWindow):
         # Get settings
         options = ExportSettingsDialog.get_current_options()
         
-        # Determine Output Directory
-        custom_path = options.get("export_path", "").strip()
-        if custom_path:
-            output_dir = custom_path
-            try:
-                os.makedirs(output_dir, exist_ok=True)
-            except OSError as e:
-                QMessageBox.warning(self, tr("Export Error"), tr("Cannot create custom export directory:\n{0}\nUsing default instead.").format(output_dir))
-                output_dir = self.project_model.get_export_path()
-        else:
-            output_dir = self.project_model.get_export_path()
+        # Determine Suggested Output Directory
+        suggested_dir = options.get("export_path", "").strip() or self.project_model.get_export_path()
+        
+        # --- USER REQUEST: Always use standard dialog for safety ---
+        output_dir = QFileDialog.getExistingDirectory(
+            self, 
+            tr("Select Export Folder"), 
+            suggested_dir
+        )
+        
+        if not output_dir:
+            self.lbl_status.setText(tr("Export cancelled."))
+            return
         
         # Ask user: Current sample or All samples?
         if len(self.project_model.scenes) > 1:
@@ -3807,12 +3326,22 @@ class MainWindow(QMainWindow):
         # The visibility of annotations is now controlled by the user in the Overlay Panel
         # and the global export setting in the dialog.
         include_ann = options.get("export_include_ann", False)
+        include_scale_bar = options.get("export_include_scale_bar", True)
+        export_line_scans = options.get("export_line_scans", True)
 
         total_exported = 0
         
         try:
             import tifffile
             from src.core.renderer import Renderer
+            from PySide6.QtWidgets import QApplication
+
+            # --- USER REQUEST: Physical Consistency (WYSIWYG) ---
+            # Get screen logical DPI to pass to renderer
+            # Logic: UI uses logical pixels (e.g. 2px line). 
+            # 96 DPI is the standard baseline for 100% scaling.
+            screen = QApplication.primaryScreen()
+            screen_dpi = screen.logicalDotsPerInch() if screen else 96.0
 
             for i, scene_data in enumerate(scenes_to_export):
                 if progress.wasCanceled():
@@ -3822,23 +3351,48 @@ class MainWindow(QMainWindow):
                 progress.setValue(i)
                 QApplication.processEvents() # Keep UI responsive
 
+                # Get scale bar settings
+                if scene_data.id == self.current_scene_id:
+                    scale_bar_settings = self.session.scale_bar_settings if include_scale_bar else None
+                else:
+                    # For batch export, we use the current scale bar settings
+                    # since pixel size might be different per scene, we should ideally
+                    # use the scene's own scale bar settings if available.
+                    # But for now, using the global one is common.
+                    scale_bar_settings = self.session.scale_bar_settings if include_scale_bar else None
+
                 # Get annotations for this scene (if including them)
+                export_annotations = []
                 if include_ann:
                     if scene_data.id == self.current_scene_id:
-                        # For current scene, use the active session's visibility states
-                        export_annotations = [ann for ann in self.session.annotations if ann.visible]
-                    else:
-                        # For other scenes, use their saved annotations
-                        # Note: visibility might need to be checked in serialized data too
+                        # For current scene, use the active session's ROI manager
+                        # Unified Model: Filter ROIs that are visible
+                        all_rois = self.session.roi_manager.get_all_rois()
                         export_annotations = []
-                        for ann_dict in scene_data.annotations:
-                            if ann_dict.get('visible', True):
-                                try:
-                                    from src.core.data_model import GraphicAnnotation
-                                    export_annotations.append(GraphicAnnotation(**ann_dict))
-                                except: pass
-                else:
-                    export_annotations = []
+                        for r in all_rois:
+                            if not r.visible: continue
+                            if not export_line_scans and r.roi_type == 'line_scan': continue
+                            export_annotations.append(r)
+                    else:
+                        # For other scenes, we need to load their ROIs from serialized data
+                        rois_data = getattr(scene_data, 'rois', [])
+                        
+                        try:
+                            from src.core.roi_model import ROI
+                            
+                            for r_dict in rois_data:
+                                if r_dict.get('visible', True):
+                                    if not export_line_scans and r_dict.get('roi_type') == 'line_scan':
+                                        continue
+                                    try:
+                                        # Use standard reconstruction logic
+                                        r = ROI.from_dict(r_dict)
+                                        export_annotations.append(r)
+                                    except Exception as e:
+                                        Logger.error(f"[Main.export_images] Failed to reconstruct ROI: {e}")
+                                        pass
+                        except ImportError:
+                            pass
 
                 # --- Scientific Rigor: Parameter Synchronization ---
                 # We ensure that the Rendered export uses the EXACT same parameters (Min/Max/Gamma/LUT)
@@ -3877,6 +3431,29 @@ class MainWindow(QMainWindow):
 
                 sample_name = scene_data.id
                 
+                # Calculate View Scale based on Display Quality Setting
+                quality = self.settings.value("display/quality_key", "balanced")
+                if quality == "performance":
+                     max_view_dim = 1024 # 1024p
+                elif quality == "balanced":
+                     max_view_dim = 2560 # 2.5K
+                elif quality == "4k":
+                     max_view_dim = 3840 # 4K
+                else: # "high" or legacy "High Quality (Full Resolution)"
+                     max_view_dim = 32768 # Effectively Full Resolution (System Limit)
+                
+                # Determine original width from first valid channel
+                orig_w = 1920 # Default fallback
+                for ch in channels:
+                    if not getattr(ch, 'is_placeholder', False):
+                        if ch.shape and len(ch.shape) > 1:
+                            orig_w = ch.shape[1]
+                            break
+                
+                # The "View Width" is the width of the image as seen in the software's viewport (downsampled)
+                view_w = min(orig_w, max_view_dim)
+                view_scale = orig_w / view_w if view_w > 0 else 1.0
+
                 # 1. Export Single Channels
                 if options["export_channels"]:
                     if options["export_raw"]:
@@ -3894,12 +3471,21 @@ class MainWindow(QMainWindow):
                         # Rendered RGB TIFF (WYSIWYG: What You See Is What You Get)
                         # We do NOT pass target_shape here to force full-resolution rendering.
                         out_depth = options.get("bit_depth", 8)
+                        dpi = options.get("dpi", 600)
                         
                         for ch in channels:
                             if not ch.display_settings.visible or ch.is_placeholder:
                                 continue
                                 
-                            rgb = Renderer.render_channel(ch, out_depth=out_depth, annotations=export_annotations)
+                            rgb = Renderer.render_channel(
+                                ch, 
+                                out_depth=out_depth, 
+                                scale_bar_settings=scale_bar_settings, 
+                                annotations=export_annotations, 
+                                dpi=dpi, 
+                                view_scale=view_scale, 
+                                screen_dpi=screen_dpi
+                            )
                             if rgb is not None:
                                 # Scale to requested bit depth
                                 if out_depth == 16:
@@ -3918,7 +3504,16 @@ class MainWindow(QMainWindow):
                 # 2. Export Merge
                 if options["export_merge"]:
                     out_depth = options.get("bit_depth", 8)
-                    comp = Renderer.composite(channels, out_depth=out_depth, annotations=export_annotations)
+                    dpi = options.get("dpi", 600)
+                    comp = Renderer.composite(
+                        channels, 
+                        out_depth=out_depth, 
+                        scale_bar_settings=scale_bar_settings, 
+                        annotations=export_annotations, 
+                        dpi=dpi, 
+                        view_scale=view_scale, 
+                        screen_dpi=screen_dpi
+                    )
                     if comp is not None:
                         # Scale to requested bit depth
                         if out_depth == 16:
@@ -3939,7 +3534,20 @@ class MainWindow(QMainWindow):
             
             if total_exported > 0:
                 self.lbl_status.setText(tr("Exported {0} images.").format(total_exported))
-                QMessageBox.information(self, tr("Export Successful"), tr("Exported {0} images to:\n{1}").format(total_exported, output_dir))
+                
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle(tr("Export Successful"))
+                msg_box.setText(tr("Exported {0} images to:\n{1}").format(total_exported, output_dir))
+                msg_box.setIcon(QMessageBox.Icon.Information)
+                
+                open_btn = msg_box.addButton(tr("Open Folder"), QMessageBox.ButtonRole.ActionRole)
+                msg_box.addButton(QMessageBox.StandardButton.Ok)
+                
+                msg_box.exec()
+                
+                if msg_box.clickedButton() == open_btn:
+                    from PySide6.QtCore import QUrl
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(output_dir))
             else:
                  self.lbl_status.setText(tr("Nothing exported (check settings/visibility)."))
                  
@@ -3989,6 +3597,9 @@ class MainWindow(QMainWindow):
             # 5. 更新界面显示 (选项卡可见性等)
             self.update_tab_visibility()
             
+            # Update View Layout (Handle "Show Merge" toggle)
+            self.initialize_all_views()
+            
             # 6. 刷新显示 (以应用画质等设置)
             self.refresh_display()
             
@@ -4003,9 +3614,57 @@ class MainWindow(QMainWindow):
         """Triggers a re-render. If fit=True, also fits views (for new images)."""
         if not self.session.channels:
             return
-        self.multi_view.render_all()
+        
+        # Debounce: Stop previous timer if running, update pending state, and restart
         if fit:
-            self.multi_view.fit_views()
+            self._pending_fit_view = True
+        
+        self.refresh_debounce_timer.start() # Restart timer (50ms)
+        self.lbl_status.setText(tr("Refreshing views..."))
+
+    def _perform_refresh_display(self):
+        """Performs the actual refresh after the debounce interval."""
+        if not self.session.channels:
+            return
+        
+        # Update ALL view containers to keep them in sync
+        self.update_all_view_containers()
+        
+        if self._pending_fit_view:
+            self.fit_all_views()
+            self._pending_fit_view = False
+        
+        self.lbl_status.setText(tr("Ready"))
+
+    def update_zoom_label(self, scale):
+        """Updates the zoom label in the status bar."""
+        percentage = int(scale * 100)
+        self.lbl_zoom.setText(f"{percentage}%")
+
+    def update_memory_label(self, current_mb, sys_percent, display_text):
+        """Updates the RAM usage display in status bar."""
+        self.lbl_memory.setText(display_text)
+        
+        # USER REQUEST: Smarter color coding. 
+        # Don't show warning just because other apps are using RAM (sys_percent).
+        # Only warn if the APP itself is high, or if SYSTEM is critical.
+        
+        threshold_gb = getattr(self.perf_monitor, 'memory_threshold_gb', 8.0)
+        app_gb = current_mb / 1024.0
+        app_percent = (app_gb / threshold_gb) * 100.0 if threshold_gb > 0 else 0
+        
+        if app_percent > 90 or sys_percent > 98:
+            self.lbl_memory.setStyleSheet("color: #ff4d4d; font-weight: bold; margin-right: 10px;")
+        elif app_percent > 70 or sys_percent > 90:
+            self.lbl_memory.setStyleSheet("color: #ffa500; margin-right: 10px;")
+        else:
+            self.lbl_memory.setStyleSheet("color: #666; margin-right: 10px;")
+
+    def on_memory_warning(self, current_gb):
+        """Shows a temporary warning message when memory is high."""
+        self.lbl_status.setText(tr(f"Memory high ({current_gb:.1f} GB), cache cleared automatically."))
+        # Reset after 5 seconds
+        QTimer.singleShot(5000, lambda: self.lbl_status.setText(tr("Ready")))
 
     def update_status_mouse_info(self, x, y, channel_index):
         """Updates status bar with coordinates and intensity values."""
@@ -4040,7 +3699,7 @@ class MainWindow(QMainWindow):
             if intensities:
                 info_parts.append(" | ".join(intensities))
                 
-            self.lbl_status.setText("  ".join(info_parts))
+            self.lbl_status.setText(tr("  ").join(info_parts))
         else:
             self.lbl_status.setText(tr("Ready"))
 
@@ -4068,7 +3727,7 @@ class MainWindow(QMainWindow):
         # Add only visible ones
         for key, widget, label in self.all_tabs_data:
             if key in visible_list:
-                self.control_tabs.addTab(widget, label)
+                self.control_tabs.add_tab(key, widget, label)
                 
         # Restore index if the tab is still visible
         if current_tab_name:
@@ -4080,6 +3739,97 @@ class MainWindow(QMainWindow):
                         self.control_tabs.setCurrentIndex(i)
                         break
 
+    def set_view_tool(self, tool):
+        """Sets the active tool on ALL view containers."""
+        for container in self.view_containers:
+            if hasattr(container, 'set_tool'):
+                container.set_tool(tool)
+
+    def set_view_annotation_mode(self, mode):
+        """Sets the annotation mode on ALL view containers."""
+        for container in self.view_containers:
+            if hasattr(container, 'set_annotation_mode'):
+                container.set_annotation_mode(mode)
+
+    def initialize_all_views(self):
+        """Initializes views on ALL view containers."""
+        for container in self.view_containers:
+            if hasattr(container, 'initialize_views'):
+                container.initialize_views()
+
+    def fit_all_views(self):
+        """Fits views on ALL view containers."""
+        for container in self.view_containers:
+            if hasattr(container, 'fit_views'):
+                container.fit_views()
+
+    def update_all_view_containers(self, channel_index=None):
+        """Updates views on ALL view containers."""
+        for container in self.view_containers:
+            if channel_index is not None:
+                if hasattr(container, 'update_view'):
+                    container.update_view(channel_index)
+            else:
+                if hasattr(container, 'render_all'):
+                    container.render_all()
+
+    def show_view_loading(self, message):
+        """Shows loading overlay on the active view container."""
+        container = self.get_active_view_container()
+        if container and hasattr(container, 'show_loading'):
+            container.show_loading(message)
+
+    def hide_view_loading(self):
+        """Hides loading overlay on the active view container."""
+        container = self.get_active_view_container()
+        if container and hasattr(container, 'hide_loading'):
+            container.hide_loading()
+
+    def flash_view_channel(self, index):
+        """Flashes the specified channel on the active view container."""
+        container = self.get_active_view_container()
+        if container and hasattr(container, 'flash_channel'):
+            container.flash_channel(index)
+
+    def select_view_channel(self, index):
+        """Selects the specified channel on ALL view containers."""
+        for container in self.view_containers:
+            if hasattr(container, 'select_channel'):
+                container.select_channel(index)
+
+    def update_all_scale_bars(self, settings):
+        """Updates the scale bar on ALL view containers."""
+        for container in self.view_containers:
+            if hasattr(container, 'update_scale_bar'):
+                container.update_scale_bar(settings)
+
+    def select_view_annotation(self, ann_id):
+        """Selects the specified annotation on ALL view containers."""
+        for container in self.view_containers:
+            if hasattr(container, 'select_annotation'):
+                container.select_annotation(ann_id)
+
+    def on_tool_preview_changed(self):
+        """Called when a tool's preview needs updating."""
+        container = self.get_active_view_container()
+        if hasattr(container, 'update_all_previews'):
+            container.update_all_previews()
+
+    def on_fit_to_width(self):
+        container = self.get_active_view_container()
+        if hasattr(container, 'fit_to_width'):
+            container.fit_to_width()
+
+    def on_fit_to_height(self):
+        container = self.get_active_view_container()
+        if hasattr(container, 'fit_to_height'):
+            container.fit_to_height()
+
+    def on_fit_to_view(self):
+        container = self.get_active_view_container()
+        if hasattr(container, 'fit_views'):
+            container.fit_views()
+
     def on_display_settings_changed(self):
         """Triggers a re-render without resetting view (for adjustment sliders)."""
         if not self.session.channels:
@@ -4090,10 +3840,25 @@ class MainWindow(QMainWindow):
         Logger.debug("[Main] Display settings changed -> preview render")
         QApplication.processEvents()
         
-        # Use preview mode (downsampling) for responsive slider adjustments
-        self.multi_view.render_all(preview=True)
+        # PERSIST SETTINGS
+        for ch in self.session.channels:
+            if ch.file_path:
+                norm_path = os.path.normpath(ch.file_path)
+                self.project_model.pool_display_settings[norm_path] = {
+                    'min_val': ch.display_settings.min_val,
+                    'max_val': ch.display_settings.max_val,
+                    'gamma': ch.display_settings.gamma
+                }
+        
+        # --- AUTOMATIC: Refresh Active View Container ---
+        container = self.get_active_view_container()
+        if hasattr(container, 'render_all'):
+            container.render_all(preview=True)
+
         try:
-            self.multi_view.flash_channel(getattr(self, 'active_channel_idx', -1))
+            active_idx = getattr(self, 'active_channel_idx', -1)
+            if hasattr(container, 'flash_channel'):
+                container.flash_channel(active_idx)
         except Exception as e:
             Logger.debug(f"[Main] flash_channel skipped: {e}")
         
@@ -4132,14 +3897,17 @@ class MainWindow(QMainWindow):
             # 2. Remove any OLD results for these specific ROIs (to prevent duplicates)
             # This allows "Refresh" behavior for the active ROIs, but preserves
             # history for ROIs that were deleted from the canvas.
-            self.result_widget.remove_results_for_rois(current_roi_ids)
+            accumulate = self.measurement_settings.get('Accumulate', True)
+            if not accumulate:
+                self.result_widget.remove_results_for_rois(current_roi_ids)
             
             # 2.1 Remove any OLD virtual overlap results to avoid duplicates
-            existing_ids = self.result_widget.tree.get_existing_roi_ids()
-            virtual_ids = [rid for rid in existing_ids if str(rid).startswith("virtual_overlap_")]
-            if virtual_ids:
-                 print(f"DEBUG: [Main] Removing {len(virtual_ids)} old virtual overlap results")
-                 self.result_widget.remove_results_for_rois(virtual_ids)
+            if not accumulate:
+                existing_ids = self.result_widget.tree.get_existing_roi_ids()
+                virtual_ids = [rid for rid in existing_ids if str(rid).startswith("virtual_overlap_")]
+                if virtual_ids:
+                     print(f"DEBUG: [Main] Removing {len(virtual_ids)} old virtual overlap results")
+                     self.result_widget.remove_results_for_rois(virtual_ids)
             
             if not rois:
                 self.lbl_status.setText(tr("No ROIs selected to measure."))
@@ -4202,8 +3970,9 @@ class MainWindow(QMainWindow):
                 
             # Update Result Widget
             self.result_widget.add_sample_results(sample_name, roi_data_list, self.measurement_settings, count_summary=count_summary)
-            self.result_widget.clear_overlap_groups(sample_name)
-            Logger.debug(f"[Main] Overlap groups cleared: sample={sample_name}")
+            if not self.measurement_settings.get('Accumulate', True):
+                self.result_widget.clear_overlap_groups(sample_name)
+                Logger.debug(f"[Main] Overlap groups cleared: sample={sample_name}")
             
             # --- AUTOMATIC OVERLAP ANALYSIS (All ROIs) ---
             if len(measurable_rois) >= 2:
@@ -4309,6 +4078,13 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
             
+        target_path = Path(file_path)
+        
+        # Double check parent directory exists
+        if not target_path.parent.exists():
+            QMessageBox.warning(self, tr("Path Error"), tr("Target directory does not exist!"))
+            return
+
         try:
             # Determine all unique fieldnames across all records
             all_keys = set()
@@ -4321,7 +4097,7 @@ class MainWindow(QMainWindow):
             fieldnames = [k for k in base_order if k in all_keys]
             fieldnames += sorted([k for k in all_keys if k not in base_order])
             
-            with open(file_path, 'w', newline='') as csvfile:
+            with target_path.open('w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 
                 writer.writeheader()
@@ -4329,6 +4105,22 @@ class MainWindow(QMainWindow):
                     writer.writerow(data)
                     
             self.lbl_status.setText(tr("Results saved to {0}").format(file_path))
+            
+            # --- USER REQUEST: Add Open Folder button to CSV export success ---
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle(tr("Export Successful"))
+            msg_box.setText(tr("Measurements exported to:\n{0}").format(file_path))
+            msg_box.setIcon(QMessageBox.Icon.Information)
+            
+            open_btn = msg_box.addButton(tr("Open Folder"), QMessageBox.ButtonRole.ActionRole)
+            msg_box.addButton(QMessageBox.StandardButton.Ok)
+            
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == open_btn:
+                from PySide6.QtCore import QUrl
+                export_dir = os.path.dirname(file_path)
+                QDesktopServices.openUrl(QUrl.fromLocalFile(export_dir))
         except Exception as e:
             self.lbl_status.setText(tr("Error saving CSV: {0}").format(e))
             print(f"Export Error: {e}")
@@ -4342,7 +4134,7 @@ class MainWindow(QMainWindow):
             return
             
         try:
-            success = self.save_project()
+            success = self.save_project(manual=False)
             if success:
                 self.lbl_status.setText(tr("Auto-Saved Project to {0}").format(self.project_model.root_path))
         except Exception as e:
@@ -4367,7 +4159,8 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, tr("About FluoQuant Pro"), 
             tr("<h3>FluoQuant Pro</h3>"
             "<p>A professional tool for fluorescence image analysis and point counting.</p>"
-            "<p>Version: 2.0.8</p>"
+            "<p>TongJi University XueLab</p>"
+            "<p>Version: 1.1.0</p>"
             "<p>Developed By PK</p>"))
 
     def show_shortcuts(self):
@@ -4464,6 +4257,13 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
             
+        target_path = Path(file_path)
+        
+        # Double check parent directory exists
+        if not target_path.parent.exists():
+            QMessageBox.warning(self, tr("Path Error"), tr("Target directory does not exist!"))
+            return
+
         try:
             if file_path.endswith(".json"):
                 # Structured JSON Report
@@ -4479,14 +4279,14 @@ class MainWindow(QMainWindow):
                 # Add pairwise details (optional, but good for "structured report")
                 # For now, just matrix is the main requirement.
                 
-                with open(file_path, 'w') as f:
+                with target_path.open('w', encoding='utf-8') as f:
                     json.dump(report, f, indent=4)
                     
             else:
                 # CSV Matrix (IoU by default, or ask?)
                 # We'll save IoU matrix
                 import csv
-                with open(file_path, 'w', newline='') as f:
+                with target_path.open('w', newline='', encoding='utf-8') as f:
                     writer = csv.writer(f)
                     # Header
                     writer.writerow(["ROI"] + labels)
@@ -4507,7 +4307,13 @@ def main():
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
     os.environ["QT_USE_HIGHDPI_PIXMAPS"] = "1"
     
+    # Set rounding policy for fractional scaling BEFORE creating QApplication
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    
     app = QApplication(sys.argv)
+    
+    # 进度反馈逻辑
+    update_splash(tr("Initializing Core Modules..."), 10)
     
     # Initialize Icon Manager
     IconManager.init(get_resource_path("resources"))

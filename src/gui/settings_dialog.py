@@ -5,7 +5,8 @@ from src.gui.export_settings_dialog import ExportSettingsWidget
 from src.gui.display_settings_widget import DisplaySettingsWidget
 from src.gui.language_settings_widget import LanguageSettingsWidget
 from src.gui.interface_settings_widget import InterfaceSettingsWidget
-from src.core.language_manager import tr
+from src.core.language_manager import tr, LanguageManager
+from src.gui.theme_manager import ThemeManager
 
 class SettingsDialog(QDialog):
     """
@@ -13,20 +14,41 @@ class SettingsDialog(QDialog):
     """
     def __init__(self, parent=None, current_measurement_settings=None):
         super().__init__(parent)
-        self.setWindowTitle("Preferences")
-        self.resize(550, 500)
+        self.setWindowTitle(tr("Preferences"))
+        self.resize(600, 550) # Increased size slightly
         
         self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(10, 10, 10, 10)
+        self.layout.setSpacing(10)
         
         # Tabs
         self.tabs = QTabWidget()
         self.layout.addWidget(self.tabs)
         
+        # We will initialize tabs lazily or just ensure they are ready
+        self._init_tabs(current_measurement_settings)
+        
+        # Buttons
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Apply)
+        self.buttons.accepted.connect(self.save_and_accept)
+        self.buttons.rejected.connect(self.reject)
+        self.buttons.button(QDialogButtonBox.Apply).clicked.connect(self.apply_settings)
+        
+        self.layout.addWidget(self.buttons)
+        
+        # Set layout stretch to keep tabs at top and buttons at bottom
+        self.layout.setStretch(0, 1) # TabWidget takes most space
+        
+        ThemeManager.instance().apply_theme(self)
+        
+        LanguageManager.instance().language_changed.connect(self.retranslate_ui)
+
+    def _init_tabs(self, current_measurement_settings):
         # 1. General (Auto Save)
         self.auto_save_widget = AutoSaveSettingsWidget(self)
         self.tabs.addTab(self.auto_save_widget, tr("General"))
         
-        # 2. Interface (New)
+        # 2. Interface
         self.interface_widget = InterfaceSettingsWidget(self)
         self.tabs.addTab(self.interface_widget, tr("Interface"))
         
@@ -45,35 +67,45 @@ class SettingsDialog(QDialog):
         # 6. Language
         self.language_widget = LanguageSettingsWidget(self)
         self.tabs.addTab(self.language_widget, tr("Language"))
+
+    def retranslate_ui(self):
+        self.setWindowTitle(tr("Preferences"))
         
-        # Buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.save_and_accept)
-        buttons.rejected.connect(self.reject)
-        self.layout.addWidget(buttons)
+        # Update Tab Titles
+        self.tabs.setTabText(0, tr("General"))
+        self.tabs.setTabText(1, tr("Interface"))
+        self.tabs.setTabText(2, tr("Display"))
+        self.tabs.setTabText(3, tr("Measurement"))
+        self.tabs.setTabText(4, tr("Export"))
+        self.tabs.setTabText(5, tr("Language"))
         
-    def save_and_accept(self):
-        """Save all settings."""
-        # Save Auto Save settings (persisted to QSettings)
+        # Update Buttons
+        self.buttons.button(QDialogButtonBox.Ok).setText(tr("OK"))
+        self.buttons.button(QDialogButtonBox.Cancel).setText(tr("Cancel"))
+        self.buttons.button(QDialogButtonBox.Apply).setText(tr("Apply"))
+        
+    def apply_settings(self):
+        """Apply all settings immediately without closing."""
         self.auto_save_widget.save_settings()
-        
-        # Save Interface settings
         self.interface_widget.save_settings()
-        
-        # Save Display settings (persisted to QSettings)
         self.display_widget.save_settings()
-        
-        # Save Export settings (persisted to QSettings)
         self.export_widget.save_settings()
-        
-        # Save Language settings
         self.language_widget.save_settings()
         
-        self.accept()
-        
-        # Measurement settings are returned, not persisted globally here
-        # (They are stateful in MainWindow)
-        
+        # Notify parent (MainWindow) to refresh
+        if self.parent():
+            if hasattr(self.parent(), 'measurement_settings'):
+                self.parent().measurement_settings = self.get_measurement_settings()
+            if hasattr(self.parent(), 'update_tab_visibility'):
+                self.parent().update_tab_visibility()
+            if hasattr(self.parent(), 'multi_view'):
+                self.parent().multi_view.initialize_views()
+            if hasattr(self.parent(), 'refresh_display'):
+                self.parent().refresh_display()
+                
+    def save_and_accept(self):
+        """Save all settings and close."""
+        self.apply_settings()
         self.accept()
         
     def get_measurement_settings(self):

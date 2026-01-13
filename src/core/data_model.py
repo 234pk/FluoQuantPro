@@ -5,6 +5,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict
+from .channel_config import get_channel_color, get_rgb_mapping
+from .image_loader import ImageLoader
 
 @dataclass
 class DisplaySettings:
@@ -35,26 +37,6 @@ class ScaleBarSettings:
     font_size: int = 20
     margin: int = 20 # Pixels from edge
 
-@dataclass
-class GraphicAnnotation:
-    """
-    User-drawn graphic annotations (arrows, shapes, text).
-    """
-    id: str
-    type: str # 'arrow', 'line', 'rect', 'ellipse', 'circle', 'polygon', 'text', 'roi_ref'
-    points: List[Tuple[float, float]] # Start/End or center/size or polygon vertices
-    color: str = "#FFFF00"
-    thickness: int = 2
-    text: str = ""
-    font_size: int = 20
-    visible: bool = True
-    roi_id: Optional[str] = None # Link to an ROI if this annotation represents one
-    export_only: bool = False # If true, only shows up in export
-    style: str = "solid" # solid, dashed, dotted
-    selectable: bool = True # Whether the annotation can be selected/edited
-    is_dragging: bool = False # Temporary state for performance optimization
-    properties: Dict = field(default_factory=dict) # Custom properties (arrow_head_size, etc.)
-
 # Biological Fluorescence Channel Mappings Reference:
 # --------------------------------------------------
 # BLUE CHANNEL (B / Index 2):
@@ -71,32 +53,26 @@ class ImageChannel:
     Represents a single fluorescence channel (e.g., DAPI, GFP).
     Holds raw data (immutable) and display settings (mutable).
     """
-    def __init__(self, file_path: str, color: str = "#FFFFFF", name: Optional[str] = None, data: Optional[np.ndarray] = None, auto_contrast: bool = False):
+    def __init__(self, file_path: str, color: str = None, name: Optional[str] = None, data: Optional[np.ndarray] = None, auto_contrast: bool = False):
         """
         Initializes an ImageChannel.
-        
-        Scientific Rigor Notes:
-        1. Dimension Normalization: Automatically collapses degenerate dimensions 
-           (e.g., (1, H, W) or (H, W, 1)) to (H, W). This prevents "dimension traps" 
-           common in microscope metadata.
-        2. Signal Preservation: For multi-channel files with unknown channel types,
-           uses Max Projection instead of weighted averaging to preserve the 
-           maximum photon count signal for analysis.
-        3. Raw Data Integrity: The self._raw_data attribute ALWAYS holds the 
-           original sensor data for analysis, while display_settings are used
-           only for visualization.
+        Uses ImageLoader for robust bio-format support and channel mapping.
         """
         t_start = time.time()
         self.file_path = file_path
         self.name = name if name else (os.path.basename(file_path) if file_path else "Empty")
         self.is_placeholder = False
-        self.is_rgb = False # Flag for RGB/Multichannel data
+        self.is_rgb = False
         
         # Caching for Enhancement Pipeline
         self._cached_enhanced_data = None
         self._last_enhance_params = None
         
-        # Initialize default display settings immediately to prevent AttributeError
+        # Determine default color based on name if not provided
+        if color is None:
+            color = get_channel_color(self.name)
+
+        # Initialize default display settings
         self.display_settings = DisplaySettings(
             color=color,
             min_val=0.0,
@@ -106,154 +82,43 @@ class ImageChannel:
         self.display_settings.enhance_params = {}
         
         if not file_path and data is None:
-            # Placeholder initialization
             self.is_placeholder = True
-            self._raw_data = np.zeros((1, 1), dtype=np.uint16) # Minimal placeholder
+            self._raw_data = np.zeros((1, 1), dtype=np.uint16)
             self.shape = (1, 1)
             self.dtype = np.uint16
             return
 
-        # Load data using tifffile for best bio-format support
-        # We assume 2D image for now (Y, X). 
-        # TODO: Handle Z-stacks or Time-series if needed later.
         try:
             if data is not None:
-                self._raw_data = data
+                # Still apply channel extraction if data is multi-channel/RGB
+                if data.ndim == 3:
+                    self._raw_data = ImageLoader.extract_channel_data(data, self.name)
+                else:
+                    self._raw_data = data
+                self.is_rgb = self._raw_data.ndim == 3
             else:
-                ext = os.path.splitext(file_path)[1].lower()
-                if ext in (".tif", ".tiff"):
-                    self._raw_data = tifffile.imread(file_path)
-                else:
-                    raise ValueError(f"Unsupported by tifffile loader: {ext}")
+                # Use dedicated ImageLoader for all disk I/O
+                raw_data, self.is_rgb = ImageLoader.load_image(file_path)
+                
+                # Extract/Combine channels based on biological mapping rules
+                self._raw_data = ImageLoader.extract_channel_data(raw_data, self.name)
+                
+                # If extraction happened, it's now 2D
+                if self._raw_data.ndim == 2:
+                    self.is_rgb = False
+                    
         except Exception as e:
-            try:
-                import cv2
+            raise IOError(f"Failed to load image {file_path}: {str(e)}")
 
-                # img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
-                # Fix for Unicode paths on Windows:
-                img_stream = np.fromfile(file_path, dtype=np.uint8)
-                img = cv2.imdecode(img_stream, cv2.IMREAD_UNCHANGED)
-                if img is None:
-                    raise IOError(f"cv2.imread returned None for {file_path}")
-
-                if img.ndim == 3:
-                    if img.shape[2] == 3:
-                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    elif img.shape[2] == 4:
-                        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-
-                self._raw_data = img
-            except Exception as e2:
-                raise IOError(f"Failed to load image {file_path}: {e} / {e2}")
-
-        # --- Channel Extraction & Robustness Logic ---
-        # 1. Dimension Pre-processing: Handle (H, W, 1) and other oddities
-        if self._raw_data.ndim == 3:
-            # Case 1: (H, W, 1) - Common in single-channel microscope exports
-            if self._raw_data.shape[2] == 1:
-                self._raw_data = self._raw_data[:, :, 0]
-                print(f"Info: Collapsed (H, W, 1) to (H, W) for {self.name}")
-            # Case 2: (1, H, W)
-            elif self._raw_data.shape[0] == 1:
-                self._raw_data = self._raw_data[0, :, :]
-                print(f"Info: Collapsed (1, H, W) to (H, W) for {self.name}")
-        
-        # 2. Channel Extraction from RGB/Multichannel
-        if self._raw_data.ndim == 3:
-            self.is_rgb = True  # Mark as originally multi-channel/RGB
-            
-            # --- USER REQUEST: Pseudo-RGB Detection ---
-            # If only one channel has non-zero data, use it directly as grayscale.
-            # This handles cases where a grayscale image was saved as RGB with empty channels.
-            non_zero_channels = []
-
-            # Use name_upper here as well if needed for early detection
-            name_upper = self.name.upper()
-
-            # Handle both (C, H, W) and (H, W, C)
-            if self._raw_data.shape[0] < self._raw_data.shape[2]: # (C, H, W)
-                for i in range(self._raw_data.shape[0]):
-                    # Robust check: Max > 5
-                    ch_slice = self._raw_data[i, :, :]
-                    if np.max(ch_slice) > 5:
-                        non_zero_channels.append(i)
-                
-                if len(non_zero_channels) == 1:
-                    idx = non_zero_channels[0]
-                    self._raw_data = self._raw_data[idx, :, :]
-                    print(f"Info: Pseudo-RGB detected. Using non-zero channel {idx} for {self.name}")
-                    self.is_rgb = False
-                    self.dtype = self._raw_data.dtype
-                    self.shape = self._raw_data.shape[:2]
-            else: # (H, W, C)
-                for i in range(self._raw_data.shape[2]):
-                    # Robust check: Max > 5
-                    ch_slice = self._raw_data[:, :, i]
-                    if np.max(ch_slice) > 5:
-                        non_zero_channels.append(i)
-                
-                if len(non_zero_channels) == 1:
-                    idx = non_zero_channels[0]
-                    self._raw_data = self._raw_data[:, :, idx]
-                    print(f"Info: Pseudo-RGB detected. Using non-zero channel {idx} for {self.name}")
-                    self.is_rgb = False
-                    self.dtype = self._raw_data.dtype
-                    self.shape = self._raw_data.shape[:2]
-
-            # Only proceed with name-based rules if still 3D (i.e., not a pseudo-RGB)
-            if self._raw_data.ndim == 3:
-                idx = -1
-            
-                # Rule 1: Green Channels
-                if any(k in name_upper for k in ["GFP", "FITC", "ALEXA488", "ALEXA 488", "CY2", "CALCEIN", "YFP", "GREEN"]):
-                    # Check for (C, H, W) vs (H, W, C)
-                    if self._raw_data.shape[0] < self._raw_data.shape[2]: # (C, H, W)
-                        idx = 1 if self._raw_data.shape[0] > 1 else 0
-                        self._raw_data = self._raw_data[idx, :, :]
-                    else: # (H, W, C)
-                        idx = 1 if self._raw_data.shape[2] > 1 else 0
-                        self._raw_data = self._raw_data[:, :, idx]
-                    print(f"Info: Extracted Green channel for {self.name}")
-                    
-                # Rule 2: Blue Channels
-                elif any(k in name_upper for k in ["DAPI", "HOECHST", "ALEXA405", "ALEXA 405", "BFP", "BLUE"]):
-                    if self._raw_data.shape[0] < self._raw_data.shape[2]: # (C, H, W)
-                        idx = 2 if self._raw_data.shape[0] > 2 else (self._raw_data.shape[0]-1)
-                        self._raw_data = self._raw_data[idx, :, :]
-                    else: # (H, W, C)
-                        idx = 2 if self._raw_data.shape[2] > 2 else (self._raw_data.shape[2]-1)
-                        self._raw_data = self._raw_data[:, :, idx]
-                    print(f"Info: Extracted Blue channel for {self.name}")
-                    
-                # Rule 3: Red Channels
-                elif any(k in name_upper for k in ["RFP", "MCHERRY", "TRITC", "CY3", "ALEXA555", "ALEXA 555", "ALEXA568", "ALEXA 568", "ALEXA594", "ALEXA 594", "TEXAS RED", "RED"]):
-                    if self._raw_data.shape[0] < self._raw_data.shape[2]: # (C, H, W)
-                        self._raw_data = self._raw_data[0, :, :]
-                    else: # (H, W, C)
-                        self._raw_data = self._raw_data[:, :, 0]
-                    print(f"Info: Extracted Red channel for {self.name}")
-                
-                # Rule 4: Fallback - Unknown channel name but 3D data
-                else:
-                    # Use Max Projection to preserve signal without weighted averaging
-                    if self._raw_data.shape[0] < self._raw_data.shape[2]: # (C, H, W)
-                        print(f"Warning: Unknown channel '{self.name}' (C,H,W). Using Max Projection.")
-                        self._raw_data = np.max(self._raw_data, axis=0)
-                    else: # (H, W, C)
-                        print(f"Warning: Unknown channel '{self.name}' (H,W,C). Using Max Projection.")
-                        self._raw_data = np.max(self._raw_data, axis=2)
-                
-                self.is_rgb = False # Data is now normalized to 2D
-        
         self.dtype = self._raw_data.dtype
-        self.shape = self._raw_data.shape[:2] # Always use (H, W) for shape property to avoid breaking 2D assumptions in UI
+        self.shape = self._raw_data.shape[:2]
         
         # Auto-scale initial display settings
         self.auto_scale(auto_contrast)
         
-        print(f"[Timing] ImageChannel initialized. Min: {self.display_settings.min_val}, Max: {self.display_settings.max_val} (Auto-scaled). Dtype: {self._raw_data.dtype}")
-        print(f"[Timing] ImageChannel total init: {time.time() - t_start:.4f}s")
-
+        print(f"[Timing] ImageChannel '{self.name}' initialized. Color: {self.display_settings.color}. Dtype: {self.dtype}")
+        print(f"[Timing] Total init time: {time.time() - t_start:.4f}s")
+         
     def auto_scale(self, auto_contrast=True):
         t_stats = time.time()
         try:
@@ -390,8 +255,8 @@ class Session(QObject):
         self.undo_stack = undo_stack or QUndoStack(self)
         self.roi_manager = RoiManager(self.undo_stack)
         self.scale_bar_settings = ScaleBarSettings()
-        self.annotations: List[GraphicAnnotation] = []
-        self.show_annotations: bool = True
+        # Deprecated: self.annotations = []
+        # Deprecated: self.show_annotations = True
         
     def undo(self):
         self.undo_stack.undo()
@@ -404,7 +269,8 @@ class Session(QObject):
         self.channels.clear()
         self._reference_shape = None
         self.roi_manager.clear()
-        self.annotations.clear() # USER REQUEST: Ensure annotations are cleared
+        # Deprecated: self.annotations.clear()
+        self.is_single_channel_mode = False
         self.project_changed.emit()
 
     def load_project(self, folder: str):
@@ -434,80 +300,10 @@ class Session(QObject):
                     )
         
         self.channels.append(channel)
+        # Update single channel mode
+        self.is_single_channel_mode = (len(self.channels) == 1)
         self.data_changed.emit()
         self.project_changed.emit()
-
-    def serialize_annotations(self) -> List[dict]:
-        """Convert all annotations to serializable dicts."""
-        from dataclasses import asdict
-        return [asdict(ann) for ann in self.annotations]
-
-    def set_annotations(self, ann_dicts: List[dict]):
-        """Restore annotations from serialized dicts."""
-        self.annotations = [] # Clear current list
-        if ann_dicts is None:
-            ann_dicts = [] # Handle None input safely
-            
-        for d in ann_dicts:
-            try:
-                ann = GraphicAnnotation(**d)
-                self.annotations.append(ann)
-            except Exception as e:
-                print(f"Error restoring annotation: {e}")
-        self.project_changed.emit()
-
-    def sync_existing_rois_to_annotations(self):
-        """
-        USER REQUEST: Converts all current ROIs into graphic annotations 
-        if they don't already have one. This is triggered when 'Sync ROIs as Annotations'
-        is toggled ON in the ROI Toolbox.
-        """
-        existing_roi_ids = {ann.roi_id for ann in self.annotations if ann.roi_id}
-        
-        added_count = 0
-        for roi in self.roi_manager.get_all_rois():
-            if roi.id in existing_roi_ids:
-                continue
-                
-            # Map ROI type to GraphicAnnotation type
-            ann_type = roi.roi_type
-            if ann_type == "rectangle":
-                ann_type = "rect"
-            elif ann_type == "point":
-                ann_type = "circle"
-            # polygon, line, arrow, ellipse usually match or are handled by fallback
-                
-            # Convert QPointF list to List[Tuple[float, float]]
-            points = [(p.x(), p.y()) for p in roi.points]
-            
-            # Fallback for ROI types that might not have points list populated (e.g. Magic Wand)
-            if not points and not roi.path.isEmpty():
-                rect = roi.path.boundingRect()
-                if ann_type in ["rect", "rectangle", "ellipse"]:
-                    points = [(rect.left(), rect.top()), (rect.right(), rect.bottom())]
-                else:
-                    # For complex paths without points, we'd need path-to-points conversion
-                    # For now, use bounds as a basic placeholder
-                    points = [(rect.left(), rect.top()), (rect.right(), rect.bottom())]
-
-            if not points:
-                continue
-
-            ann = GraphicAnnotation(
-                id=str(uuid.uuid4()),
-                type=ann_type,
-                points=points,
-                color=roi.color.name(),
-                thickness=2,
-                roi_id=roi.id,
-                selectable=True
-            )
-            self.annotations.append(ann)
-            added_count += 1
-            
-        if added_count > 0:
-            print(f"[Session] Synced {added_count} existing ROIs to annotations.")
-            self.project_changed.emit()
 
     def add_channel(self, file_path: str, color: str = "#FFFFFF", name: Optional[str] = None, data: Optional[np.ndarray] = None) -> ImageChannel:
         """
@@ -530,6 +326,8 @@ class Session(QObject):
                     )
         
         self.channels.append(new_channel)
+        # Update single channel mode
+        self.is_single_channel_mode = (len(self.channels) == 1)
         self.data_changed.emit()
         self.project_changed.emit()
         return new_channel
@@ -539,7 +337,10 @@ class Session(QObject):
             self.channels.pop(index)
             if not self.channels:
                 self._reference_shape = None
-            self.project_changed.emit()
+            
+            # Update single channel mode
+            self.is_single_channel_mode = (len(self.channels) == 1)
+            self.data_changed.emit()
 
     def get_channel(self, index: int) -> Optional[ImageChannel]:
         if 0 <= index < len(self.channels):
@@ -647,4 +448,5 @@ class Session(QObject):
             
             save_path = os.path.join(output_dir, fname)
             
+            tifffile.imwrite(save_path, ch.raw_data)
             tifffile.imwrite(save_path, ch.raw_data)

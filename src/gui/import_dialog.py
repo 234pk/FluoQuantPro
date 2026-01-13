@@ -120,8 +120,8 @@ class ImportDialog(QDialog):
             "GFP": "#00FF00",     # Green
             "RFP": "#FF0000",     # Red
             "YFP": "#FFFF00",     # Yellow
-            "CY3": "#FF00FF",     # Magenta (Standard Cy3 is often pseudo-colored Magenta or Red-Orange)
-            "CY5": "#FFFFFF",     # White or Cyan, commonly White/Cyan in dark themes
+            "CY3": "#FF0000",     # Red
+            "CY5": "#FF00FF",     # Magenta
             "Other": "#808080"    # Gray
         }
         

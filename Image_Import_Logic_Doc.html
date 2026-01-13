@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>FluoQuantPro 图像导入与处理技术白皮书</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true, theme: 'neutral'});</script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.8; color: #333; max-width: 1000px; margin: 0 auto; padding: 40px; background-color: #f9f9f9; }
+        h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; text-align: center; font-size: 2.5em; }
+        h2 { color: #2980b9; margin-top: 40px; border-left: 5px solid #2980b9; padding-left: 15px; }
+        h3 { color: #16a085; margin-top: 25px; }
+        p { margin-bottom: 15px; text-align: justify; }
+        .highlight { background-color: #fff3cd; padding: 2px 5px; border-radius: 3px; font-weight: bold; }
+        .code-block { background-color: #2d3436; color: #dfe6e9; padding: 20px; border-radius: 8px; font-family: 'Consolas', monospace; overflow-x: auto; margin: 20px 0; }
+        .sci-note { background-color: #e1f5fe; border-right: 5px solid #03a9f4; padding: 15px; margin: 20px 0; font-style: italic; }
+        .warning-note { background-color: #fff3e0; border-left: 5px solid #ff9800; padding: 15px; margin: 20px 0; }
+        .img-placeholder { background-color: #ecf0f1; border: 2px dashed #bdc3c7; height: 300px; display: flex; align-items: center; justify-content: center; color: #7f8c8d; flex-direction: column; margin: 20px 0; border-radius: 10px; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #3498db; color: white; }
+        .footer { margin-top: 100px; text-align: center; color: #95a5a6; font-size: 0.9em; border-top: 1px solid #eee; padding-top: 20px; }
+    </style>
+</head>
+<body>
+
+    <h1>FluoQuantPro 图像导入与处理技术白皮书</h1>
+    <p style="text-align: center; color: #7f8c8d;">版本：1.2 | 更新日期：2026-01-11 | 核心逻辑：ImageLoader & Tensor Normalization</p>
+
+    <h2>1. 引言：生物影像的数据挑战</h2>
+    <p>在荧光显微成像领域，图像不再仅仅是像素的集合，而是一个包含多维信息的<b>数据立方体（Data Cube）</b>。典型的生物图像格式（如 OME-TIFF）往往承载着 T（时间）、Z（焦平面）、C（通道）以及空间坐标（X, Y）。</p>
+    <p>FluoQuantPro 的核心使命是确保这些复杂的数据能够以<b>科学、准确、高效</b>的方式转化为可供量化的分析结果。本文档将详细阐述 FluoQuantPro 在图像导入、维度处理及通道映射方面的底层逻辑。</p>
+
+    <div class="mermaid" style="display: flex; justify-content: center; margin: 30px 0;">
+    graph TD
+        A[图像文件 / Image File] --> B{格式检测 / Format?}
+        B -- OME-TIFF / Bio-Formats --> C[提取多维元数据 / Meta Extract]
+        B -- Standard TIFF / PNG --> D[OpenCV / Tifffile 读取]
+        
+        C --> E[维度检查 / Dim Check]
+        D --> E
+        
+        E -- 4D (T, Z, C, X, Y) --> F[Squeeze 消除占位符]
+        F -- 仍 > 3D --> G[MIP 最大强度投影]
+        
+        E -- 3D (C, X, Y) --> H[通道拆分 / Split]
+        E -- 2D (X, Y) --> I[单通道映射 / Mapping]
+        
+        G --> H
+        H --> J[ImageChannel 对象]
+        I --> J
+        
+        subgraph "双轨制处理 / Dual-Track"
+            J --> K[测量轨: 原始数据 / Raw Data]
+            J --> L[渲染轨: 视觉增强 / LUT & Enhance]
+        end
+    </div>
+    <p style="text-align: center; color: #7f8c8d;">图 1：FluoQuantPro 图像导入与多维处理流程图</p>
+
+    <h2>2. 不同图像类型的处理逻辑</h2>
+    <div class="mermaid" style="display: flex; justify-content: center; margin: 30px 0;">
+    graph TD
+        Start[开始处理 / Start] --> Input{输入维度 / Dimensions}
+        
+        Input -- "2D (H, W)" --> Direct[直接显示 / Direct Display]
+        Input -- "3D (C, H, W)" --> Split[通道拆分 / Channel Split]
+        Input -- "3D (Z, H, W)" --> MIP[最大强度投影 / MIP]
+        Input -- "4D (T, Z, C, H, W)" --> Squeeze[Squeeze 降维]
+        
+        Squeeze --> Check{降维后维度}
+        Check -- "仍 > 3D" --> Proj[空间/时间轴投影]
+        Check -- "3D / 2D" --> Input
+        
+        Split --> Map[通道生物学映射]
+        MIP --> Split
+        Proj --> Split
+        
+        Direct --> End[完成 / Done]
+        Map --> End
+    </div>
+    <p style="text-align: center; color: #7f8c8d;">图 2：多维图像自动化处理逻辑流</p>
+
+    <h2>2. 核心架构：从磁盘到内存的生命周期</h2>
+    <p>图像的导入并非简单的读取，而是一个多阶段的管线（Pipeline）。</p>
+    
+    <h3>2.1 ImageLoader：全能 I/O 引擎</h3>
+    <p><code>ImageLoader</code> 是整个系统的门户。它采用 <code>tifffile</code> 作为主引擎，以支持高深度的位图（16-bit, 32-bit）和复杂的 OME 元数据。对于常规格式，它会自动切换至 <code>OpenCV</code> 的优化分支，并处理 Unicode 路径兼容性。</p>
+    
+    <h3>2.2 ImageChannel：数据与表现的分离</h3>
+    <p>系统不直接操作像素。相反，它将原始数据封装在 <code>ImageChannel</code> 对象中。这样做实现了<b>原始数据（Raw Data）</b>与<b>渲染参数（Display Settings）</b>的彻底分离——无论你如何调整对比度、亮度和 Gamma，底层的定量数据始终保持纯净，这确保了后续分析的科学严谨性。</p>
+
+    <h2>3. 科学维度规范化逻辑</h2>
+    <p>这是 FluoQuantPro 处理 4D 报错的关键所在。</p>
+
+    <h3>3.1 Squeeze 逻辑：消除元数据冗余</h3>
+    <p>许多成像软件在导出单层图像时，仍会保留 Z 轴或 T 轴的占位符（长度为 1）。例如，一个形状为 <span class="highlight">(1, 1024, 1024, 3)</span> 的数组。在科学上，这个维度是多余的。</p>
+    <div class="code-block">
+        # 核心算法：Squeeze
+        raw_data = np.squeeze(raw_data)
+    </div>
+    <p>通过 <code>np.squeeze</code>，我们将无效维度剥离，这不涉及任何像素合并或丢失，是 <b>100% 科学安全</b>的降维方式。</p>
+
+    <h3>3.2 Max Intensity Projection (MIP)：层扫数据的处理</h3>
+    <p>如果 <code>squeeze</code> 后数据仍为 4D（例如真实的 Z-stack 层扫），系统会采用<b>最大强度投影（MIP）</b>。MIP 的原理是沿着 Z 轴方向，在每一个 (x, y) 位置仅保留亮度最高的像素值。</p>
+    <div class="sci-note">
+        <b>科学性说明：</b> MIP 是荧光分析中的标准协议。它能有效地展示细胞的全貌，防止因为细胞在不同焦平面的分布而导致的信号遗漏。对于 2D 计数和形态分析，MIP 提供了最稳健的数据基础。
+    </div>
+
+    <h2>4. 通道指派逻辑：生物学映射</h2>
+    <p>当用户将图片指派给特定通道（如 RFP）时，系统并非只是简单地给图片涂上红色。</p>
+
+    <h3>4.1 RGB 通道提取算法</h3>
+    <p>如果导入的是 RGB 彩色图，系统会根据 [channel_config] 预设的生物学权重进行提取。例如：</p>
+    <ul>
+        <li><b>RFP/Cy3/mCherry</b>：提取 Red 通道。</li>
+        <li><b>GFP/FITC/Alexa 488</b>：提取 Green 通道。</li>
+        <li><b>DAPI/Hoechst</b>：提取 Blue 通道。</li>
+    </ul>
+
+    <h3>4.2 为什么单通道模式会报错？</h3>
+    <p>在早期的逻辑中：
+        1. <b>RFP 模式</b>：由于提取通道时使用了切片操作 <code>data[0, :, :]</code>，Numpy 自动完成了降维。
+        2. <b>单通道/Merge 模式</b>：系统尝试返回“原始数据”。如果原始数据是带占位符的 4D，渲染器（Qt）无法处理超过 3 维的张量，从而导致崩溃。
+    </p>
+    <p><b>修复后逻辑：</b>所有路径现在统一通过维度规范化过滤器，确保进入 UI 的数据永远是 2D 或 3D（RGB）。</p>
+
+    <h2>5. 科学性深度解析</h2>
+
+    <h3>5.1 定量准确性保障</h3>
+    <p>系统在处理 16-bit 图像时，坚决不进行有损压缩。图像在内存中以 <code>uint16</code> 或 <code>float32</code> 存储。所有的直方图拉伸和对比度增强仅发生在渲染层（GLSL Shader 或 QImage 转换），不触碰内存中的分析数据。</p>
+
+    <h3>5.2 为什么 ImageJ 只能拆分三通道？</h3>
+    <p>ImageJ 的 "Split Channels" 是基于 <b>Color Model</b> 的。如果图片元数据被标记为 RGB，即使它在物理存储上是一个 4D TIFF，ImageJ 也会默认将其作为 3 维彩色信息处理。这解释了为什么你在 ImageJ 中看不到“第四个通道”——因为它不是独立的荧光通道，而是文件的<b>维度结构信息</b>。</p>
+
+    <div class="warning-note">
+        <b>注意：</b> 如果您的研究需要对 T（时间轴）进行动力学分析，当前的 MIP 投影策略会混淆时间点。在这种情况下，建议先在专用软件中拆分序列，再分别导入。
+    </div>
+
+    <h2>6. 总结与最佳实践</h2>
+    <table>
+        <tr>
+            <th>操作场景</th>
+            <th>底层逻辑</th>
+            <th>科学性评价</th>
+        </tr>
+        <tr>
+            <td>直接导入单通道</td>
+            <td>自动 Squeeze 降维 + MIP 兜底</td>
+            <td>高（无损或标准投影）</td>
+        </tr>
+        <tr>
+            <td>指派至 RFP/GFP 插槽</td>
+            <td>按颜色权重提取 + 自动对齐</td>
+            <td>极高（符合显微镜颜色协议）</td>
+        </tr>
+        <tr>
+            <td>Merge 模式预览</td>
+            <td>线性加色混合算法</td>
+            <td>中（仅用于视觉展示，不用于定量）</td>
+        </tr>
+    </table>
+
+    <p>通过本次逻辑重构，FluoQuantPro 实现了对各种异常维度图片的完美兼容，同时严格遵循了生物影像分析的行业标准，为后续的 ROI 统计和数据导出提供了坚实的底层保障。</p>
+
+    <div class="footer">
+        © 2026 FluoQuantPro 开发团队 | 致力于极致的生物影像分析体验
+    </div>
+
+</body>
+</html>

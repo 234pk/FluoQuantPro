@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                                QToolButton, 
-                               QInputDialog, QMessageBox, QScrollArea, QCheckBox, QSizePolicy,
+                               QInputDialog, QMessageBox, QScrollArea, QSizePolicy,
                                QApplication, QGridLayout)
 from PySide6.QtCore import Qt, Signal, QTimer, QSize
 from PySide6.QtGui import QIcon
@@ -10,6 +10,7 @@ from src.gui.histogram_panel import HistogramPanel
 from src.gui.icon_manager import get_icon
 from src.core.commands import EnhanceCommand
 from src.core.language_manager import tr, LanguageManager
+from src.gui.toggle_switch import ToggleSwitch
 
 class PercentageControlWidget(QWidget):
     """
@@ -30,6 +31,8 @@ class PercentageControlWidget(QWidget):
         self.current_percent = 0.0 # Default to 0 initially
         self.setup_ui()
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
+        from src.gui.theme_manager import ThemeManager
+        ThemeManager.instance().theme_changed.connect(self.refresh_icons)
         
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -47,7 +50,8 @@ class PercentageControlWidget(QWidget):
         self.lbl_value = QLabel("0%")
         self.lbl_value.setProperty("role", "accent")
         self.lbl_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.lbl_value.setFixedWidth(60)
+        self.lbl_value.setMinimumWidth(0) # Allow shrinking
+        self.lbl_value.setMaximumWidth(60)
         
         # Make double-clickable for input? Implement event filter or custom label
         self.lbl_value.mouseDoubleClickEvent = self.on_value_double_click
@@ -70,7 +74,8 @@ class PercentageControlWidget(QWidget):
             btn.setText(f"{step:+d}")
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-            btn.setFixedSize(28, 28)
+            btn.setMinimumSize(20, 20)
+            btn.setMaximumSize(40, 30)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _, s=step: self.adjust_value(s))
             
@@ -85,7 +90,8 @@ class PercentageControlWidget(QWidget):
         self.btn_auto = QToolButton()
         self.btn_auto.setIcon(get_icon("auto"))
         self.btn_auto.setIconSize(QSize(20, 20))
-        self.btn_auto.setFixedSize(28, 60) # Spans 2 rows (28*2 + 4 spacing)
+        self.btn_auto.setMinimumSize(20, 40)
+        self.btn_auto.setMaximumSize(40, 80)
         self.btn_auto.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_auto.setToolTip(tr("Set to Recommended Maximum Value"))
         self.btn_auto.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -104,12 +110,19 @@ class PercentageControlWidget(QWidget):
         self.lbl_name.setText(tr(self.param_name))
         self.btn_auto.setToolTip(tr("Set to Recommended Maximum Value"))
 
+    def refresh_icons(self):
+        """Refresh icons for the widget."""
+        if hasattr(self, 'btn_auto'):
+            self.btn_auto.setIcon(get_icon("auto"))
+
     def adjust_value(self, step_percent):
         """Step is integer percentage (e.g. +5, -10)."""
         new_val = self.current_percent + (step_percent / 100.0)
         self.set_value(new_val)
         
     def set_value(self, val, silent=False):
+        # Round to 4 decimal places to avoid floating point drift (e.g. 1e-17 instead of 0.0)
+        val = round(val, 4)
         self.current_percent = max(self.min_val, min(self.max_val, val))
         self.update_display()
         if not silent:
@@ -203,18 +216,15 @@ class EnhancePanel(QWidget):
         super().__init__(parent)
         self.session = session
         self.active_channel_index = -1
-        self.parameter_lock = False
         self._last_applied_params = {} # Track for undo
         self._last_applied_percents = {} # Track for undo
-        self.auto_params_cache = {} # Cache per channel or global if locked?
-                                    # If locked, we use ONE global auto_params set.
-        self.locked_auto_params = None
+        self.auto_params_cache = {} # Cache per channel
         
         # Debounce
         self.debounce_timer = QTimer()
         self.debounce_timer.setSingleShot(True)
-        self.debounce_timer.setInterval(300) # 300ms debounce to prevent lag during dragging
-        self.debounce_timer.timeout.connect(self.emit_settings_changed)
+        self.debounce_timer.setInterval(150) # 150ms debounce for responsive but efficient updates
+        self.debounce_timer.timeout.connect(self._handle_debounce_timeout)
         
         # Connect to global session changes (for Undo/Redo support)
         self.session.data_changed.connect(self.update_controls_from_channel)
@@ -229,15 +239,40 @@ class EnhancePanel(QWidget):
         layout.setSpacing(10)
         
         # Histogram
-        self.histogram_panel = HistogramPanel(self.session)
+        self.histogram_panel = HistogramPanel(self.session, mode="enhance")
         self.histogram_panel.channel_activated.connect(self.channel_activated)
         self.histogram_panel.settings_changed.connect(self.settings_changed)
         layout.addWidget(self.histogram_panel)
         
-        self.chk_lock = QCheckBox(tr("Lock enhancement parameters for all images (freeze auto-calculation)"))
-        self.chk_lock.setToolTip(tr("Lock enhancement parameters for all images (freeze auto-calculation)"))
-        self.chk_lock.toggled.connect(self.on_lock_toggled)
-        layout.addWidget(self.chk_lock)
+        # Toolbar Row (Refresh and Info)
+        self.row_toolbar = QHBoxLayout()
+        self.row_toolbar.setContentsMargins(5, 5, 5, 5)
+        self.row_toolbar.setSpacing(10)
+        
+        # Reset Button (Refresh)
+        self.btn_reset = QToolButton()
+        self.btn_reset.setIcon(get_icon("refresh", "view-refresh"))
+        self.btn_reset.setIconSize(QSize(18, 18))
+        self.btn_reset.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_reset.setToolTip(tr("Reset all enhancement parameters to zero"))
+        self.btn_reset.setFixedSize(30, 30)
+        self.btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_reset.clicked.connect(self.reset_all_params)
+
+        # Question Button (formerly Info/Export)
+        self.btn_info = QToolButton()
+        self.btn_info.setIcon(get_icon("help", "help-contents"))
+        self.btn_info.setIconSize(QSize(18, 18))
+        self.btn_info.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.btn_info.setToolTip(tr("Show current enhancement parameter details"))
+        self.btn_info.setFixedSize(30, 30)
+        self.btn_info.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_info.clicked.connect(self.export_params)
+        
+        self.row_toolbar.addWidget(self.btn_reset)
+        self.row_toolbar.addWidget(self.btn_info)
+        self.row_toolbar.addStretch()
+        layout.addLayout(self.row_toolbar)
         
         # Controls Area
         scroll = QScrollArea()
@@ -279,22 +314,7 @@ class EnhancePanel(QWidget):
         self.ctrl_gamma = PercentageControlWidget("Display Gamma", min_val=-1.0, max_val=1.0, auto_val=0.0)
         self.ctrl_gamma.value_changed.connect(self.on_param_changed)
         vbox.addWidget(self.ctrl_gamma)
-        
-        # Export Button
-        self.btn_export = QToolButton()
-        self.btn_export.setIcon(get_icon("export_params", "document-save"))
-        self.btn_export.setIconSize(QSize(20, 20))
-        self.btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.btn_export.setToolTip(tr("Apply current enhancement parameters"))
-        self.btn_export.setFixedSize(28, 28)
-        self.btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_export.clicked.connect(self.export_params)
-        
-        h_export = QHBoxLayout()
-        h_export.addWidget(self.btn_export)
-        h_export.addStretch()
-        vbox.addLayout(h_export)
-        
+
         vbox.addStretch()
         # scroll.setWidget(content) # Move this to the end to ensure content is fully initialized? No, setWidget is fine.
         layout.addWidget(scroll)
@@ -311,11 +331,7 @@ class EnhancePanel(QWidget):
         if hasattr(self, 'histogram_panel'):
             self.histogram_panel.setVisible(width > 100)
             
-        # 2. 锁定复选框文字优化
-        if hasattr(self, 'chk_lock'):
-            self.chk_lock.setText("" if is_compact else tr("Lock enhancement parameters for all images (freeze auto-calculation)"))
-            
-        # 3. 遍历子控件分发尺寸变化
+        # 2. 遍历子控件分发尺寸变化
         for i in range(self.layout().count()):
             item = self.layout().itemAt(i)
             if item.widget() and isinstance(item.widget(), QScrollArea):
@@ -328,9 +344,32 @@ class EnhancePanel(QWidget):
         super().resizeEvent(event)
 
     def retranslate_ui(self):
-        self.chk_lock.setText(tr("Lock enhancement parameters for all images (freeze auto-calculation)"))
-        self.chk_lock.setToolTip(tr("Lock enhancement parameters for all images (freeze auto-calculation)"))
-        self.btn_export.setToolTip(tr("Apply current enhancement parameters"))
+        """Update UI texts on language change."""
+        self.btn_reset.setToolTip(tr("Reset all enhancement parameters to zero"))
+        self.btn_info.setToolTip(tr("Show current enhancement parameter details"))
+        if hasattr(self, 'histogram_panel'):
+            self.histogram_panel.retranslate_ui()
+
+    def refresh_icons(self):
+        """Refresh icons for the panel."""
+        self.btn_reset.setIcon(get_icon("refresh", "view-refresh"))
+        self.btn_info.setIcon(get_icon("help", "help-contents"))
+        
+        # Refresh histogram icons
+        if hasattr(self, 'histogram_panel') and hasattr(self.histogram_panel, 'refresh_icons'):
+            self.histogram_panel.refresh_icons()
+            
+        # Refresh all percentage controls
+        for i in range(self.layout().count()):
+            item = self.layout().itemAt(i)
+            if item.widget() and isinstance(item.widget(), PercentageControlWidget):
+                item.widget().refresh_icons()
+            elif item.layout():
+                # Check sub-layouts for widgets
+                for j in range(item.layout().count()):
+                    sub_item = item.layout().itemAt(j)
+                    if sub_item.widget() and isinstance(sub_item.widget(), PercentageControlWidget):
+                        sub_item.widget().refresh_icons()
         
     def set_active_channel(self, index: int):
         self.active_channel_index = index
@@ -359,45 +398,25 @@ class EnhancePanel(QWidget):
         ch = self.session.get_channel(self.active_channel_index)
         if not ch: return
         
-        # Initialize auto params if needed
-        # Logic: 
-        # If Locked: use locked_auto_params (if exists).
-        # If Not Locked: Estimate new auto params for this image.
-        
-        # Optimization: Only estimate auto params if we are actually going to use them
-        # or if the user opens this panel.
-        # But we need 'auto_p' to calculate the raw params below.
-        
-        if self.parameter_lock and self.locked_auto_params:
-            auto_p = self.locked_auto_params
+        # Estimate auto params for this image.
+        if ch.raw_data is not None:
+            auto_p = EnhanceProcessor.estimate_auto_params(ch.raw_data)
         else:
-            # Estimate
-            # Optimization: Use downsampled data inside estimate_auto_params (already implemented)
-            if ch.raw_data is not None:
-                auto_p = EnhanceProcessor.estimate_auto_params(ch.raw_data)
-            else:
-                auto_p = {}
+            auto_p = {}
                 
-            if self.parameter_lock and self.locked_auto_params is None:
-                self.locked_auto_params = auto_p # First image sets the lock
-                
-        # Store auto params in channel for processing usage?
-        # Actually, channel.display_settings should store the RESULTING raw params.
-        # But UI state needs the Percentages.
-        # Where do we store percentages? In display_settings.enhance_percents
-        
-        if not hasattr(ch.display_settings, 'enhance_percents'):
-            ch.display_settings.enhance_percents = {
-                'stretch': 0.0, # Default OFF
-                'bg': 0.0, # Default OFF
-                'contrast': 0.0, # Default OFF
-                'noise': 0.0, # Default OFF
-                'gamma': 0.0 # Default Neutral
-            }
-            
-        # Temporarily store auto_p in display_settings to be used by calculate_raw_params
+        # Store auto_p in display_settings to be used by calculate_raw_params
         ch.display_settings.auto_params = auto_p
         
+        # Ensure percents exist
+        if not hasattr(ch.display_settings, 'enhance_percents'):
+            ch.display_settings.enhance_percents = {
+                'stretch': 0.0,
+                'bg': 0.0,
+                'contrast': 0.0,
+                'noise': 0.0,
+                'gamma': 0.0
+            }
+            
         # Update UI
         p = ch.display_settings.enhance_percents
         self.ctrl_stretch.blockSignals(True)
@@ -422,62 +441,55 @@ class EnhancePanel(QWidget):
         
         # Sync last applied for undo tracking
         self._last_applied_percents = p.copy()
-        self._last_applied_params = ch.display_settings.enhance_params.copy()
+        self._last_applied_params = getattr(ch.display_settings, 'enhance_params', {}).copy()
         
         # Trigger calculation (only once)
-        # OPTIMIZATION: Do NOT trigger calculation here if values are all zero (default).
-        # Just update the internal state without triggering a re-render.
-        # This prevents "Pipeline Total" log on initial load.
-        
-        # Check if current params are different from defaults (all 0.0)
-        # We need to check if 'enhance_percents' implies any active enhancement.
-        # Gamma 0.0 is neutral. Others 0.0 are OFF.
         has_any_active = any(abs(v) > 0.001 for k, v in p.items()) 
         
         if has_any_active:
-            # If there are active params, trigger a calculation
             self.on_param_changed()
         else:
-            # Just ensure display_settings are clean but don't fire signals
-            # CRITICAL: Even if silent=True, we must ensure we don't accidentally set 'enhance_params' 
-            # to something that triggers processing in Renderer if it's supposed to be OFF.
             self.calculate_and_apply_params(silent=True)
+            self.histogram_panel.update_from_channel()
 
-    def on_lock_toggled(self, checked):
-        self.parameter_lock = checked
-        if checked:
-            # Lock current auto params
-            ch = self.session.get_channel(self.active_channel_index)
-            if ch and hasattr(ch.display_settings, 'auto_params'):
-                self.locked_auto_params = ch.display_settings.auto_params
-        else:
-            self.locked_auto_params = None
-            # Re-estimate for current image?
-            self.update_controls_from_channel()
+
 
     def on_param_changed(self, val=None):
-        self.calculate_and_apply_params()
+        """
+        Fast response for histogram + Debounced response for main render.
+        """
+        # 1. Update internal parameters and histogram immediately (using fast preview)
+        self.calculate_and_apply_params(silent=True, fast_preview=True)
+        
+        # 2. Start/Restart timer for heavy main render and undo command
         self.debounce_timer.start()
         
-    def calculate_and_apply_params(self, silent=False):
+    def _handle_debounce_timeout(self):
+        """Actually perform full quality calculations and notify system."""
+        # Update with standard preview quality for histogram
+        self.calculate_and_apply_params(silent=True, fast_preview=False)
+        # Notify main canvas and push undo
+        self.emit_settings_changed()
+
+    def calculate_and_apply_params(self, silent=False, fast_preview=False):
         ch = self.session.get_channel(self.active_channel_index)
         if not ch: return
         
-        # Get percentages
+        # Get percentages (Rounded to 4 decimals to fix floating point drift)
         pcts = {
-            'stretch': self.ctrl_stretch.current_percent,
-            'bg': self.ctrl_bg.current_percent,
-            'contrast': self.ctrl_contrast.current_percent,
-            'noise': self.ctrl_noise.current_percent,
-            'gamma': self.ctrl_gamma.current_percent
+            'stretch': round(self.ctrl_stretch.current_percent, 4),
+            'bg': round(self.ctrl_bg.current_percent, 4),
+            'contrast': round(self.ctrl_contrast.current_percent, 4),
+            'noise': round(self.ctrl_noise.current_percent, 4),
+            'gamma': round(self.ctrl_gamma.current_percent, 4)
         }
+        print(f"DEBUG: [EnhancePanel] UI Percentages -> {pcts}")
         
         # Save percentages
         ch.display_settings.enhance_percents = pcts
         
         # Get Auto Params
         if not hasattr(ch.display_settings, 'auto_params'):
-             # Lazy init if missing (e.g. newly loaded image while panel is active)
              if ch.raw_data is not None:
                  ch.display_settings.auto_params = EnhanceProcessor.estimate_auto_params(ch.raw_data)
              else:
@@ -486,67 +498,61 @@ class EnhancePanel(QWidget):
         auto = ch.display_settings.auto_params
         if not auto: return
         
-        # Mapping Logic
         # 1. Signal Stretch (Percentile Clip)
-        # 0% -> OFF. 100% -> Auto (2.0%). 200% -> Strong (4.0%)
-        # Formula: auto * percent
-        clip_p = auto['stretch_clip'] * pcts['stretch']
-        clip_p = max(0.0, clip_p)
+        # Linear scaling from 0 (Original) to Auto (Baseline)
+        # We use a simple multiplier. 0% -> 0 clip, 100% -> auto['stretch_clip']
+        clip_p = auto['stretch_clip'] * max(0.0, pcts['stretch'])
         
         # 2. Background Suppression (Top-Hat Strength)
-        # 0% -> OFF. 100% -> Standard (1.0).
-        # Formula: percent
-        bg_strength = pcts['bg']
-        # Lower threshold to allow subtle effects (e.g. 1%)
+        # Symmetry: 0% -> Strength 0 (Original), 100% -> Strength 1.0 (Full Suppression)
+        bg_strength = max(0.0, pcts['bg'])
         bg_enabled = (bg_strength > 0.001)
-        # Kernel size is fixed from Auto (User: Radius estimated)
         k_size = int(auto['bg_kernel'])
             
         # 3. Local Contrast (Clip Limit)
-        # 0% -> OFF. 100% -> Standard (1.5).
-        # Formula: auto * (percent^2) for finer control at low levels
-        # User Feedback: 1% was too strong with linear mapping.
-        c_limit = auto['contrast_clip'] * (pcts['contrast'] ** 2)
-        # Lower threshold to allow subtle effects
-        contrast_enabled = (c_limit > 0.001)
+        # Symmetry Fix: 0% -> 0.01 (OpenCV baseline 1.0), +100% -> auto_clip
+        c_limit = 0.01 + (auto['contrast_clip'] * pcts['contrast'])
+        c_limit = max(0.01, c_limit)
+        contrast_enabled = (pcts['contrast'] > 0.005)
         
         # 4. Noise Smoothing (Sigma)
-        # 0% -> OFF. 100% -> Auto.
-        # Formula: auto * percent
-        sigma = auto['noise_sigma'] * pcts['noise']
-        # Lower threshold to allow subtle effects
+        # Symmetry: 0% -> 0 (None), 100% -> auto_sigma
+        sigma = auto['noise_sigma'] * max(0.0, pcts['noise'])
         noise_enabled = (sigma > 0.01)
             
         # 5. Gamma
-        # -100% -> Dark. 0% -> Neutral. +100% -> Bright.
-        # Formula: 1.0 / (1.0 + pct)
-        # Map: gamma = 1.0 / (1.0 + pct * 0.8)
-        gamma_val = 1.0 / (1.0 + pcts['gamma'] * 0.8) # Sens 0.8
-        gamma_enabled = abs(gamma_val - 1.0) > 0.001
+        # Exponential scaling for visual symmetry: +100% -> 0.5, -100% -> 2.0, 0% -> 1.0
+        gamma_val = 2.0 ** (-pcts['gamma'])
+        gamma_enabled = abs(pcts['gamma']) > 0.001
         
         # Build Raw Params
         raw_p = {
             'stretch_enabled': (clip_p > 0.001),
             'stretch_clip': clip_p,
-            
             'bg_enabled': bg_enabled,
             'bg_kernel': k_size,
             'bg_strength': bg_strength,
-            
             'contrast_enabled': contrast_enabled,
             'contrast_clip': c_limit,
             'contrast_tile': int(auto.get('contrast_tile', 8)),
-            
             'noise_enabled': noise_enabled,
             'noise_sigma': sigma,
-            
             'gamma_enabled': gamma_enabled,
             'gamma': gamma_val,
-            'median_enabled': False # Explicitly disable median if not used
+            'median_enabled': False
         }
         
         # Apply
         ch.display_settings.enhance_params = raw_p
+        print(f"DEBUG: [EnhancePanel] Final Calculated Params: {raw_p}")
+        
+        # --- Update Histogram with Preview ---
+        if ch.raw_data is not None:
+            # Use low scale factor during active dragging for extreme speed
+            scale = 0.1 if fast_preview else 0.25
+            preview_img = EnhanceProcessor.process_scientific_pipeline(ch.raw_data, raw_p, scale_factor=scale)
+            # FORCE update the histogram panel with BOTH raw and enhanced data
+            self.histogram_panel.update_from_channel(enhanced_data=preview_img)
         
         if not silent:
             self.emit_settings_changed()
@@ -578,20 +584,34 @@ class EnhancePanel(QWidget):
         self._last_applied_percents = new_percents.copy()
         
         self.settings_changed.emit()
-        self.histogram_panel.update_from_channel()
+        # self.histogram_panel.update_from_channel() # Removed: handled in calculate_and_apply_params with preview data
 
     def export_params(self):
         ch = self.session.get_channel(self.active_channel_index)
         if not ch: return
         p = ch.display_settings.enhance_percents
-        text = (f"荧光增强参数 (Fluorescence Enhancement Parameters):\n"
-                f"--------------------------------\n"
-                f"亮度范围 (Signal Range): {int(p['stretch']*100):+d}%\n"
-                f"背景清除 (Background Suppression): {int(p['bg']*100):+d}%\n"
-                f"结构突出 (Structure Visibility): {int(p['contrast']*100):+d}%\n"
-                f"噪声平滑 (Noise Smoothing): {int(p['noise']*100):+d}%\n"
-                f"显示亮度 (Display Gamma): {int(p['gamma']*100):+d}%\n"
-                f"--------------------------------\n"
-                f"说明: 0% 代表算法自动计算的最佳基准值。")
         
-        QMessageBox.information(self, "导出参数", text)
+        text = (tr("Fluorescence Enhancement Parameters:") + "\n"
+                "--------------------------------\n" +
+                tr("Signal Range") + f": {int(p['stretch']*100):+d}%\n" +
+                tr("Background Suppression") + f": {int(p['bg']*100):+d}%\n" +
+                tr("Structure Visibility") + f": {int(p['contrast']*100):+d}%\n" +
+                tr("Noise Smoothing") + f": {int(p['noise']*100):+d}%\n" +
+                tr("Display Gamma") + f": {int(p['gamma']*100):+d}%\n" +
+                "--------------------------------\n" +
+                tr("Note: 0% represents the optimal baseline calculated by the algorithm."))
+        
+        QMessageBox.information(self, tr("Enhancement Details"), text)
+
+    def reset_all_params(self):
+        """Sets all enhancement percentages to 0.0 (OFF/Neutral)."""
+        self.ctrl_stretch.set_value(0.0)
+        self.ctrl_bg.set_value(0.0)
+        self.ctrl_contrast.set_value(0.0)
+        self.ctrl_noise.set_value(0.0)
+        self.ctrl_gamma.set_value(0.0)
+        
+        # Trigger re-render
+        self.on_param_changed()
+        
+        Logger.info("[UI] Enhancements reset to zero.")

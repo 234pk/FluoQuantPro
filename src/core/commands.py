@@ -178,6 +178,46 @@ class RemoveFromPoolCommand(QUndoCommand):
             self.model.project_changed.emit()
 
 
+class BatchRemoveFromPoolCommand(QUndoCommand):
+    def __init__(self, model, file_paths):
+        super().__init__(f"Remove {len(file_paths)} files from Pool")
+        self.model = model
+        self.file_paths = file_paths
+        self.indices = [] # (path, index)
+
+    def redo(self):
+        self.indices = []
+        # Sort to ensure we can restore in correct order (though set and pool_files might change)
+        # Actually, we should store indices from the end to the beginning to make it easier if we were removing in redo,
+        # but here we are removing individual items.
+        
+        # Block signals for performance during batch redo
+        self.model.blockSignals(True)
+        try:
+            for path in self.file_paths:
+                if path in self.model.pool_files:
+                    idx = self.model.pool_files.index(path)
+                    self.indices.append((path, idx))
+                    self.model._remove_from_pool_internal(path)
+        finally:
+            self.model.blockSignals(False)
+            self.model.project_changed.emit()
+
+    def undo(self):
+        # Restore in reverse order of indices to maintain original order
+        self.model.blockSignals(True)
+        try:
+            # Sort by original index to restore correctly
+            sorted_indices = sorted(self.indices, key=lambda x: x[1])
+            for path, idx in sorted_indices:
+                if path not in self.model.pool_files:
+                    self.model.pool_files.insert(idx, path)
+        finally:
+            self.model.blockSignals(False)
+            self.model.is_dirty = True
+            self.model.project_changed.emit()
+
+
 class AddChannelToSceneCommand(QUndoCommand):
     def __init__(self, model, scene_id, file_path, channel_type, color):
         super().__init__("Add Channel to Sample")

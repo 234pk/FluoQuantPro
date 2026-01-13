@@ -6,6 +6,7 @@ from src.core.data_model import Session
 from src.gui.histogram_panel import HistogramPanel
 from src.core.commands import AdjustmentCommand
 from src.core.language_manager import tr, LanguageManager
+from src.gui.theme_manager import ThemeManager
 
 class AdjustmentPanel(QWidget):
     """
@@ -32,6 +33,7 @@ class AdjustmentPanel(QWidget):
         
         self.setup_ui()
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
+        ThemeManager.instance().theme_changed.connect(self.refresh_icons)
         
     def setup_ui(self):
         self.setObjectName("card")
@@ -46,7 +48,7 @@ class AdjustmentPanel(QWidget):
         self.splitter.setHandleWidth(4)
         
         # 1. Histogram (Embedded)
-        self.histogram_panel = HistogramPanel(self.session)
+        self.histogram_panel = HistogramPanel(self.session, mode="adjustment")
         # Connect signals
         self.histogram_panel.channel_activated.connect(self.channel_activated)
         self.histogram_panel.settings_changed.connect(self.update_controls_from_channel) # Sync markers -> sliders
@@ -101,11 +103,25 @@ class AdjustmentPanel(QWidget):
         self.grp_controls.setEnabled(False)
 
     def retranslate_ui(self):
+        """Update UI texts on language change."""
         self.grp_controls.setTitle(tr("Basic Adjustments"))
         self.lbl_min.setText(tr("Min (Black Point)"))
         self.lbl_max.setText(tr("Max (White Point)"))
         self.lbl_gamma.setText(tr("Gamma"))
         self.btn_reset.setToolTip(tr("Reset brightness/contrast to default"))
+        
+        # Sync with HistogramPanel
+        if hasattr(self, 'histogram_panel'):
+            self.histogram_panel.retranslate_ui()
+
+    def refresh_icons(self):
+        """Refresh icons for the panel."""
+        if hasattr(self, 'btn_reset'):
+            self.btn_reset.setIcon(get_icon("refresh", "view-refresh"))
+        
+        # Refresh histogram panel icons if any
+        if hasattr(self, 'histogram_panel') and hasattr(self.histogram_panel, 'refresh_icons'):
+            self.histogram_panel.refresh_icons()
 
     def resizeEvent(self, event):
         width = self.width()
@@ -146,17 +162,20 @@ class AdjustmentPanel(QWidget):
         layout_container.addWidget(lbl)
         
         slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setMinimumWidth(0) # Allow shrinking
         slider.setRange(min_val, max_val)
         slider.setValue(init_val)
         
         if scale != 1.0:
             spin = QDoubleSpinBox()
+            spin.setMinimumWidth(0)
             spin.setRange(min_val * scale, max_val * scale)
             spin.setSingleStep(scale)
             spin.setValue(init_val * scale)
             spin.setDecimals(2)
         else:
             spin = QDoubleSpinBox()
+            spin.setMinimumWidth(0)
             spin.setDecimals(0)
             spin.setRange(min_val, max_val)
             spin.setSingleStep(1)

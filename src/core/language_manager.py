@@ -40,21 +40,27 @@ class LanguageManager(QObject):
             import sys
             json_path = None
             
-            # 开发环境路径
+            # 1. 尝试相对于当前文件的路径（开发环境或 Nuitka 模式）
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            p_dev = os.path.join(current_dir, "..", "resources", "translations.json")
+            p_rel = os.path.normpath(os.path.join(current_dir, "..", "resources", "translations.json"))
             
-            if os.path.exists(p_dev):
-                json_path = p_dev
+            # 2. 尝试可执行文件所在目录（PyInstaller/Nuitka 部署模式）
+            if getattr(sys, 'frozen', False):
+                base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
             else:
-                # 打包环境路径
-                if getattr(sys, 'frozen', False):
-                    base_dir = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
-                    for sub in ["_internal/src/resources", "_internal/resources", "resources"]:
-                        p = os.path.join(base_dir, sub, "translations.json")
-                        if os.path.exists(p):
-                            json_path = p
-                            break
+                base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+
+            search_paths = [
+                p_rel,
+                os.path.join(base_dir, "src", "resources", "translations.json"),
+                os.path.join(base_dir, "resources", "translations.json"),
+                os.path.join(base_dir, "_internal", "src", "resources", "translations.json")
+            ]
+
+            for p in search_paths:
+                if os.path.exists(p):
+                    json_path = p
+                    break
 
             if json_path and os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -85,10 +91,16 @@ class LanguageManager(QObject):
         if self.current_lang == "en":
             return text
         
-        # 查找翻译
+        # Bilingual Mode for Chinese
         translation = self.translations.get(text)
         if isinstance(translation, dict):
-            return translation.get(self.current_lang, text)
+            zh_text = translation.get(self.current_lang, text)
+            
+            # return original if translation is same
+            if zh_text == text:
+                return text
+                
+            return zh_text
         
         return text
 

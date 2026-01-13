@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 from PySide6.QtGui import QPainterPath, QImage, QPainter, QBrush
 from PySide6.QtCore import Qt
+from typing import Optional, List, Tuple
 
 def qpath_to_mask(path: QPainterPath, shape: tuple) -> np.ndarray:
     """
@@ -59,7 +60,7 @@ def qpath_to_mask(path: QPainterPath, shape: tuple) -> np.ndarray:
         
     return arr > 127
 
-def magic_wand_2d(image: np.ndarray, seed_point: tuple, tolerance: float, smoothing: float = 1.0, relative: bool = False) -> np.ndarray:
+def magic_wand_2d(image: np.ndarray, seed_point: tuple, tolerance: float, smoothing: float = 1.0, relative: bool = False, channel_name: Optional[str] = None) -> np.ndarray:
     """
     Performs flood fill segmentation starting from a seed point.
     
@@ -69,19 +70,30 @@ def magic_wand_2d(image: np.ndarray, seed_point: tuple, tolerance: float, smooth
         tolerance: Sensitivity for intensity matching.
         smoothing: Sigma for Gaussian blur before flood-filling.
         relative: If True, tolerance is treated as a percentage of the seed pixel value.
+        channel_name: Optional biological channel name for mapping-aware grayscale conversion.
     
     Returns: Boolean numpy array (H, W).
     """
-    # Handle dimensionality. If 3D (e.g. RGB or Z-stack), flatten to 2D for processing.
+    # Handle dimensionality. If 3D (e.g. RGB or Z-stack), optionally flatten or keep as RGB.
     if image.ndim == 3:
-        # If it's RGB/RGBA (3 or 4 channels), use Max Projection instead of weighted average
-        # to preserve signal integrity (scientific requirement).
-        if image.shape[2] in (3, 4):
-            work_img = np.max(image[..., :3], axis=2)
+        # Use mapping-aware extraction if channel name is provided
+        if channel_name:
+            from src.core.image_loader import ImageLoader
+            work_img = ImageLoader.extract_channel_data(image, channel_name)
         else:
-            # Use max projection for other multi-channel/Z-stacks
-            work_img = np.max(image, axis=2)
-        h, w = work_img.shape
+            # Fallback: If it's a standard RGB, we can either keep it or flatten it.
+            # OpenCV's floodFill supports 3-channel images.
+            # However, for consistency with single-channel tools, we might still want to flatten
+            # UNLESS the user explicitly wants RGB-based segmentation.
+            # User requested "Use RGB data", which might mean using the 3-channel info.
+            if image.shape[2] in (3, 4):
+                # Keep as RGB (3 channels) if it's a display array
+                work_img = image[..., :3].copy()
+            else:
+                # Z-stack or other 3D: Use Max Projection
+                work_img = np.max(image, axis=2)
+        
+        h, w = work_img.shape[:2]
     else:
         h, w = image.shape
         work_img = image.copy()
@@ -97,8 +109,11 @@ def magic_wand_2d(image: np.ndarray, seed_point: tuple, tolerance: float, smooth
     flags = 4 | cv2.FLOODFILL_FIXED_RANGE | cv2.FLOODFILL_MASK_ONLY | (255 << 8)
     
     # Ensure data type is compatible with OpenCV floodFill (uint8, uint16, float32)
+    # OpenCV floodFill supports 8-bit and 32-bit float images.
     if work_img.dtype == np.uint16:
         work_img = work_img.astype(np.float32)
+    elif work_img.dtype == bool:
+        work_img = work_img.astype(np.uint8) * 255
         
     # Apply smoothing
     if smoothing > 0:
@@ -112,10 +127,17 @@ def magic_wand_2d(image: np.ndarray, seed_point: tuple, tolerance: float, smooth
     
     if relative:
         seed_val = work_img[y, x]
+        # For RGB, seed_val is an array. lo_diff/up_diff will also be arrays.
         lo_diff = seed_val * (tolerance / 100.0)
         up_diff = seed_val * (tolerance / 100.0)
+    
+    # If RGB, lo_diff/up_diff must be a scalar or a tuple/list of length 3
+    if work_img.ndim == 3 and not isinstance(lo_diff, (list, tuple, np.ndarray)):
+        lo_diff = (lo_diff, lo_diff, lo_diff)
+        up_diff = (up_diff, up_diff, up_diff)
         
     # Run floodFill
+    # Note: loDiff/upDiff can be scalars or tuples
     cv2.floodFill(work_img, mask_cv, (x, y), 255, loDiff=lo_diff, upDiff=up_diff, flags=flags)
     
     # Crop mask to match image size (remove 1px border)
@@ -123,7 +145,7 @@ def magic_wand_2d(image: np.ndarray, seed_point: tuple, tolerance: float, smooth
     
     return mask
 
-def mask_to_qpath(mask: np.ndarray, simplify_epsilon: float = 1.0) -> QPainterPath:
+def mask_to_qpath(mask: np.ndarray, simplify_epsilon: float = 1.0, smooth: bool = False) -> QPainterPath:
     """
     Converts a boolean mask to a QPainterPath (Vector).
     Uses cv2.findContours and cv2.approxPolyDP.
@@ -132,22 +154,41 @@ def mask_to_qpath(mask: np.ndarray, simplify_epsilon: float = 1.0) -> QPainterPa
         mask: Boolean array or uint8 (0/255).
         simplify_epsilon: Max distance from original curve (Douglas-Peucker).
                           Higher = simpler, smoother shapes.
+        smooth: If True, uses cubic splines for even smoother appearance.
     """
     if mask.dtype == bool:
         mask_uint8 = mask.astype(np.uint8) * 255
     else:
         mask_uint8 = mask.astype(np.uint8)
 
-    # Find external contours only for now (handle holes later with RETR_CCOMP if needed)
+    # SMOOTHING: To make graphics more "round" and less jagged (staircase effect)
+    # We apply a small blur and threshold to the mask itself before contour extraction
+    if simplify_epsilon < 1.0 or smooth:
+        # For small epsilon (high detail), staircase effects are very visible.
+        # A tiny blur helps "round" the corners.
+        k_size = 3 if not smooth else 5
+        mask_uint8 = cv2.GaussianBlur(mask_uint8, (k_size, k_size), 0)
+        _, mask_uint8 = cv2.threshold(mask_uint8, 128, 255, cv2.THRESH_BINARY)
+
+    # Find external contours only for now
     contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     path = QPainterPath()
     
+    # If smooth is requested, we might need the smooth path generator
+    # To avoid circular imports, we'll implement a simple version here or import locally
+    smooth_func = None
+    if smooth:
+        try:
+            from src.core.roi_model import create_smooth_path_from_points
+            smooth_func = create_smooth_path_from_points
+        except ImportError:
+            pass
+
     for cnt in contours:
         # Simplify contour
         if simplify_epsilon > 0:
-            epsilon = simplify_epsilon
-            cnt = cv2.approxPolyDP(cnt, epsilon, True)
+            cnt = cv2.approxPolyDP(cnt, simplify_epsilon, True)
             
         if len(cnt) < 3:
             continue
@@ -155,12 +196,64 @@ def mask_to_qpath(mask: np.ndarray, simplify_epsilon: float = 1.0) -> QPainterPa
         # cnt has shape (N, 1, 2) -> (x, y)
         points = cnt[:, 0, :]
         
-        path.moveTo(points[0][0], points[0][1])
-        for i in range(1, len(points)):
-            path.lineTo(points[i][0], points[i][1])
-        path.closeSubpath()
+        if smooth and smooth_func:
+            from PySide6.QtCore import QPointF
+            qpoints = [QPointF(float(p[0]), float(p[1])) for p in points]
+            sub_path = smooth_func(qpoints, closed=True)
+            path.addPath(sub_path)
+        else:
+            path.moveTo(float(points[0][0]), float(points[0][1]))
+            for i in range(1, len(points)):
+                path.lineTo(float(points[i][0]), float(points[i][1]))
+            path.closeSubpath()
         
     return path
+
+def mask_to_qpaths(mask: np.ndarray, simplify_epsilon: float = 1.0, smooth: bool = False) -> list:
+    if mask.dtype == bool:
+        mask_uint8 = mask.astype(np.uint8) * 255
+    else:
+        mask_uint8 = mask.astype(np.uint8)
+
+    # Apply smoothing if requested
+    if simplify_epsilon < 1.0 or smooth:
+        k_size = 3 if not smooth else 5
+        mask_uint8 = cv2.GaussianBlur(mask_uint8, (k_size, k_size), 0)
+        _, mask_uint8 = cv2.threshold(mask_uint8, 128, 255, cv2.THRESH_BINARY)
+
+    contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    paths = []
+    
+    smooth_func = None
+    if smooth:
+        try:
+            from src.core.roi_model import create_smooth_path_from_points
+            smooth_func = create_smooth_path_from_points
+        except ImportError:
+            pass
+
+    for cnt in contours:
+        if simplify_epsilon > 0:
+            cnt = cv2.approxPolyDP(cnt, simplify_epsilon, True)
+        if len(cnt) < 3:
+            continue
+            
+        points = cnt[:, 0, :]
+        path = QPainterPath()
+        
+        if smooth and smooth_func:
+            from PySide6.QtCore import QPointF
+            qpoints = [QPointF(float(p[0]), float(p[1])) for p in points]
+            path = smooth_func(qpoints, closed=True)
+        else:
+            path.moveTo(float(points[0][0]), float(points[0][1]))
+            for i in range(1, len(points)):
+                path.lineTo(float(points[i][0]), float(points[i][1]))
+            path.closeSubpath()
+            
+        paths.append(path)
+    return paths
 
 def bilinear_interpolate_numpy(img, x, y):
     """

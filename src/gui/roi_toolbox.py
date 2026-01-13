@@ -1,16 +1,21 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QToolButton, 
-                               QGroupBox, QLabel, QSizePolicy, QCheckBox, QDoubleSpinBox, QHBoxLayout,
-                               QApplication, QComboBox, QPushButton, QColorDialog, QMenu)
+                               QGroupBox, QLabel, QSizePolicy, QDoubleSpinBox, QHBoxLayout,
+                               QApplication, QComboBox, QPushButton, QColorDialog, QMenu, QFrame)
 from PySide6.QtCore import Qt, QSize, QSettings
 from PySide6.QtGui import QPalette, QColor, QCursor, QAction
 from src.core.language_manager import tr, LanguageManager
 from src.core.logger import Logger
+
+from src.gui.toggle_switch import ToggleSwitch
+from src.gui.icon_manager import get_icon
+from src.gui.theme_manager import ThemeManager
 
 class RoiToolbox(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.setObjectName("card")
         self.main_window = main_window
+        self.settings = QSettings("FluoQuantPro", "AppSettings")
         
         # Allow panel to shrink very small
         self.setMinimumWidth(50)
@@ -23,6 +28,9 @@ class RoiToolbox(QWidget):
         # 1. Tools Group (Selection + Edit)
         self.create_tools_group()
         
+        # 1.5 Size Settings (Contextual)
+        self.create_size_group()
+        
         # 2. Wand Options (Hidden by default or separate group)
         self.create_wand_options_group()
         
@@ -32,11 +40,41 @@ class RoiToolbox(QWidget):
         # 4. Analysis Group
         self.create_analysis_group()
         
+        # Load persisted settings
+        self.load_settings()
+        
         # Connect Language Change
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
         
+        # Connect Theme Change to refresh icons
+        ThemeManager.instance().theme_changed.connect(self.refresh_icons)
+        
+        # Connect ROI Manager Signals
+        if hasattr(self.main_window, 'session') and self.main_window.session.roi_manager:
+            manager = self.main_window.session.roi_manager
+            manager.selection_changed.connect(self._on_roi_selection_changed)
+            manager.roi_updated.connect(self._on_roi_updated)
+        
         # Spacer at bottom
         self.layout.addStretch()
+
+    def _on_roi_updated(self, roi_or_id):
+        """Update UI if the modified ROI is the currently selected one."""
+        if self._updating_size_ui: return
+        
+        if not hasattr(self.main_window, 'session'): return
+
+        # Handle ID string vs ROI object
+        if isinstance(roi_or_id, str):
+            roi_id = roi_or_id
+            roi = self.main_window.session.roi_manager.get_roi(roi_id)
+            if not roi: return
+        else:
+            roi = roi_or_id
+
+        # Only update if visible and selected
+        if self.size_group.isVisible() and roi.id in self.main_window.session.roi_manager.get_selected_ids():
+            self._update_size_ui_from_roi(roi)
 
     def create_tools_group(self):
         self.tools_group = QGroupBox(tr("Tools"))
@@ -80,22 +118,147 @@ class RoiToolbox(QWidget):
                 layout.addWidget(btn, row, col)
         
         # Fixed Size Option
-        self.chk_fixed_size = QCheckBox(tr("Fixed Shape"))
+        # Fixed Shape Toggle
+        row_layout = QHBoxLayout()
+        self.lbl_fixed_size = QLabel(tr("Fixed Shape"))
+        self.chk_fixed_size = ToggleSwitch()
         self.chk_fixed_size.setToolTip(tr("Lock ROI size to the last drawn shape"))
-        layout.addWidget(self.chk_fixed_size, 7, 0, 1, 2)
-
-        # Sync ROIs as Annotations
-        self.chk_sync_rois = QCheckBox(tr("Sync ROIs as Annotations"))
-        self.settings = QSettings("FluoQuantPro", "AppSettings")
-        sync_default = self.settings.value("interface/sync_rois_as_annotations", True, type=bool)
-        self.chk_sync_rois.setChecked(sync_default)
-        self.chk_sync_rois.setToolTip(tr("Automatically include ROIs in annotation list and exports"))
-        self.chk_sync_rois.toggled.connect(self._on_sync_rois_toggled)
-        layout.addWidget(self.chk_sync_rois, 8, 0, 1, 2)
+        self.chk_fixed_size.toggled.connect(self.save_settings)
+        row_layout.addWidget(self.lbl_fixed_size)
+        row_layout.addStretch()
+        row_layout.addWidget(self.chk_fixed_size)
+        layout.addLayout(row_layout, 7, 0, 1, 2)
 
         self.tools_group.setLayout(layout)
         self.layout.addWidget(self.tools_group)
                 
+    def create_size_group(self):
+        """Creates the ROI Size settings group (Contextual)."""
+        self.size_group = QGroupBox(tr("Selection Size"))
+        layout = QGridLayout()
+        layout.setSpacing(4)
+        layout.setContentsMargins(4, 8, 4, 4)
+        
+        # Width
+        layout.addWidget(QLabel(tr("W:")), 0, 0)
+        self.spin_width = QDoubleSpinBox()
+        self.spin_width.setRange(0.0, 9999.0)
+        self.spin_width.setSingleStep(0.1)
+        self.spin_width.setDecimals(2)
+        self.spin_width.setSuffix(" cm")
+        self.spin_width.setKeyboardTracking(False) # Wait for Enter or focus out
+        self.spin_width.valueChanged.connect(self._on_size_value_changed)
+        layout.addWidget(self.spin_width, 0, 1)
+        
+        # Height
+        layout.addWidget(QLabel(tr("H:")), 1, 0)
+        self.spin_height = QDoubleSpinBox()
+        self.spin_height.setRange(0.0, 9999.0)
+        self.spin_height.setSingleStep(0.1)
+        self.spin_height.setDecimals(2)
+        self.spin_height.setSuffix(" cm")
+        self.spin_height.setKeyboardTracking(False)
+        self.spin_height.valueChanged.connect(self._on_size_value_changed)
+        layout.addWidget(self.spin_height, 1, 1)
+        
+        self.size_group.setLayout(layout)
+        self.layout.addWidget(self.size_group)
+        self.size_group.hide() # Hidden by default
+        
+        # Store blocking flag
+        self._updating_size_ui = False
+
+    def _on_size_value_changed(self):
+        """Handle user input for width/height."""
+        if self._updating_size_ui:
+            return
+            
+        if not hasattr(self.main_window, 'session'): return
+        
+        # Get selected ROI
+        selected_ids = self.main_window.session.roi_manager.get_selected_ids()
+        if len(selected_ids) != 1:
+            return
+            
+        roi = self.main_window.session.roi_manager.get_roi(list(selected_ids)[0])
+        if not roi or roi.roi_type not in ['rectangle', 'ellipse', 'circle']:
+            return
+            
+        # Convert cm to pixels (96 DPI)
+        # 1 inch = 2.54 cm
+        # px = cm / 2.54 * 96
+        DPI = 96.0
+        CM_TO_INCH = 1.0 / 2.54
+        
+        w_cm = self.spin_width.value()
+        h_cm = self.spin_height.value()
+        
+        w_px = w_cm * CM_TO_INCH * DPI
+        h_px = h_cm * CM_TO_INCH * DPI
+        
+        # Update ROI Geometry
+        # We maintain Top-Left position
+        from PySide6.QtCore import QPointF, QRectF
+        from PySide6.QtGui import QPainterPath
+        
+        rect = roi.path.boundingRect()
+        top_left = rect.topLeft()
+        # Ensure we have valid width/height
+        if w_px <= 0: w_px = 1.0
+        if h_px <= 0: h_px = 1.0
+        
+        bottom_right = QPointF(top_left.x() + w_px, top_left.y() + h_px)
+        
+        # Reconstruct Path & Points (Critical for Sync)
+        # We must update roi.points because Main.on_roi_updated uses points to sync to Annotation
+        if roi.roi_type == 'circle':
+            # Fallback for non-standard type 'circle', treat as ellipse
+            roi.points = [top_left, bottom_right]
+            new_path = QPainterPath()
+            new_path.addEllipse(QRectF(top_left, bottom_right))
+            roi.path = new_path
+        else:
+            # Use standard reconstruction
+            roi.reconstruct_from_points([top_left, bottom_right], roi.roi_type)
+        
+        # Trigger update
+        self.main_window.session.roi_manager.roi_updated.emit(roi)
+        
+    def _on_roi_selection_changed(self):
+        """Update size panel visibility and values."""
+        if not hasattr(self.main_window, 'session'): return
+        
+        selected_ids = self.main_window.session.roi_manager.get_selected_ids()
+        
+        should_show = False
+        if len(selected_ids) == 1:
+            roi = self.main_window.session.roi_manager.get_roi(list(selected_ids)[0])
+            if roi and roi.roi_type in ['rectangle', 'ellipse', 'circle']:
+                should_show = True
+                self._update_size_ui_from_roi(roi)
+                
+        self.size_group.setVisible(should_show)
+        
+    def _update_size_ui_from_roi(self, roi):
+        """Sync UI with ROI geometry."""
+        self._updating_size_ui = True
+        try:
+            rect = roi.path.boundingRect()
+            w_px = rect.width()
+            h_px = rect.height()
+            
+            # px to cm
+            DPI = 96.0
+            INCH_TO_CM = 2.54
+            
+            w_cm = w_px / DPI * INCH_TO_CM
+            h_cm = h_px / DPI * INCH_TO_CM
+            
+            self.spin_width.setValue(w_cm)
+            self.spin_height.setValue(h_cm)
+        finally:
+            self._updating_size_ui = False
+
     def on_polygon_context_menu(self, pos):
         """Handle right-click on Polygon button to switch to Freehand mode."""
         menu = QMenu(self)
@@ -131,25 +294,6 @@ class RoiToolbox(QWidget):
 
         menu.exec(QCursor.pos())
 
-    def _on_sync_rois_toggled(self, checked):
-        """Persist the sync setting and notify related components."""
-        self.settings.setValue("interface/sync_rois_as_annotations", checked)
-        # Update session property if it exists
-        if hasattr(self.main_window, 'session'):
-            if hasattr(self.main_window.session, 'sync_rois_as_annotations'):
-                self.main_window.session.sync_rois_as_annotations = checked
-            
-            # USER REQUEST: When enabled, convert existing ROIs to annotations too
-            if checked:
-                Logger.info("[RoiToolbox] Sync enabled: Converting existing ROIs to annotations...")
-                self.main_window.session.sync_existing_rois_to_annotations()
-        
-        # Notify annotation panel to refresh if needed
-        if hasattr(self.main_window, 'annotation_panel'):
-            self.main_window.annotation_panel.annotation_updated.emit()
-        
-        Logger.info(f"[RoiToolbox] Sync ROIs as Annotations: {checked}")
-
     def set_polygon_mode(self, mode):
         # Activate the tool first
         if hasattr(self.main_window, 'action_polygon'):
@@ -159,7 +303,7 @@ class RoiToolbox(QWidget):
         if hasattr(self.main_window, 'polygon_tool'):
             self.main_window.polygon_tool.is_freehand_mode = (mode == 'freehand')
             mode_text = tr("Freehand") if mode == 'freehand' else tr("Polygon")
-            print(f"Polygon Tool switched to {mode_text} mode")
+            Logger.debug(f"Polygon Tool switched to {mode_text} mode")
             
             # If switching to freehand, maybe disable fixed size?
             # Or keep it independent.
@@ -192,16 +336,61 @@ class RoiToolbox(QWidget):
         self.spin_wand_smooth = QDoubleSpinBox()
         self.spin_wand_smooth.setRange(0.0, 5.0)
         self.spin_wand_smooth.setSingleStep(0.1)
-        self.spin_wand_smooth.setValue(1.0)
+        self.spin_wand_smooth.setValue(5.0)
         self.spin_wand_smooth.setToolTip(tr("Gaussian blur sigma for noise reduction before selection."))
         h_layout1.addWidget(self.spin_wand_smooth)
         layout.addLayout(h_layout1)
 
         # 2. Relative Tolerance
-        self.chk_wand_relative = QCheckBox(tr("Relative Tolerance (%)"))
+        h_layout_rel = QHBoxLayout()
+        self.lbl_wand_relative = QLabel(tr("Relative Tolerance (%)"))
+        self.chk_wand_relative = ToggleSwitch()
         self.chk_wand_relative.setToolTip(tr("If checked, tolerance is a percentage of the clicked pixel value.\nUseful for images with high dynamic range."))
         self.chk_wand_relative.setChecked(False)
-        layout.addWidget(self.chk_wand_relative)
+        h_layout_rel.addWidget(self.lbl_wand_relative)
+        h_layout_rel.addStretch()
+        h_layout_rel.addWidget(self.chk_wand_relative)
+        layout.addLayout(h_layout_rel)
+
+        h_layout_largest = QHBoxLayout()
+        self.lbl_wand_largest = QLabel(tr("Keep Largest Only"))
+        self.chk_wand_largest = ToggleSwitch()
+        self.chk_wand_largest.setToolTip(tr("Only keep the largest connected region in the selection"))
+        self.chk_wand_largest.setChecked(False)
+        h_layout_largest.addWidget(self.lbl_wand_largest)
+        h_layout_largest.addStretch()
+        h_layout_largest.addWidget(self.chk_wand_largest)
+        layout.addLayout(h_layout_largest)
+
+        h_layout_split = QHBoxLayout()
+        self.lbl_wand_split = QLabel(tr("Split by Region"))
+        self.chk_wand_split = ToggleSwitch()
+        self.chk_wand_split.setToolTip(tr("Split each connected region into independent ROIs"))
+        self.chk_wand_split.setChecked(False)
+        h_layout_split.addWidget(self.lbl_wand_split)
+        h_layout_split.addStretch()
+        h_layout_split.addWidget(self.chk_wand_split)
+        layout.addLayout(h_layout_split)
+
+        h_layout_poly = QHBoxLayout()
+        self.lbl_wand_poly = QLabel(tr("Convert to Polygon"))
+        self.chk_wand_polygon = ToggleSwitch()
+        self.chk_wand_polygon.setToolTip(tr("Convert the wand selection directly to editable polygon points after drawing"))
+        self.chk_wand_polygon.setChecked(False)
+        h_layout_poly.addWidget(self.lbl_wand_poly)
+        h_layout_poly.addStretch()
+        h_layout_poly.addWidget(self.chk_wand_polygon)
+        layout.addLayout(h_layout_poly)
+
+        h_layout_smooth = QHBoxLayout()
+        self.lbl_wand_smooth_contour = QLabel(tr("Smooth Edges"))
+        self.chk_wand_smooth_contour = ToggleSwitch()
+        self.chk_wand_smooth_contour.setToolTip(tr("Smooth selection edges to reduce aliasing"))
+        self.chk_wand_smooth_contour.setChecked(True)
+        h_layout_smooth.addWidget(self.lbl_wand_smooth_contour)
+        h_layout_smooth.addStretch()
+        h_layout_smooth.addWidget(self.chk_wand_smooth_contour)
+        layout.addLayout(h_layout_smooth)
 
         self.wand_group.setLayout(layout)
         self.layout.addWidget(self.wand_group)
@@ -209,7 +398,11 @@ class RoiToolbox(QWidget):
         # Connect signals (to be handled by main window)
         self.spin_wand_tol.valueChanged.connect(self.on_wand_settings_changed)
         self.spin_wand_smooth.valueChanged.connect(self.on_wand_settings_changed)
-        self.chk_wand_relative.stateChanged.connect(self.on_wand_settings_changed)
+        self.chk_wand_relative.toggled.connect(self.on_wand_settings_changed)
+        self.chk_wand_largest.toggled.connect(self.on_wand_settings_changed)
+        self.chk_wand_split.toggled.connect(self.on_wand_settings_changed)
+        self.chk_wand_polygon.toggled.connect(self.on_wand_settings_changed)
+        self.chk_wand_smooth_contour.toggled.connect(self.on_wand_settings_changed)
 
     def on_wand_settings_changed(self):
         # We'll let main.py pick up these values when the tool is active
@@ -218,6 +411,46 @@ class RoiToolbox(QWidget):
             self.main_window.wand_tool.base_tolerance = self.spin_wand_tol.value()
             self.main_window.wand_tool.smoothing = self.spin_wand_smooth.value()
             self.main_window.wand_tool.relative = self.chk_wand_relative.isChecked()
+            self.main_window.wand_tool.keep_largest = self.chk_wand_largest.isChecked()
+            self.main_window.wand_tool.split_regions = self.chk_wand_split.isChecked()
+            self.main_window.wand_tool.convert_to_polygon = self.chk_wand_polygon.isChecked()
+            self.main_window.wand_tool.contour_smoothing = self.chk_wand_smooth_contour.isChecked()
+        
+        self.save_settings()
+
+    def load_settings(self):
+        """Load persisted tool settings from QSettings."""
+        # Magic Wand Settings
+        self.spin_wand_tol.setValue(float(self.settings.value("wand/tolerance", 100.0)))
+        self.spin_wand_smooth.setValue(float(self.settings.value("wand/smoothing", 5.0)))
+        self.chk_wand_relative.setChecked(self.settings.value("wand/relative", False, type=bool))
+        self.chk_wand_largest.setChecked(self.settings.value("wand/keep_largest", False, type=bool))
+        self.chk_wand_split.setChecked(self.settings.value("wand/split_regions", False, type=bool))
+        self.chk_wand_polygon.setChecked(self.settings.value("wand/convert_to_polygon", False, type=bool))
+        self.chk_wand_smooth_contour.setChecked(self.settings.value("wand/contour_smoothing", True, type=bool))
+        
+        # Point Counter Settings
+        self.spin_count_radius.setValue(float(self.settings.value("count/radius", 3.0)))
+        
+        # Fixed Shape
+        self.chk_fixed_size.setChecked(self.settings.value("tools/fixed_shape", False, type=bool))
+
+    def save_settings(self):
+        """Save current tool settings to QSettings."""
+        # Magic Wand Settings
+        self.settings.setValue("wand/tolerance", self.spin_wand_tol.value())
+        self.settings.setValue("wand/smoothing", self.spin_wand_smooth.value())
+        self.settings.setValue("wand/relative", self.chk_wand_relative.isChecked())
+        self.settings.setValue("wand/keep_largest", self.chk_wand_largest.isChecked())
+        self.settings.setValue("wand/split_regions", self.chk_wand_split.isChecked())
+        self.settings.setValue("wand/convert_to_polygon", self.chk_wand_polygon.isChecked())
+        self.settings.setValue("wand/contour_smoothing", self.chk_wand_smooth_contour.isChecked())
+        
+        # Point Counter Settings
+        self.settings.setValue("count/radius", self.spin_count_radius.value())
+        
+        # Fixed Shape
+        self.settings.setValue("tools/fixed_shape", self.chk_fixed_size.isChecked())
 
     def create_count_options_group(self):
         self.count_group = QGroupBox(tr("Point Counter Options"))
@@ -246,8 +479,8 @@ class RoiToolbox(QWidget):
         # 3. Counts Summary
         self.lbl_counts_summary = QLabel(tr("Counts: 0 total"))
         self.lbl_counts_summary.setWordWrap(True)
-        self.lbl_counts_summary.setProperty("role", "accent")
-        self.lbl_counts_summary.setStyleSheet("font-weight: bold; color: #3498db;")
+        self.lbl_counts_summary = QLabel(tr("Total: 0 Puncta"))
+        self.lbl_counts_summary.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.lbl_counts_summary)
 
         # --- NEW: Classification Table ---
@@ -258,24 +491,7 @@ class RoiToolbox(QWidget):
         self.count_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.count_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.count_table.setFixedHeight(150)
-        self.count_table.setStyleSheet("""
-            QTableWidget {
-                background-color: #ffffff;
-                alternate-background-color: #f2f2f2;
-                gridline-color: #dcdde1;
-                color: #2f3640;
-                font-size: 11px;
-                selection-background-color: #3498db;
-                selection-color: #ffffff;
-            }
-            QHeaderView::section {
-                background-color: #f5f6fa;
-                color: #2f3640;
-                padding: 4px;
-                font-weight: bold;
-                border: 1px solid #dcdde1;
-            }
-        """)
+        # Style is now handled by Global QSS
         layout.addWidget(self.count_table)
 
         # --- Controls: Reset and Category Management ---
@@ -297,7 +513,7 @@ class RoiToolbox(QWidget):
         h_cat.addWidget(QLabel(tr("Current Category:")))
         self.combo_active_category = QComboBox()
         # 将 Puncta 放在首位作为默认值
-        self.combo_active_category.addItems(["Puncta", "Cells", "Nuclei", "Other"])
+        self.combo_active_category.addItems([tr("Puncta"), tr("Cells"), tr("Nuclei"), tr("Other")])
         self.combo_active_category.currentIndexChanged.connect(self.on_active_category_changed)
         h_cat.addWidget(self.combo_active_category)
         layout.addLayout(h_cat)
@@ -332,26 +548,37 @@ class RoiToolbox(QWidget):
         if not hasattr(self.main_window, 'session'):
             return
 
-        # Header - 使用固定的宽度确保与下方对齐
+        # Header - 使用最小宽度允许缩放，并与下方对齐
         h_header = QHBoxLayout()
         lbl_ch = QLabel(tr("Channel"))
-        lbl_ch.setFixedWidth(60)
+        lbl_ch.setMinimumWidth(0)
         lbl_ch.setStyleSheet("font-weight: bold;")
         
         lbl_sh = QLabel(tr("Shape"))
-        lbl_sh.setFixedWidth(70)
+        lbl_sh.setMinimumWidth(0)
         lbl_sh.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_sh.setStyleSheet("font-weight: bold;")
         
         lbl_sz = QLabel(tr("Size"))
-        lbl_sz.setFixedWidth(50)
+        lbl_sz.setMinimumWidth(0)
         lbl_sz.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_sz.setStyleSheet("font-weight: bold;")
         
         lbl_co = QLabel(tr("Color"))
-        lbl_co.setFixedWidth(30)
+        lbl_co.setMinimumWidth(0)
         lbl_co.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl_co.setStyleSheet("font-weight: bold;")
+        
+        # 初始宽度分配 - 使用 minimumWidth 而不是 fixedWidth 以允许在极窄模式下压缩
+        lbl_ch.setMinimumWidth(0)
+        lbl_sh.setMinimumWidth(0)
+        lbl_sz.setMinimumWidth(0)
+        lbl_co.setMinimumWidth(0)
+        
+        lbl_ch.setMaximumWidth(60)
+        lbl_sh.setMaximumWidth(70)
+        lbl_sz.setMaximumWidth(50)
+        lbl_co.setMaximumWidth(30)
         
         h_header.addWidget(lbl_ch)
         h_header.addWidget(lbl_sh)
@@ -410,11 +637,13 @@ class RoiToolbox(QWidget):
         
         # Label
         lbl = QLabel(f"{name}:")
-        lbl.setFixedWidth(60)
+        lbl.setMinimumWidth(0)
+        lbl.setMaximumWidth(60)
         lbl.setToolTip(name) # 长的通道名可以悬浮查看
         
         # Shape
         combo_shape = QComboBox()
+        combo_shape.setMinimumWidth(0)
         for text, data in [
             (tr("Circle"), "circle"),
             (tr("Square"), "square"),
@@ -423,7 +652,7 @@ class RoiToolbox(QWidget):
             (tr("Diamond"), "diamond")
         ]:
             combo_shape.addItem(text, data)
-        combo_shape.setFixedWidth(70)
+        combo_shape.setMaximumWidth(70)
         
         # 设置当前选中的形状
         idx = combo_shape.findData(current_shape)
@@ -433,10 +662,11 @@ class RoiToolbox(QWidget):
         
         # Size (Radius)
         spin_size = QDoubleSpinBox()
+        spin_size.setMinimumWidth(0)
         spin_size.setRange(0.5, 50.0)
         spin_size.setSingleStep(0.5)
         spin_size.setValue(current_radius) # 使用当前半径
-        spin_size.setFixedWidth(50)
+        spin_size.setMaximumWidth(50)
         spin_size.setToolTip(tr("Point Radius"))
         spin_size.valueChanged.connect(lambda val, i=ch_idx: self._update_channel_radius(i, val))
 
@@ -451,7 +681,8 @@ class RoiToolbox(QWidget):
         
         # 居中对齐容器
         c_color = QWidget()
-        c_color.setFixedWidth(30)
+        c_color.setMinimumWidth(0)
+        c_color.setMaximumWidth(30)
         cl = QHBoxLayout(c_color)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -501,6 +732,8 @@ class RoiToolbox(QWidget):
                 # Notify session about changes
                 self.main_window.session.data_changed.emit()
                 Logger.info(f"[RoiToolbox] Updated radius to {value} for {len(selected_rois)} selected points")
+        
+        self.save_settings()
 
     def on_count_target_changed(self, index):
         if hasattr(self.main_window, 'count_tool'):
@@ -509,14 +742,11 @@ class RoiToolbox(QWidget):
 
     def set_active_tool(self, tool_action):
         """Switches visible option groups based on the active tool."""
-        import sys
         # Use simple string-based identification to avoid reference mismatch
         tool_name = tool_action.objectName() if tool_action else ""
         tool_text = tool_action.text().lower() if tool_action else ""
         
         Logger.debug(f"[RoiToolbox.set_active_tool] ENTER - Tool: {tool_text} (ID: {tool_name})")
-        print(f"DEBUG: [RoiToolbox.set_active_tool] Processing tool: {tool_text}")
-        sys.stdout.flush()
         
         # Hide all specific groups initially
         self.wand_group.hide()
@@ -529,7 +759,6 @@ class RoiToolbox(QWidget):
         if is_wand:
             self.wand_group.show()
             Logger.debug("[RoiToolbox.set_active_tool] Showing Wand Group")
-            print("DEBUG: [RoiToolbox] Wand group shown")
         elif is_count:
             try:
                 # 先显示组，再刷新内容，有助于 Qt 计算布局
@@ -541,7 +770,6 @@ class RoiToolbox(QWidget):
                 self.on_active_category_changed(self.combo_active_category.currentIndex())
                 
                 Logger.debug("[RoiToolbox.set_active_tool] Showing Count Group")
-                print("DEBUG: [RoiToolbox] Count group shown, refreshed and category synced")
             except Exception as e:
                 Logger.debug(f"[RoiToolbox.set_active_tool] Error showing count group: {e}")
         
@@ -551,7 +779,6 @@ class RoiToolbox(QWidget):
             self.parentWidget().updateGeometry()
             self.parentWidget().repaint()
         
-        sys.stdout.flush()
         Logger.debug("[RoiToolbox.set_active_tool] EXIT")
 
     def on_active_category_changed(self, index):
@@ -759,20 +986,32 @@ class RoiToolbox(QWidget):
     def retranslate_ui(self):
         """Updates UI text based on current language."""
         self.tools_group.setTitle(tr("Tools"))
-        self.chk_fixed_size.setText(tr("Fixed Shape"))
+        self.lbl_fixed_size.setText(tr("Fixed Shape"))
         self.chk_fixed_size.setToolTip(tr("Lock ROI size to the last drawn shape"))
         
-        self.chk_sync_rois.setText(tr("Sync ROIs as Annotations"))
-        self.chk_sync_rois.setToolTip(tr("Automatically include ROIs in annotation list and exports"))
+        self.size_group.setTitle(tr("Selection Size"))
+        # No easy way to find the QLabel(tr("W:")) without storing it, 
+        # but the suffix can be updated.
+        self.spin_width.setSuffix(tr(" cm"))
+        self.spin_height.setSuffix(tr(" cm"))
         
         self.wand_group.setTitle(tr("Magic Wand Options"))
         self.lbl_wand_tol.setText(tr("Default Tolerance:"))
         self.spin_wand_tol.setToolTip(tr("Initial tolerance when clicking. Drag to adjust."))
         self.lbl_wand_smooth.setText(tr("Smoothing:"))
         self.spin_wand_smooth.setToolTip(tr("Gaussian blur sigma for noise reduction before selection."))
-        self.chk_wand_relative.setText(tr("Relative Tolerance (%)"))
+        self.lbl_wand_relative.setText(tr("Relative Tolerance (%)"))
         self.chk_wand_relative.setToolTip(tr("If checked, tolerance is a percentage of the clicked pixel value.\nUseful for images with high dynamic range."))
         
+        self.lbl_wand_largest.setText(tr("Keep Largest Only"))
+        self.chk_wand_largest.setToolTip(tr("Only keep the largest connected region in the selection"))
+        self.lbl_wand_split.setText(tr("Split by Region"))
+        self.chk_wand_split.setToolTip(tr("Split each connected region into independent ROIs"))
+        self.lbl_wand_poly.setText(tr("Convert to Polygon"))
+        self.chk_wand_polygon.setToolTip(tr("Convert the wand selection directly to editable polygon points after drawing"))
+        self.lbl_wand_smooth_contour.setText(tr("Smooth Edges"))
+        self.chk_wand_smooth_contour.setToolTip(tr("Smooth selection edges to reduce aliasing"))
+
         self.count_group.setTitle(tr("Point Counter Options"))
         self.lbl_point_size.setText(tr("Point Size:"))
         self.spin_count_radius.setToolTip(tr("Radius of the point markers."))
@@ -784,6 +1023,13 @@ class RoiToolbox(QWidget):
             self.combo_count_target.setItemText(0, tr("Auto (Current View)"))
             self.combo_count_target.setToolTip(tr("When clicking in Merge view, count will be assigned to this channel."))
             
+        self.btn_reset_counts.setText(tr("Reset Counts"))
+        self.btn_manage_categories.setText(tr("Categories..."))
+        self.btn_manage_categories.setToolTip(tr("Manage custom point categories"))
+        
+        # Update Table Headers
+        self.count_table.setHorizontalHeaderLabels([tr("Channel/Category"), tr("Count"), tr("%")])
+        
         self.update_counts_summary()
         
         self.analysis_group.setTitle(tr("Analysis"))
@@ -797,6 +1043,35 @@ class RoiToolbox(QWidget):
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         return btn
+
+    def refresh_icons(self):
+        """Re-sets icons for all tool buttons to match the current theme."""
+        # Main tools are linked to main_window actions
+        # When we call action.setIcon, all buttons linked to it update.
+        # But we need to know the icon name for each action.
+        
+        icon_map = {
+            self.main_window.action_wand: "wand",
+            self.main_window.action_polygon: "polygon",
+            self.main_window.action_rect: "rect",
+            self.main_window.action_ellipse: "ellipse",
+            self.main_window.action_count: "count",
+            self.main_window.action_pan: "hand",
+            self.main_window.action_crop: "crop",
+            self.main_window.action_clear: "clear",
+            self.main_window.action_undo: "undo",
+            self.main_window.action_redo: "redo",
+            self.main_window.action_batch_select: "batch_select"
+        }
+        
+        for action, icon_name in icon_map.items():
+            action.setIcon(get_icon(icon_name))
+            
+        # Specific buttons in this panel
+        if hasattr(self, 'btn_reset_counts'):
+            self.btn_reset_counts.setIcon(get_icon("refresh"))
+        if hasattr(self, 'btn_manage_categories'):
+            self.btn_manage_categories.setIcon(get_icon("settings"))
 
     def resizeEvent(self, event):
         width = self.width()
@@ -825,37 +1100,84 @@ class RoiToolbox(QWidget):
                 btn.setMaximumHeight(32)
                 btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
                 # 取消宽度限制
-                btn.setFixedWidth(16777215) 
+                btn.setMinimumWidth(0)
+                btn.setMaximumWidth(16777215)
             else:
                 # 舒适模式：显示文字 + 图标，更宽大
                 btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
                 btn.setMinimumHeight(34)
                 btn.setIconSize(QSize(icon_size, icon_size))
                 btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                btn.setFixedWidth(16777215)
+                btn.setMinimumWidth(0)
+                btn.setMaximumWidth(16777215)
 
-        # 3. 通道配置行 (210px 矛盾点) 优化逻辑
+        # 3. 标签（QLabel）隐藏逻辑：宽度极窄时隐藏文字以允许进一步压缩
+        for lbl in self.findChildren(QLabel):
+            # 排除已经是 Icon 或特殊的 Label
+            if lbl.text() and not lbl.pixmap():
+                if width < 100:
+                    lbl.setMinimumWidth(0)
+                    lbl.setMaximumWidth(0) # 强制隐藏文字空间
+                    lbl.setVisible(False)
+                else:
+                    lbl.setMinimumWidth(0)
+                    lbl.setMaximumWidth(16777215)
+                    lbl.setVisible(True)
+
+        # 4. 通道配置行 (210px 矛盾点) 优化逻辑
         # 我们遍历所有的通道设置行布局，根据宽度切换方向
         if hasattr(self, 'channel_settings_layout'):
+            is_ultra_compact = width < 100
             for i in range(self.channel_settings_layout.count()):
                 item = self.channel_settings_layout.itemAt(i)
                 if item and item.layout() and isinstance(item.layout(), QHBoxLayout):
                     layout = item.layout()
-                    # 如果宽度过窄，尝试通过调整控件可见性或间距来适应
-                    if is_compact:
+                    
+                    if is_ultra_compact:
                         # 极端窄模式：只显示颜色块，隐藏其他
                         for j in range(layout.count()):
                             w = layout.itemAt(j).widget()
                             if w:
                                 # 只有颜色按钮容器保持可见
-                                if not (isinstance(w, QWidget) and w.findChild(QPushButton)):
+                                is_color_container = isinstance(w, QWidget) and w.findChild(QPushButton)
+                                w.setVisible(is_color_container)
+                                if is_color_container:
+                                    w.setMinimumWidth(0)
+                                    w.setMaximumWidth(width - 10)
+                    elif is_compact:
+                        # 紧凑模式：压缩宽度，隐藏 Label
+                        for j in range(layout.count()):
+                            w = layout.itemAt(j).widget()
+                            if w:
+                                w.setVisible(True)
+                                if j == 0: # Label
                                     w.setVisible(False)
-                                else:
-                                    w.setVisible(True)
+                                elif j == 1: # Shape
+                                    w.setMinimumWidth(0)
+                                    w.setMaximumWidth(max(40, width // 3))
+                                elif j == 2: # Size
+                                    w.setMinimumWidth(0)
+                                    w.setMaximumWidth(max(30, width // 4))
+                                elif j == 3: # Color
+                                    w.setMinimumWidth(0)
+                                    w.setMaximumWidth(30)
                     else:
                         # 恢复所有可见性
                         for j in range(layout.count()):
                             w = layout.itemAt(j).widget()
-                            if w: w.setVisible(True)
+                            if w:
+                                w.setVisible(True)
+                                if j == 0: 
+                                    w.setMinimumWidth(0)
+                                    w.setMaximumWidth(60)
+                                elif j == 1: 
+                                    w.setMinimumWidth(0)
+                                    w.setMaximumWidth(70)
+                                elif j == 2: 
+                                    w.setMinimumWidth(0)
+                                    w.setMaximumWidth(50)
+                                elif j == 3: 
+                                    w.setMinimumWidth(0)
+                                    w.setMaximumWidth(30)
 
         super().resizeEvent(event)

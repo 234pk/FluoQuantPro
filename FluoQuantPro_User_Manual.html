@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FluoQuantPro 专业操作手册 (v3.0)</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true, theme: 'neutral'});</script>
     <style>
         :root {
             --primary-color: #2c3e50;
@@ -257,10 +259,17 @@
         <h1>1. 引言</h1>
         <p>FluoQuantPro 是一款专为荧光显微成像设计的专业级定量分析软件。它集成了先进的图像处理算法、灵活的 ROI（感兴趣区域）管理工具以及强大的数据分析引擎，旨在为生命科学研究人员提供从图像导入到数据导出的全流程解决方案。</p>
         <p>本文档旨在为用户提供详尽的操作指导和技术参考，帮助用户充分利用软件的各项高级功能。</p>
-        <div class="image-placeholder">
-            <input type="file" accept="image/*" onchange="previewImage(this)">
-            <span>在此处上传软件主界面截图</span>
+        <div class="mermaid" style="margin: 20px 0;">
+        graph TD
+            subgraph "Main Interface Layout"
+                Top[Menu Bar: File, Edit, Analysis, View]
+                Left[Sidebar: Sample List / Project Pool]
+                Center[Canvas: Image Display & ROI Interaction]
+                Right[Control Panel: Toolbox, Adjustments, Results]
+                Bottom[Status Bar: System Info & Progress]
+            end
         </div>
+        <p style="text-align: center; color: #7f8c8d;">图 2.1：FluoQuantPro 软件主界面布局示意图</p>
     </section>
 
     <section id="features">
@@ -273,10 +282,17 @@
                 <strong>技术实现原理：</strong>
                 <p>项目管理基于 MVC 架构设计，核心类 <code>ProjectModel</code> 维护项目状态。采用 JSON 格式 (<code>project.json</code>) 进行数据持久化，存储每个样本的元数据、ROI 坐标序列（序列化为点集）、标注属性以及分析结果。系统实现了“零拷贝”加载策略，即在打开项目时仅索引文件路径，图像数据仅在需显示或分析时通过 <code>ImageLoaderWorker</code> 异步加载到内存，显著降低了内存占用并提高了大批量样本的加载速度。自动保存功能通过 <code>QTimer</code> 定时触发，检查 <code>is_dirty</code> 标志位，确保仅在数据变更时写入磁盘。</p>
             </div>
-            <div class="image-placeholder">
-                <input type="file" accept="image/*" onchange="previewImage(this)">
-                <span>在此处上传项目管理架构图</span>
+            <div class="mermaid" style="margin: 20px 0;">
+            graph LR
+                Dir[Project Folder] --> JSON[project.json]
+                JSON --> Model[ProjectModel]
+                Model --> Scenes[Scenes Data]
+                Scenes --> ROIs[ROI & Annotations]
+                Scenes --> Channels[Display Settings]
+                
+                Model -- Save --> JSON
             </div>
+            <p style="text-align: center; color: #7f8c8d;">图 2.2：项目管理系统数据流向图</p>
         </div>
 
         <div id="feat-image">
@@ -297,10 +313,17 @@
                 <br><strong>交互优化：</strong> 实现了“Fat Finger”逻辑，通过 <code>QPainterPathStroker</code> 为细线条生成 4px 宽的点击判定区域，解决了高分辨率屏幕下难以选中的问题。
                 <br><strong>坐标同步：</strong> 实现了双向绑定机制，视图中的几何变换（Transform）会实时映射回底层的 <code>ROI</code> 数据模型，触发 <code>roi_updated</code> 信号，从而联动更新结果表格和其他视图。</p>
             </div>
-            <div class="image-placeholder">
-                <input type="file" accept="image/*" onchange="previewImage(this)">
-                <span>在此处上传 ROI 绘制与交互示意图</span>
+            <div class="mermaid" style="margin: 20px 0;">
+            graph TD
+                Mouse[Mouse Interaction] --> HitTest{Hit Test}
+                HitTest -- Line (< 4px) --> Select[Select ROI]
+                HitTest -- Fill Area --> Select
+                
+                Select --> Handles[Show Handles]
+                Handles -- Drag --> Transform[Scale / Rotate / Move]
+                Transform --> Sync[Sync to Model]
             </div>
+            <p style="text-align: center; color: #7f8c8d;">图 2.3：ROI 交互与高精度选中逻辑</p>
         </div>
 
         <div id="feat-measure">
@@ -321,10 +344,14 @@
                 <p>重叠分析器（<code>ROIOverlapAnalyzer</code>）通过计算几何算法实现。它将两个 ROI 的 <code>QPainterPath</code> 转换为多边形顶点集合，利用 <code>Shapely</code> 或 Qt 原生的 <code>intersected</code> 方法计算几何交集。
                 <br><strong>动态虚拟行：</strong> 分析结果不直接写入主数据库，而是作为“虚拟行”动态插入到结果表格中。当用户取消选择 ROI 时，虚拟行自动清除。这种非侵入式设计保证了原始数据的纯净性，同时提供了灵活的即时分析能力。</p>
             </div>
-            <div class="image-placeholder">
-                <input type="file" accept="image/*" onchange="previewImage(this)">
-                <span>在此处上传共定位分析结果展示图</span>
+            <div class="mermaid" style="margin: 20px 0;">
+            graph LR
+                R1[ROI A] --> Intersect[Intersection Algorithm]
+                R2[ROI B] --> Intersect
+                Intersect --> Result[Area, IoU, Pearson]
+                Result --> Table[Dynamic Virtual Row]
             </div>
+            <p style="text-align: center; color: #7f8c8d;">图 2.4：共定位/重叠分析逻辑</p>
         </div>
         
         <div id="feat-annotation">
@@ -388,10 +415,15 @@
                 <li><strong>异常处理：</strong> 若图像无法加载，请检查文件名是否包含特殊字符，或文件格式是否受支持（推荐使用 TIFF）。</li>
                 <li>使用鼠标滚轮缩放图像，按住空格键（Space）拖动平移视图。</li>
             </ol>
-            <div class="image-placeholder">
-                <input type="file" accept="image/*" onchange="previewImage(this)">
-                <span>在此处上传导入流程截图</span>
+            <div class="mermaid" style="margin: 20px 0;">
+            graph TD
+                Start[Start] --> Select[Select Folder]
+                Select --> Scan[Scan for Images]
+                Scan --> List[Show in Sample List]
+                List --> Load[Double Click to Load]
+                Load --> Canvas[Display on Canvas]
             </div>
+            <p style="text-align: center; color: #7f8c8d;">图 3.1：图像导入基本流程</p>
             <div class="warning">注意：首次导入包含大量大文件的文件夹时，建立索引可能需要几秒钟，请耐心等待。</div>
         </div>
 
@@ -406,10 +438,20 @@
                 <li><strong>多选操作：</strong> 按住 Ctrl 键依次点击多个 ROI，或使用鼠标框选。</li>
                 <li><strong>删除：</strong> 选中 ROI 后按 Delete 键。</li>
             </ol>
-            <div class="image-placeholder">
-                <input type="file" accept="image/*" onchange="previewImage(this)">
-                <span>在此处上传 ROI 编辑演示图</span>
+            <div class="mermaid">
+            graph TD
+                A[Tool Selection] --> B{Tool Type}
+                B -- Shape --> C[Drag on Canvas]
+                B -- Wand --> D[Click on Signal]
+                
+                C --> E[Create ROI Item]
+                D --> F[Auto-segmentation]
+                F --> E
+                
+                E --> G[Interaction: Move/Scale/Rotate]
+                G --> H[Sync to Results Table]
             </div>
+            <p style="text-align: center; color: #7f8c8d;">图 3.2：ROI 绘制与交互流程</p>
         </div>
 
         <div id="guide-analysis">
@@ -422,10 +464,17 @@
                 <li><strong>共定位分析：</strong> 同时选中两个 ROI，系统自动触发重叠分析，结果以斜体字显示在表格中。</li>
                 <li><strong>异常处理：</strong> 若结果全为 0，请检查是否在全黑背景区域绘制了 ROI，或通道是否被关闭。</li>
             </ol>
-            <div class="image-placeholder">
-                <input type="file" accept="image/*" onchange="previewImage(this)">
-                <span>在此处上传测量结果界面图</span>
+            <div class="mermaid">
+            graph LR
+                A[Select ROI] --> B[Click 'Measure' / Press 'M']
+                B --> C[Extract Raw Pixels]
+                C --> D[Calculate Stats: Area, Mean, etc.]
+                D --> E[Update Results Table]
+                
+                F[Select Two ROIs] --> G[Auto Overlap Analysis]
+                G --> E
             </div>
+            <p style="text-align: center; color: #7f8c8d;">图 3.3：测量分析流程</p>
         </div>
 
         <div id="guide-export">
@@ -438,10 +487,15 @@
                 <li>系统将在状态栏提示 "Result data exported successfully"。</li>
                 <li>使用 Excel 或其他数据分析软件打开生成的 CSV 文件进行后续处理。</li>
             </ol>
-            <div class="image-placeholder">
-                <input type="file" accept="image/*" onchange="previewImage(this)">
-                <span>在此处上传导出菜单截图</span>
+            <div class="mermaid">
+            graph TD
+                A[Right Click on Table] --> B[Select 'Export CSV']
+                B --> C[Choose Save Path]
+                C --> D[System Aggregates Data]
+                D --> E[Write CSV (UTF-8-SIG)]
+                E --> F[Success Notification]
             </div>
+            <p style="text-align: center; color: #7f8c8d;">图 3.4：结果导出流程</p>
         </div>
     </section>
 

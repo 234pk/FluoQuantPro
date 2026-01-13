@@ -79,25 +79,25 @@ class Logger:
         Logger._instance.log(level, message)
 
     @staticmethod
-    def debug(message):
+    def debug(message, **kwargs):
         if not Logger._instance:
             Logger.setup()
-        Logger._instance.debug(message)
+        Logger._instance.debug(message, **kwargs)
         
     @staticmethod
-    def info(message):
+    def info(message, **kwargs):
         if not Logger._instance:
             Logger.setup()
-        Logger._instance.info(message)
+        Logger._instance.info(message, **kwargs)
         
     @staticmethod
-    def warning(message):
+    def warning(message, **kwargs):
         if not Logger._instance:
             Logger.setup()
-        Logger._instance.warning(message)
+        Logger._instance.warning(message, **kwargs)
         
     @staticmethod
-    def error(message):
+    def error(message, **kwargs):
         if not Logger._instance:
             Logger.setup()
-        Logger._instance.error(message)
+        Logger._instance.error(message, **kwargs)

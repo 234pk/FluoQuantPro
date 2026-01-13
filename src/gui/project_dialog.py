@@ -1,7 +1,9 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QCheckBox, QLineEdit, QToolButton, QColorDialog, 
+                               QLineEdit, QToolButton, QColorDialog, 
                                QScrollArea, QWidget, QDialogButtonBox, QSizePolicy)
+from src.gui.toggle_switch import ToggleSwitch
 from src.gui.icon_manager import get_icon
+from src.gui.theme_manager import ThemeManager
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt, QSize
 from src.core.language_manager import tr, LanguageManager
@@ -33,10 +35,10 @@ class ProjectSetupDialog(QDialog):
             ("DAPI", "#0000FF"),
             ("GFP", "#00FF00"),
             ("RFP", "#FF0000"),
-            ("CY5", "#FFFFFF"),
+            ("CY5", "#FF00FF"), # Magenta (Standard pseudo-color)
             ("TRITC", "#FF0000"),
             ("FITC", "#00FF00"),
-            ("CY3", "#FF00FF"),
+            ("CY3", "#FF9900"), # Orange
             ("YFP", "#FFFF00"),
             ("Phase", "#808080"),
             ("Brightfield", "#808080"),
@@ -67,6 +69,8 @@ class ProjectSetupDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         self.layout.addWidget(self.buttons)
         
+        ThemeManager.instance().apply_theme(self)
+        
         # Connect Language Change
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
         
@@ -82,8 +86,8 @@ class ProjectSetupDialog(QDialog):
         row_layout = QHBoxLayout(row_widget)
         row_layout.setContentsMargins(0, 2, 0, 2)
         
-        # Checkbox
-        cb = QCheckBox()
+        # Toggle Switch
+        cb = ToggleSwitch()
         cb.setChecked(checked)
         row_layout.addWidget(cb)
         
@@ -130,5 +134,4 @@ class ProjectSetupDialog(QDialog):
                     continue
                 color = color_btn.property("color_data").name()
                 template.append({'name': name, 'color': color})
-        print(f"DEBUG: [ProjectSetupDialog] get_template returning: {template}")
         return template

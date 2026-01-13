@@ -48,6 +48,7 @@ class ProjectModel(QObject):
         self.scenes: List[SceneData] = []
         self._scene_map: Dict[str, SceneData] = {} # id -> SceneData
         self.pool_files: List[str] = [] # List of all imported file paths
+        self.pool_display_settings: Dict[str, dict] = {} # path -> display_settings dict
         self.undo_stack = undo_stack or QUndoStack(self)
         
         # Default Channel Configs (Keyword -> (Type, Color))
@@ -58,19 +59,22 @@ class ProjectModel(QObject):
             "FITC": ("GFP", "#00FF00"),
             "RFP": ("RFP", "#FF0000"),
             "TRITC": ("RFP", "#FF0000"),
-            "CY3": ("CY3", "#FF00FF"),
-            "CY5": ("CY5", "#FFFFFF"),
+            "CY3": ("CY3", "#FF9900"), # Orange
+            "CY5": ("CY5", "#FF00FF"), # Magenta (Standard pseudo-color for Far Red)
             "YFP": ("YFP", "#FFFF00"),
             # Generic fallbacks
             "CH1": ("Ch1", "#0000FF"),
             "CH2": ("Ch2", "#00FF00"),
             "CH3": ("Ch3", "#FF0000"),
-            "CH4": ("Ch4", "#FFFFFF"),
+            "CH4": ("Ch4", "#FF00FF"),
         }
         
         # Project-wide channel template
         # List of dicts: [{'name': 'DAPI', 'color': '#0000FF'}, ...]
         self.project_channel_template: List[Dict[str, str]] = []
+        
+        # Global Mode Configuration
+        self.is_single_channel_mode: bool = False
         
         # Dirty flag to track unsaved changes
         self.is_dirty = False
@@ -164,13 +168,11 @@ class ProjectModel(QObject):
             
             self.is_dirty = True
 
-    def save_project(self, include_rois: bool = True):
+    def save_project(self):
         """
-        Saves the current project state to project.json in root_path.
-        
-        Args:
-            include_rois: If False, strips ROIs from all scenes in the saved JSON 
-                          (does not affect in-memory state).
+        Saves the current project state to project.fluo in root_path.
+        Always saves what is currently in memory. 
+        Filtering of what gets into memory should be handled by the caller.
         """
         if not self.root_path:
             return
@@ -178,8 +180,6 @@ class ProjectModel(QObject):
         scenes_data = []
         for scene in self.scenes:
             s_dict = asdict(scene)
-            if not include_rois:
-                s_dict['rois'] = [] # Clear ROIs if persistence is disabled
             scenes_data.append(s_dict)
             
         data = {
@@ -189,7 +189,7 @@ class ProjectModel(QObject):
             "scenes": scenes_data
         }
         
-        config_path = os.path.join(self.root_path, "project.json")
+        config_path = os.path.join(self.root_path, "project.fluo")
         try:
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4)
@@ -199,7 +199,11 @@ class ProjectModel(QObject):
 
     def load_project(self, path: str) -> bool:
         """Loads project state from a directory."""
-        config_path = os.path.join(path, "project.json")
+        # Check for .fluo first, fallback to .json for compatibility
+        config_path = os.path.join(path, "project.fluo")
+        if not os.path.exists(config_path):
+            config_path = os.path.join(path, "project.json")
+            
         if not os.path.exists(config_path):
             return False
             
@@ -207,26 +211,37 @@ class ProjectModel(QObject):
             with open(config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
-            self.root_path = path # Use current path, ignore saved path if moved
-            self.pool_files = data.get("pool_files", [])
-            normalized_template, template_errors = self._normalize_project_template(data.get("project_channel_template", []))
-            self.project_channel_template = normalized_template
-            self.last_template_warnings = template_errors
+            # Normalize paths for cross-platform compatibility (Windows <-> Mac/Linux)
+            # 1. Update root_path
+            raw_root = data.get("root_path", "")
+            if raw_root:
+                # If loading on Mac/Linux but path is Windows-style, or vice versa
+                self.root_path = os.path.normpath(raw_root)
+            else:
+                self.root_path = path
+                
+            # 2. Update pool_files
+            self.pool_files = [os.path.normpath(p) for p in data.get("pool_files", [])]
             
+            # 3. Update Scenes and Channel paths
             self.scenes = []
-            self._scene_map = {}
-            for scene_dict in data.get("scenes", []):
-                scene = SceneData.from_dict(scene_dict)
+            for s_data in data.get("scenes", []):
+                # Normalize channel paths
+                for ch in s_data.get("channels", []):
+                    if ch.get("path"):
+                        ch["path"] = os.path.normpath(ch["path"])
+                
+                scene = SceneData.from_dict(s_data)
                 self.scenes.append(scene)
                 self._scene_map[scene.id] = scene
                 
-            self.is_dirty = bool(template_errors)
-            if self.undo_stack:
-                self.undo_stack.clear()
-            self.project_changed.emit()
+            self.project_channel_template = data.get("project_channel_template", [])
+            self.is_dirty = False
             return True
         except Exception as e:
             print(f"Error loading project: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def clear(self, clear_undo: bool = True):
@@ -289,9 +304,12 @@ class ProjectModel(QObject):
         # Add to pool first
         self.add_to_pool(file_paths, undoable=False)
         
+        last_modified_scene = None
+
         for path in file_paths:
             path = os.path.normpath(path)
             filename = os.path.basename(path)
+            name_no_ext = os.path.splitext(filename)[0]
             name_upper = filename.upper()
             
             # Detect Channel
@@ -308,59 +326,89 @@ class ProjectModel(QObject):
                     ch_type, ch_color = self.channel_patterns[key]
                     break
             
-            # Determine Scene Name (Base Name)
-            name_no_ext = os.path.splitext(filename)[0]
-            
-            if matched_key:
-                pattern = re.compile(re.escape(matched_key), re.IGNORECASE)
-                base_name = pattern.sub("", name_no_ext)
-                base_name = re.sub(r'^[\W_]+|[\W_]+$', '', base_name)
-                if not base_name:
-                    base_name = name_no_ext
-            else:
-                base_name = name_no_ext
-            
-            # Create or Get Scene
-            scene_id = base_name
-            if scene_id not in self._scene_map:
-                new_scene = SceneData(id=scene_id, name=base_name)
+            # --- Logic Branch based on Mode ---
+            if self.is_single_channel_mode:
+                # SINGLE CHANNEL MODE: Direct mapping (1 File -> 1 Sample)
+                # Use filename as Sample Name
+                scene_id = name_no_ext
                 
-                # INHERIT PROJECT TEMPLATE if available
-                if self.project_channel_template:
-                    # Pre-populate channels from template
-                    for ch_def in self.project_channel_template:
-                        new_scene.channels.append(
-                            ChannelDef(path="", channel_type=ch_def.get('name', 'Other'), color=ch_def.get('color', '#FFFFFF'))
-                        )
-                        
+                # Ensure uniqueness (avoid merging with existing if names collide in this mode)
+                base_name = scene_id
+                counter = 1
+                while scene_id in self._scene_map:
+                    scene_id = f"{base_name}_{counter}"
+                    counter += 1
+                    
+                new_scene = SceneData(id=scene_id, name=scene_id)
+                new_scene.channels.append(ChannelDef(path=path, channel_type=ch_type, color=ch_color))
+                
                 self.scenes.append(new_scene)
                 self._scene_map[scene_id] = new_scene
+                last_modified_scene = new_scene
+                
+            else:
+                # MULTI CHANNEL MODE: Smart Grouping
+                # Determine Scene Name (Base Name)
+                if matched_key:
+                    pattern = re.compile(re.escape(matched_key), re.IGNORECASE)
+                    base_name = pattern.sub("", name_no_ext)
+                    base_name = re.sub(r'^[\W_]+|[\W_]+$', '', base_name)
+                    if not base_name:
+                        base_name = name_no_ext
+                else:
+                    base_name = name_no_ext
+                
+                # Create or Get Scene
+                scene_id = base_name
+                if scene_id not in self._scene_map:
+                    new_scene = SceneData(id=scene_id, name=base_name)
+                    
+                    # INHERIT PROJECT TEMPLATE if available
+                    if self.project_channel_template:
+                        # Pre-populate channels from template
+                        for ch_def in self.project_channel_template:
+                            new_scene.channels.append(
+                                ChannelDef(path="", channel_type=ch_def.get('name', 'Other'), color=ch_def.get('color', '#FFFFFF'))
+                            )
+                            
+                    self.scenes.append(new_scene)
+                    self._scene_map[scene_id] = new_scene
+                
+                scene = self._scene_map[scene_id]
+                last_modified_scene = scene
+                
+                # Assign file to appropriate channel slot
+                assigned = False
+                
+                # 1. Try to match by channel type in existing slots (from template or previous auto-add)
+                for ch in scene.channels:
+                    if ch.channel_type == ch_type and not ch.path:
+                        ch.path = path
+                        # Keep template color or update? Usually template color is preferred.
+                        # But if auto-detection found a specific color (e.g. from filename), maybe use it?
+                        # Let's stick to template color if it exists, otherwise auto color.
+                        if not ch.color or ch.color == "#FFFFFF":
+                             ch.color = ch_color
+                        assigned = True
+                        break
+                
+                # 2. If not assigned (no empty slot matching type), append new channel
+                if not assigned:
+                    # Only append if we didn't fully fill the template?
+                    # Or always append if extra file?
+                    # If we have a template, we might want to be strict or flexible.
+                    # Flexible: Append extra channels.
+                    scene.channels.append(ChannelDef(path=path, channel_type=ch_type, color=ch_color))
             
-            scene = self._scene_map[scene_id]
-            
-            # Assign file to appropriate channel slot
-            assigned = False
-            
-            # 1. Try to match by channel type in existing slots (from template or previous auto-add)
-            for ch in scene.channels:
-                if ch.channel_type == ch_type and not ch.path:
-                    ch.path = path
-                    # Keep template color or update? Usually template color is preferred.
-                    # But if auto-detection found a specific color (e.g. from filename), maybe use it?
-                    # Let's stick to template color if it exists, otherwise auto color.
-                    if not ch.color or ch.color == "#FFFFFF":
-                         ch.color = ch_color
-                    assigned = True
-                    break
-            
-            # 2. If not assigned (no empty slot matching type), append new channel
-            if not assigned:
-                # Only append if we didn't fully fill the template?
-                # Or always append if extra file?
-                # If we have a template, we might want to be strict or flexible.
-                # Flexible: Append extra channels.
-                scene.channels.append(ChannelDef(path=path, channel_type=ch_type, color=ch_color))
-            
+        # --- AUTO-DETECTION LOGIC ---
+        if last_modified_scene:
+            # If the resulting sample has only 1 channel, switch to Single Channel Mode.
+            # If > 1 channel, switch to Multi Channel Mode.
+            if len(last_modified_scene.channels) > 1:
+                self.is_single_channel_mode = False
+            elif len(last_modified_scene.channels) == 1:
+                self.is_single_channel_mode = True
+
         if file_paths:
             self.is_dirty = True
             self.project_changed.emit()
@@ -379,18 +427,33 @@ class ProjectModel(QObject):
             
         new_scene = SceneData(id=name, name=name)
         for ch_info in channels_data:
+            # Prepare display settings dictionary
+            # Default to visible=True if not provided
+            display_settings = ch_info.get('display_settings', {}).copy()
+            if 'visible' not in display_settings and 'visible' in ch_info:
+                display_settings['visible'] = ch_info['visible']
+            elif 'visible' not in display_settings:
+                display_settings['visible'] = True
+
             new_scene.channels.append(
                 ChannelDef(
                     path=os.path.normpath(ch_info['path']),
                     channel_type=ch_info['type'],
                     color=ch_info['color'],
-                    display_settings={'visible': ch_info.get('visible', True)}
+                    display_settings=display_settings
                 )
             )
             
         self.scenes.append(new_scene)
         self._scene_map[name] = new_scene
         self.is_dirty = True
+        
+        # Auto-detect mode
+        if len(new_scene.channels) > 1:
+            self.is_single_channel_mode = False
+        elif len(new_scene.channels) == 1:
+            self.is_single_channel_mode = True
+            
         self.project_changed.emit()
         return name
 
@@ -576,6 +639,13 @@ class ProjectModel(QObject):
         if file_path in self.pool_files:
             from .commands import RemoveFromPoolCommand
             self.undo_stack.push(RemoveFromPoolCommand(self, file_path))
+
+    def remove_files_from_pool(self, file_paths: List[str]):
+        """Removes multiple files from pool with Undo support."""
+        if not file_paths:
+            return
+        from .commands import BatchRemoveFromPoolCommand
+        self.undo_stack.push(BatchRemoveFromPoolCommand(self, file_paths))
 
     def _remove_from_pool_internal(self, file_path: str):
         if file_path in self.pool_files:

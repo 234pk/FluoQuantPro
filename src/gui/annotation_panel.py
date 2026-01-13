@@ -1,26 +1,33 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QGroupBox, QCheckBox, QDoubleSpinBox, QComboBox, 
+                               QGroupBox, QDoubleSpinBox, QComboBox, 
                                QSpinBox, QColorDialog, QPushButton, QListWidget,
-                               QListWidgetItem, QAbstractItemView, QGridLayout, QFrame, QButtonGroup, QSizePolicy, QToolButton)
+                               QListWidgetItem, QAbstractItemView, QGridLayout, QFrame, QButtonGroup, QSizePolicy, QToolButton, QLineEdit, QSpacerItem)
+from src.gui.toggle_switch import ToggleSwitch
 from PySide6.QtCore import Qt, Signal, QSize, QSettings
 from PySide6.QtGui import QColor, QPixmap, QIcon, QAction
 from src.core.data_model import Session
 from src.core.language_manager import tr, LanguageManager
 from src.core.microscope_db import MICROSCOPE_DB, get_recommended_bar_length
 from src.gui.icon_manager import get_icon
+from src.gui.theme_manager import ThemeManager
+from src.core.roi_model import ROI
 
 class AnnotationPanel(QWidget):
     """
-    Panel for controlling image overlays like Scale Bar.
+    Panel for managing ROIs (annotations) and Scale Bar.
+    Unified ROI/Annotation management.
     """
     settings_changed = Signal()
     annotation_tool_selected = Signal(str) # 'arrow', 'rect', 'text', 'circle', 'line', 'polygon', 'none'
     clear_annotations_requested = Signal()
     annotation_updated = Signal() # Signal for when an annotation's properties change
+    annotation_selected = Signal(str) # Signal for when an annotation is selected in the list (Forward Sync)
 
     def __init__(self, session: Session, parent=None):
         super().__init__(parent)
         self.session = session
+        self._updating_from_canvas = False # Flag to prevent signal loops
+        self._updating_ui = False # Flag to prevent UI changes triggering model updates
         
         # Default properties for new annotations
         self.default_properties = {
@@ -33,12 +40,28 @@ class AnnotationPanel(QWidget):
             'dash_gap': 5,
             'dot_size': 2,
             'dot_spacing': 3,
-            'smooth': True
+            'smooth': True,
+            'font_family': 'Arial',
+            'font_size': 12.0,
+            'text': 'Text',
+            'alignment': 'left',
+            'arrow_head_shape': 'triangle',
+            'measurable': False, # Default for visual annotations
+            'export_with_image': True
         }
         
         self.setup_ui()
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
-        self.session.data_changed.connect(self._on_data_changed)
+        ThemeManager.instance().theme_changed.connect(self.refresh_icons)
+        
+        # Connect to ROI Manager signals
+        if self.session.roi_manager:
+            self.session.roi_manager.roi_added.connect(self._on_roi_added)
+            self.session.roi_manager.roi_removed.connect(self._on_roi_removed)
+            self.session.roi_manager.roi_updated.connect(self._on_roi_updated)
+            self.session.roi_manager.selection_changed.connect(self._on_manager_selection_changed)
+            
+        self.session.project_changed.connect(self.update_annotation_list)
 
     def setup_ui(self):
         self.setObjectName("card") # Apply global card style
@@ -51,7 +74,7 @@ class AnnotationPanel(QWidget):
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
 
-        # --- 1. Graphic Annotations Group (Reordered to top as implied by context) ---
+        # --- 1. Graphic Annotations Group ---
         self.grp_annotations = QGroupBox(tr("Graphic Annotations"))
         self.grp_annotations.setObjectName("grp_annotations")
         self.grp_annotations.setProperty("full_title", tr("Graphic Annotations"))
@@ -60,65 +83,29 @@ class AnnotationPanel(QWidget):
         v_ann.setContentsMargins(4, 15, 4, 4)
         
         # Visibility Toggle
-        self.chk_ann_visible = QCheckBox(tr("Show Annotations"))
-        self.chk_ann_visible.setChecked(self.session.show_annotations)
+        self.row_ann_visible = QHBoxLayout()
+        self.lbl_ann_visible = QLabel(tr("Show Annotations"))
+        self.chk_ann_visible = ToggleSwitch()
+        #self.chk_ann_visible.setChecked(self.session.show_annotations)
         self.chk_ann_visible.toggled.connect(self._toggle_annotations)
-        v_ann.addWidget(self.chk_ann_visible)
+        self.row_ann_visible.addWidget(self.lbl_ann_visible)
+        self.row_ann_visible.addStretch()
+        self.row_ann_visible.addWidget(self.chk_ann_visible)
+        v_ann.addLayout(self.row_ann_visible)
         
-        # Tool Buttons - Grid Layout
+        # Tool Buttons - Grid Layout (Will be populated after props are ready)
         self.tool_buttons_layout = QGridLayout()
         self.tool_buttons_layout.setSpacing(4)
         self.tool_buttons_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Create buttons with Icons
-        self.btn_add_arrow = self._create_tool_button("arrow", "arrow")
-        self.btn_add_arrow.setToolTip(tr("Arrow Tool"))
-        
-        self.btn_add_line = self._create_tool_button("line", "line")
-        self.btn_add_line.setToolTip(tr("Line Tool"))
-        
-        self.btn_add_rect = self._create_tool_button("rect", "rect")
-        self.btn_add_rect.setToolTip(tr("Rectangle Tool"))
-        
-        self.btn_add_circle = self._create_tool_button("circle", "circle")
-        self.btn_add_circle.setToolTip(tr("Circle Tool"))
-        
-        self.btn_add_ellipse = self._create_tool_button("ellipse", "ellipse")
-        self.btn_add_ellipse.setToolTip(tr("Ellipse Tool"))
-        
-        self.btn_add_poly = self._create_tool_button("polygon", "polygon")
-        self.btn_add_poly.setToolTip(tr("Polygon Tool"))
-        
-        self.btn_add_text = self._create_tool_button("text", "text")
-        self.btn_add_text.setToolTip(tr("Text Tool"))
-        
-        # Updated Icon for Batch Select
-        self.btn_batch_select = self._create_tool_button("batch_select", "batch_select")
-        self.btn_batch_select.setToolTip(tr("Batch Select"))
-        
-        # Grid Placement (4 columns: 0-3)
-        # Row 0
-        self.tool_buttons_layout.addWidget(self.btn_add_arrow, 0, 0)
-        self.tool_buttons_layout.addWidget(self.btn_add_line, 0, 1)
-        self.tool_buttons_layout.addWidget(self.btn_add_rect, 0, 2)
-        self.tool_buttons_layout.addWidget(self.btn_add_circle, 0, 3)
-        # Row 1
-        self.tool_buttons_layout.addWidget(self.btn_add_ellipse, 1, 0)
-        self.tool_buttons_layout.addWidget(self.btn_add_poly, 1, 1)
-        self.tool_buttons_layout.addWidget(self.btn_add_text, 1, 2)
-        self.tool_buttons_layout.addWidget(self.btn_batch_select, 1, 3)
-        
-        # Set column stretch to ensure equal width distribution
         for c in range(4):
             self.tool_buttons_layout.setColumnStretch(c, 1)
-            
         v_ann.addLayout(self.tool_buttons_layout)
         
         # Action Layout for managing list
         h_ann_actions = QHBoxLayout()
         h_ann_actions.setContentsMargins(0, 0, 0, 0)
         
-        # Clear Button - Changed to Icon Button
+        # Clear Button
         self.btn_clear_ann = QToolButton()
         self.btn_clear_ann.setIcon(get_icon("delete", "edit-clear-all"))
         self.btn_clear_ann.setIconSize(QSize(20, 20))
@@ -128,17 +115,16 @@ class AnnotationPanel(QWidget):
         h_ann_actions.addWidget(self.btn_clear_ann)
         
         h_ann_actions.addStretch()
-        
         v_ann.addLayout(h_ann_actions)
 
         # Annotation List
         v_ann.addWidget(QLabel(tr("Manage Annotations:")))
         self.list_ann = QListWidget()
         self.list_ann.setMinimumWidth(0)
-        self.list_ann.setMinimumHeight(100) # Minimum readable height
-        self.list_ann.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) # Allow compression/expansion
+        self.list_ann.setMinimumHeight(100)
+        self.list_ann.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.list_ann.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.list_ann.itemSelectionChanged.connect(self._on_selection_changed)
+        self.list_ann.itemSelectionChanged.connect(self._on_list_selection_changed)
         self.list_ann.itemChanged.connect(self._on_item_changed)
         v_ann.addWidget(self.list_ann)
         
@@ -153,41 +139,38 @@ class AnnotationPanel(QWidget):
         self.grp_props.setObjectName("grp_props")
         self.grp_props.setProperty("full_title", tr("Properties"))
         
-        # Use a main grid layout for properties
         self.grid_props = QGridLayout()
-        self.grid_props.setSpacing(4) # Minimal spacing
-        self.grid_props.setContentsMargins(4, 12, 4, 4) # Minimal margins
+        self.grid_props.setSpacing(4)
+        self.grid_props.setContentsMargins(4, 12, 4, 4)
         
         # --- Row 0: Color ---
         self.grid_props.addWidget(QLabel(tr("Color:")), 0, 0)
         self.btn_ann_color = QToolButton()
-        self.btn_ann_color.setFixedSize(24, 24) # Smaller fixed size
+        self.btn_ann_color.setFixedSize(24, 24)
         self.btn_ann_color.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ann_color.setToolTip(tr("Click to change color"))
         self.btn_ann_color.setProperty("role", "color_picker")
         self.btn_ann_color.setStyleSheet("background-color: #FFFF00;") 
         self.btn_ann_color.clicked.connect(self._pick_ann_color)
         self.grid_props.addWidget(self.btn_ann_color, 0, 1)
         
         # --- Row 1: Thickness ---
-        self.grid_props.addWidget(QLabel(tr("Thick:")), 1, 0) # Shorter text
+        self.grid_props.addWidget(QLabel(tr("Thick:")), 1, 0)
         self.spin_ann_thickness = QSpinBox()
-        self.spin_ann_thickness.setMaximumWidth(65) # Aggressive width reduction
+        self.spin_ann_thickness.setMaximumWidth(65)
         self.spin_ann_thickness.setRange(1, 50)
         self.spin_ann_thickness.setValue(2)
-        self.spin_ann_thickness.setSuffix("px") # No space
+        self.spin_ann_thickness.setSuffix("px")
         self.spin_ann_thickness.valueChanged.connect(self._update_ann_props)
         self.grid_props.addWidget(self.spin_ann_thickness, 1, 1)
         
         # --- Row 2: Style ---
-        self.grid_props.addWidget(QLabel(tr("Style:")), 2, 0)
+        self.lbl_ann_style = QLabel(tr("Style:"))
+        self.grid_props.addWidget(self.lbl_ann_style, 2, 0)
         self.combo_ann_style = QComboBox()
-        self.combo_ann_style.setMaximumWidth(85) # Aggressive width reduction
-        self.combo_ann_style.addItems([tr("Solid"), tr("Dashed"), tr("Dotted"), tr("Dash-Dot")])
+        self.combo_ann_style.setMaximumWidth(85)
+        self.combo_ann_style.addItems([tr("Solid"), tr("Dashed")])
         self.combo_ann_style.setItemData(0, "solid")
         self.combo_ann_style.setItemData(1, "dashed")
-        self.combo_ann_style.setItemData(2, "dotted")
-        self.combo_ann_style.setItemData(3, "dash_dot")
         self.combo_ann_style.currentIndexChanged.connect(self._update_ann_props)
         self.grid_props.addWidget(self.combo_ann_style, 2, 1)
         
@@ -195,17 +178,29 @@ class AnnotationPanel(QWidget):
         self.lbl_ann_size = QLabel(tr("Size:"))
         self.grid_props.addWidget(self.lbl_ann_size, 3, 0)
         self.spin_ann_size = QDoubleSpinBox()
-        self.spin_ann_size.setMaximumWidth(75) # Aggressive width reduction
+        self.spin_ann_size.setMaximumWidth(75)
         self.spin_ann_size.setRange(1.0, 2000.0)
         self.spin_ann_size.setValue(15.0)
-        self.spin_ann_size.setSuffix("px") # No space
+        self.spin_ann_size.setSuffix("px")
         self.spin_ann_size.valueChanged.connect(self._update_ann_props)
         self.grid_props.addWidget(self.spin_ann_size, 3, 1)
 
-        # --- Row 4: Tool-Specific Params (Dynamic visibility) ---
-        # We use a container widget for all dynamic params
+        # --- Row 4 & 5: Internal Properties ---
+        self.lbl_ann_measurable = QLabel(tr("Measurable:"))
+        self.grid_props.addWidget(self.lbl_ann_measurable, 4, 0)
+        self.chk_measurable = ToggleSwitch()
+        self.chk_measurable.toggled.connect(self._update_ann_props)
+        self.grid_props.addWidget(self.chk_measurable, 4, 1)
+        
+        self.lbl_ann_export = QLabel(tr("Export:"))
+        self.grid_props.addWidget(self.lbl_ann_export, 5, 0)
+        self.chk_export = ToggleSwitch()
+        self.chk_export.toggled.connect(self._update_ann_props)
+        self.grid_props.addWidget(self.chk_export, 5, 1)
+
+        # --- Dynamic Params ---
         self.dynamic_params_container = QWidget()
-        self.grid_props.addWidget(self.dynamic_params_container, 4, 0, 1, 2)
+        self.grid_props.addWidget(self.dynamic_params_container, 6, 0, 1, 2)
         v_dynamic = QVBoxLayout(self.dynamic_params_container)
         v_dynamic.setContentsMargins(0, 0, 0, 0)
         v_dynamic.setSpacing(5)
@@ -214,51 +209,55 @@ class AnnotationPanel(QWidget):
         self.widget_dash_params = QWidget()
         h_dash = QHBoxLayout(self.widget_dash_params)
         h_dash.setContentsMargins(0, 0, 0, 0)
-        h_dash.addWidget(QLabel(tr("Dash Len:")))
+        h_dash.setSpacing(4)
+        
+        h_dash.addWidget(QLabel(tr("Dash:")))
         self.spin_dash_len = QSpinBox()
         self.spin_dash_len.setRange(1, 200)
         self.spin_dash_len.setValue(10)
-        self.spin_dash_len.setSuffix(" px")
+        self.spin_dash_len.setToolTip(tr("Dash Length"))
         self.spin_dash_len.valueChanged.connect(self._update_ann_props)
         h_dash.addWidget(self.spin_dash_len)
+        
         h_dash.addWidget(QLabel(tr("Gap:")))
         self.spin_dash_gap = QSpinBox()
         self.spin_dash_gap.setRange(1, 200)
         self.spin_dash_gap.setValue(5)
-        self.spin_dash_gap.setSuffix(" px")
+        self.spin_dash_gap.setToolTip(tr("Gap Length"))
         self.spin_dash_gap.valueChanged.connect(self._update_ann_props)
         h_dash.addWidget(self.spin_dash_gap)
-        v_dynamic.addWidget(self.widget_dash_params)
         
-        # Dot Params
-        self.widget_dot_params = QWidget()
-        h_dot = QHBoxLayout(self.widget_dot_params)
-        h_dot.setContentsMargins(0, 0, 0, 0)
-        h_dot.addWidget(QLabel(tr("Dot Size:")))
-        self.spin_dot_size = QSpinBox()
-        self.spin_dot_size.setRange(1, 100)
-        self.spin_dot_size.setValue(2)
-        self.spin_dot_size.setSuffix(" px")
-        self.spin_dot_size.valueChanged.connect(self._update_ann_props)
-        h_dot.addWidget(self.spin_dot_size)
-        h_dot.addWidget(QLabel(tr("Spacing:")))
-        self.spin_dot_spacing = QSpinBox()
-        self.spin_dot_spacing.setRange(1, 200)
-        self.spin_dot_spacing.setValue(3)
-        self.spin_dot_spacing.setSuffix(" px")
-        self.spin_dot_spacing.valueChanged.connect(self._update_ann_props)
-        h_dot.addWidget(self.spin_dot_spacing)
-        v_dynamic.addWidget(self.widget_dot_params)
+        v_dynamic.addWidget(self.widget_dash_params)
         
         # Text Params
         self.widget_text_params = QWidget()
-        h_text = QHBoxLayout(self.widget_text_params)
-        h_text.setContentsMargins(0, 0, 0, 0)
-        h_text.addWidget(QLabel(tr("Font:")))
+        v_text = QVBoxLayout(self.widget_text_params)
+        v_text.setContentsMargins(0, 0, 0, 0)
+        h_row1 = QHBoxLayout()
+        h_row1.setContentsMargins(0, 0, 0, 0)
+        h_row1.addWidget(QLabel(tr("Text:")))
+        self.edit_text = QLineEdit()
+        self.edit_text.setPlaceholderText(tr("Enter text"))
+        self.edit_text.textChanged.connect(self._update_ann_props)
+        h_row1.addWidget(self.edit_text)
+        # Apply button row
+        h_row2 = QHBoxLayout()
+        h_row2.setContentsMargins(0, 0, 0, 0)
+        from PySide6.QtWidgets import QPushButton
+        self.btn_apply_text = QPushButton(tr("Apply"))
+        self.btn_apply_text.setToolTip(tr("Apply text to selected annotation"))
+        self.btn_apply_text.clicked.connect(self.apply_text_to_selection)
+        h_row2.addWidget(self.btn_apply_text)
+        v_text.addLayout(h_row1)
+        v_text.addLayout(h_row2)
+        h_row2 = QHBoxLayout()
+        h_row2.setContentsMargins(0, 0, 0, 0)
+        h_row2.addWidget(QLabel(tr("Font:")))
         self.combo_font = QComboBox()
         self.combo_font.addItems(["Arial", "Helvetica", "Times New Roman", "Courier New", "Verdana"])
         self.combo_font.currentTextChanged.connect(self._update_ann_props)
-        h_text.addWidget(self.combo_font)
+        h_row2.addWidget(self.combo_font)
+        v_text.addLayout(h_row2)
         
         self.group_align = QButtonGroup(self)
         self.btn_align_left = QToolButton()
@@ -284,49 +283,46 @@ class AnnotationPanel(QWidget):
         self.btn_align_right.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.btn_align_right.setCheckable(True)
         self.btn_align_right.setToolTip(tr("Align Right"))
-
+        
         self.group_align.addButton(self.btn_align_left)
         self.group_align.addButton(self.btn_align_center)
         self.group_align.addButton(self.btn_align_right)
         self.group_align.buttonClicked.connect(self._update_ann_props)
-        h_text.addWidget(self.btn_align_left)
-        h_text.addWidget(self.btn_align_center)
-        h_text.addWidget(self.btn_align_right)
+        h_row3 = QHBoxLayout()
+        h_row3.setContentsMargins(0, 0, 0, 0)
+        h_row3.addWidget(self.btn_align_left)
+        h_row3.addWidget(self.btn_align_center)
+        h_row3.addWidget(self.btn_align_right)
+        v_text.addLayout(h_row3)
         v_dynamic.addWidget(self.widget_text_params)
         
-        # Arrow Params
+        # Arrow Params (Deprecated - moved to standard Size control)
         self.widget_arrow_params = QWidget()
-        h_arrow = QHBoxLayout(self.widget_arrow_params)
-        h_arrow.setContentsMargins(0, 0, 0, 0)
-        h_arrow.addWidget(QLabel(tr("Head Shape:")))
-        self.combo_arrow_head = QComboBox()
-        self.combo_arrow_head.addItem(tr("V-Shape"), "open")
-        self.combo_arrow_head.addItem(tr("Triangle"), "triangle")
-        self.combo_arrow_head.addItem(tr("Diamond"), "diamond")
-        self.combo_arrow_head.addItem(tr("Circle"), "circle")
-        self.combo_arrow_head.currentIndexChanged.connect(self._update_ann_props)
-        h_arrow.addWidget(self.combo_arrow_head)
-        v_dynamic.addWidget(self.widget_arrow_params)
+        self.widget_arrow_params.hide()
         
         # Smooth Option (for Polygons)
-        self.chk_ann_smooth = QCheckBox(tr("Smooth Curve (Catmull-Rom)"))
+        self.row_smooth = QHBoxLayout()
+        self.lbl_ann_smooth = QLabel(tr("Smooth Curve (Catmull-Rom)"))
+        self.chk_ann_smooth = ToggleSwitch()
         self.chk_ann_smooth.toggled.connect(self._update_ann_props)
-        v_dynamic.addWidget(self.chk_ann_smooth)
-        
-        self.grid_props.addWidget(self.dynamic_params_container, 2, 0, 1, 4)
-        
-        # Simple Separator
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setFrameShadow(QFrame.Shadow.Sunken)
-        self.grid_props.addWidget(line, 4, 0, 1, 4)
+        self.row_smooth.addWidget(self.lbl_ann_smooth)
+        self.row_smooth.addStretch()
+        self.row_smooth.addWidget(self.chk_ann_smooth)
+        v_dynamic.addLayout(self.row_smooth)
         
         self.grp_props.setLayout(self.grid_props)
         layout.addWidget(self.grp_props)
         
+        # Now create tool buttons after all property widgets are initialized
+        self.btn_add_arrow = self._create_tool_button("arrow", "arrow")
+        self.btn_add_arrow.setToolTip(tr("Arrow Tool"))
+        self.btn_add_text = self._create_tool_button("text", "text")
+        self.btn_add_text.setToolTip(tr("Text Tool"))
+        self.tool_buttons_layout.addWidget(self.btn_add_arrow, 0, 0)
+        self.tool_buttons_layout.addWidget(self.btn_add_text, 0, 1)
+
         # Initially hide tool-specific params
         self.widget_dash_params.hide()
-        self.widget_dot_params.hide()
         self.widget_text_params.hide()
         self.widget_arrow_params.hide()
         self.chk_ann_smooth.hide()
@@ -342,24 +338,29 @@ class AnnotationPanel(QWidget):
         v_scale.setContentsMargins(4, 12, 4, 4)
         
         # Enable Checkbox
-        self.chk_enabled = QCheckBox(tr("Enable"))
+        self.row_enabled = QHBoxLayout()
+        self.lbl_enabled = QLabel(tr("Enable"))
+        self.chk_enabled = ToggleSwitch()
         self.chk_enabled.setChecked(self.session.scale_bar_settings.enabled)
         self.chk_enabled.toggled.connect(self._update_settings)
-        v_scale.addWidget(self.chk_enabled)
+        self.row_enabled.addWidget(self.lbl_enabled)
+        self.row_enabled.addStretch()
+        self.row_enabled.addWidget(self.chk_enabled)
+        v_scale.addLayout(self.row_enabled)
         
         # Use Grid Layout for more compact parameters
         grid_scale = QGridLayout()
-        grid_scale.setSpacing(2) # Minimal spacing
+        grid_scale.setSpacing(2)
         grid_scale.setColumnStretch(0, 0)
         grid_scale.setColumnStretch(1, 1)
         
         # Row 0: Preset Scope
         grid_scale.addWidget(QLabel(tr("Scope:")), 0, 0)
         self.combo_scope = QComboBox()
-        self.combo_scope.setMaximumWidth(90) # Reduced
+        self.combo_scope.setMaximumWidth(90)
         self.combo_scope.addItem(tr("Custom"), "Custom")
         if "Generic" in MICROSCOPE_DB:
-            self.combo_scope.addItem("Generic", "Generic")
+            self.combo_scope.addItem(tr("Generic"), "Generic")
         for name in sorted(MICROSCOPE_DB.keys()):
             if name != "Generic":
                 self.combo_scope.addItem(name, name)
@@ -369,26 +370,26 @@ class AnnotationPanel(QWidget):
         # Row 1: Objective
         grid_scale.addWidget(QLabel(tr("Obj:")), 1, 0)
         self.combo_obj = QComboBox()
-        self.combo_obj.setMaximumWidth(90) # Reduced
+        self.combo_obj.setMaximumWidth(90)
         self.combo_obj.setEnabled(False)
         self.combo_obj.currentIndexChanged.connect(self._on_objective_changed)
         grid_scale.addWidget(self.combo_obj, 1, 1)
         
         # Row 2: Pixel Size
-        grid_scale.addWidget(QLabel(tr("Px:")), 2, 0) # Shorter
+        grid_scale.addWidget(QLabel(tr("Px:")), 2, 0)
         self.spin_pixel = QDoubleSpinBox()
-        self.spin_pixel.setMaximumWidth(70) # Reduced
+        self.spin_pixel.setMaximumWidth(70)
         self.spin_pixel.setRange(0.001, 1000.0)
         self.spin_pixel.setDecimals(4)
         self.spin_pixel.setValue(self.session.scale_bar_settings.pixel_size)
-        self.spin_pixel.setSuffix("μm") # Shorter
+        self.spin_pixel.setSuffix("μm")
         self.spin_pixel.valueChanged.connect(self._update_settings)
         grid_scale.addWidget(self.spin_pixel, 2, 1)
         
         # Row 3: Length
-        grid_scale.addWidget(QLabel(tr("Len:")), 3, 0) # Shorter
+        grid_scale.addWidget(QLabel(tr("Len:")), 3, 0)
         self.spin_length = QDoubleSpinBox()
-        self.spin_length.setMaximumWidth(70) # Reduced
+        self.spin_length.setMaximumWidth(70)
         self.spin_length.setRange(1.0, 10000.0)
         self.spin_length.setValue(self.session.scale_bar_settings.bar_length_um)
         self.spin_length.setSuffix("μm")
@@ -398,7 +399,7 @@ class AnnotationPanel(QWidget):
         # Row 4: Position
         grid_scale.addWidget(QLabel(tr("Pos:")), 4, 0)
         self.combo_pos = QComboBox()
-        self.combo_pos.setMaximumWidth(90) # Reduced
+        self.combo_pos.setMaximumWidth(90)
         for p in ["Bottom Right", "Bottom Left", "Top Right", "Top Left"]:
             self.combo_pos.addItem(tr(p), p)
         idx = self.combo_pos.findData(self.session.scale_bar_settings.position)
@@ -407,15 +408,16 @@ class AnnotationPanel(QWidget):
         grid_scale.addWidget(self.combo_pos, 4, 1)
         
         # Row 5: Label Checkbox
-        self.chk_label = QCheckBox(tr("Show Label"))
+        grid_scale.addWidget(QLabel(tr("Show Label")), 5, 0)
+        self.chk_label = ToggleSwitch()
         self.chk_label.setChecked(self.session.scale_bar_settings.show_label)
         self.chk_label.toggled.connect(self._update_settings)
-        grid_scale.addWidget(self.chk_label, 5, 0, 1, 2)
+        grid_scale.addWidget(self.chk_label, 5, 1)
         
         # Row 6: Color
         grid_scale.addWidget(QLabel(tr("Color:")), 6, 0)
         self.btn_color = QToolButton()
-        self.btn_color.setFixedSize(24, 24) # Smaller
+        self.btn_color.setFixedSize(24, 24)
         self.btn_color.setProperty("role", "color_picker")
         self.btn_color.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_color.clicked.connect(self._pick_color)
@@ -425,7 +427,7 @@ class AnnotationPanel(QWidget):
         # Row 7: Thickness
         grid_scale.addWidget(QLabel(tr("Thick:")), 7, 0)
         self.spin_thickness = QSpinBox()
-        self.spin_thickness.setMaximumWidth(60) # Reduced
+        self.spin_thickness.setMaximumWidth(60)
         self.spin_thickness.setRange(1, 20)
         self.spin_thickness.setValue(self.session.scale_bar_settings.thickness)
         self.spin_thickness.setSuffix("px")
@@ -435,7 +437,7 @@ class AnnotationPanel(QWidget):
         # Row 8: Font Size
         grid_scale.addWidget(QLabel(tr("Font:")), 8, 0)
         self.spin_font = QSpinBox()
-        self.spin_font.setMaximumWidth(60) # Reduced
+        self.spin_font.setMaximumWidth(60)
         self.spin_font.setRange(6, 72)
         self.spin_font.setValue(self.session.scale_bar_settings.font_size)
         self.spin_font.setSuffix("pt")
@@ -460,17 +462,37 @@ class AnnotationPanel(QWidget):
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setProperty("tool_id", tool_id)
         
-        # Connect clicked (for manual toggle logic)
         btn.clicked.connect(lambda checked: self._on_tool_button_clicked(btn, checked))
         self.tool_group.addButton(btn)
+        
+        # Store for icon refresh
+        if not hasattr(self, '_tool_buttons'):
+            self._tool_buttons = {}
+        self._tool_buttons[tool_id] = (btn, icon_name)
+        
         return btn
 
-    def _on_tool_button_clicked(self, btn, checked):
-        """Handles mutual exclusivity and toggle-off logic."""
-        tool_id = btn.property("tool_id")
-        from src.core.logger import Logger
-        Logger.info(f"[AnnotationPanel] Tool button clicked: {tool_id}, checked={checked}")
+    def refresh_icons(self):
+        """Refresh all icons in the panel to match the current theme."""
+        # 1. Main annotation tool buttons
+        if hasattr(self, '_tool_buttons'):
+            for btn, icon_name in self._tool_buttons.values():
+                btn.setIcon(get_icon(icon_name))
         
+        # 2. Action buttons
+        if hasattr(self, 'btn_clear_ann'):
+            self.btn_clear_ann.setIcon(get_icon("delete", "edit-clear-all"))
+            
+        # 3. Alignment buttons
+        if hasattr(self, 'btn_align_left'):
+            self.btn_align_left.setIcon(get_icon("align_left"))
+        if hasattr(self, 'btn_align_center'):
+            self.btn_align_center.setIcon(get_icon("align_center"))
+        if hasattr(self, 'btn_align_right'):
+            self.btn_align_right.setIcon(get_icon("align_right"))
+
+    def _on_tool_button_clicked(self, btn, checked):
+        tool_id = btn.property("tool_id")
         if checked:
             self.annotation_tool_selected.emit(tool_id)
             self._update_tool_specific_controls(tool_id)
@@ -484,403 +506,353 @@ class AnnotationPanel(QWidget):
         for button in self.tool_group.buttons():
             button.setChecked(False)
         self.tool_group.setExclusive(True)
-        # Emit signal to notify that no tool is selected
         self.annotation_tool_selected.emit('none')
         self._update_tool_specific_controls('none')
 
-
     def select_annotation_by_id(self, ann_id):
-        """Programmatically select an annotation in the list (e.g. from Canvas click)."""
-        if not ann_id:
-            self.list_ann.clearSelection()
-            return
-            
-        # Find item with this ID
-        # We stored the ID in the label or need to check session
-        for i in range(self.list_ann.count()):
-            item = self.list_ann.item(i)
-            # Match index to session list
-            if i < len(self.session.annotations):
-                if self.session.annotations[i].id == ann_id:
+        """Select an annotation in the list (triggered from Canvas)."""
+        self._updating_from_canvas = True
+        try:
+            if not ann_id:
+                self.list_ann.clearSelection()
+                return
+                
+            for i in range(self.list_ann.count()):
+                item = self.list_ann.item(i)
+                if item.data(Qt.UserRole) == ann_id:
                     self.list_ann.setCurrentItem(item)
                     item.setSelected(True)
+                    self.list_ann.scrollToItem(item)
                     return
+        finally:
+            self._updating_from_canvas = False
 
     def _on_item_changed(self, item):
-        idx = self.list_ann.row(item)
-        if 0 <= idx < len(self.session.annotations):
-            self.session.annotations[idx].visible = (item.checkState() == Qt.CheckState.Checked)
-            self.annotation_updated.emit()
+        """Handle visibility checkbox toggle."""
+        roi_id = item.data(Qt.UserRole)
+        if roi_id and self.session.roi_manager:
+            roi = self.session.roi_manager.get_roi(roi_id)
+            if roi:
+                new_visible = (item.checkState() == Qt.CheckState.Checked)
+                if roi.visible != new_visible:
+                    roi.visible = new_visible
+                    
+                    # SYNC: If visibility is changed via the list checkbox, 
+                    # we usually want the export status to follow.
+                    roi.export_with_image = new_visible
+                    
+                    # Notify manager and refresh property UI if selected
+                    self.session.roi_manager.roi_updated.emit(roi)
+                    
+                    # If this is the currently selected item, update the checkbox in the property panel
+                    selected_items = self.list_ann.selectedItems()
+                    if len(selected_items) == 1 and selected_items[0] == item:
+                        self._updating_ui = True
+                        self.chk_export.setChecked(new_visible)
+                        self._updating_ui = False
+
+    def _on_list_selection_changed(self):
+        """Handle selection from List -> Manager."""
+        if self._updating_from_canvas:
+            return
+            
+        selected_items = self.list_ann.selectedItems()
+        selected_ids = [item.data(Qt.UserRole) for item in selected_items]
+        
+        # Sync to Manager
+        if self.session.roi_manager:
+            self.session.roi_manager.set_selected_ids(selected_ids)
+            
+        # Update UI props
+        self._load_props_from_selection()
+
+    def _on_manager_selection_changed(self):
+        """Handle selection from Manager -> List."""
+        if self.session.roi_manager:
+            selected_ids = set(self.session.roi_manager.get_selected_ids())
+            
+            self._updating_from_canvas = True
+            self.list_ann.blockSignals(True)
+            try:
+                for i in range(self.list_ann.count()):
+                    item = self.list_ann.item(i)
+                    rid = item.data(Qt.UserRole)
+                    item.setSelected(rid in selected_ids)
+            finally:
+                self.list_ann.blockSignals(False)
+                self._updating_from_canvas = False
+            
+            self._load_props_from_selection()
+
+    def _load_props_from_selection(self):
+        """Updates property widgets based on current selection."""
+        selected_items = self.list_ann.selectedItems()
+        
+        self._updating_ui = True # Block signals
+        try:
+            if len(selected_items) == 1:
+                rid = selected_items[0].data(Qt.UserRole)
+                roi = self.session.roi_manager.get_roi(rid)
+                if roi:
+                    # Common
+                    self.spin_ann_thickness.setValue(roi.properties.get('thickness', 2))
+                    self._update_ann_color_preview(roi.color.name())
+                    
+                    style = roi.properties.get('style', 'solid')
+                    idx = self.combo_ann_style.findData(style)
+                    self.combo_ann_style.setCurrentIndex(idx if idx >= 0 else 0)
+                    
+                    self.chk_measurable.setChecked(roi.measurable)
+                    self.chk_export.setChecked(roi.export_with_image)
+                    
+                    # Tool specific
+                    self.spin_dash_len.setValue(roi.properties.get('dash_length', 10))
+                    self.spin_dash_gap.setValue(roi.properties.get('dash_gap', 5))
+                    
+                    # Arrow / Text
+                    if roi.roi_type == 'arrow':
+                        self.spin_ann_size.setValue(roi.properties.get('arrow_head_size', 15.0))
+                        
+                    elif roi.roi_type == 'text':
+                         self.spin_ann_size.setValue(roi.properties.get('font_size', 12.0))
+                         self.edit_text.setText(roi.properties.get('text', 'Text'))
+                         self.combo_font.setCurrentText(roi.properties.get('font_family', 'Arial'))
+                         
+                         align = roi.properties.get('alignment', 'left')
+                         if align == 'center': self.btn_align_center.setChecked(True)
+                         elif align == 'right': self.btn_align_right.setChecked(True)
+                         else: self.btn_align_left.setChecked(True)
+                    
+                    self._update_tool_specific_controls(roi.roi_type)
+                    
+            elif not selected_items:
+                # Update controls based on active tool even if no ROI selected
+                active_tool = self.session.active_tool if hasattr(self.session, 'active_tool') else 'none'
+                self._update_tool_specific_controls(active_tool)
+                
+                # Defaults or mixed
+                self.chk_measurable.setChecked(self.default_properties['measurable'])
+                self.chk_export.setChecked(self.default_properties['export_with_image'])
+                # ... reset others ...
+                
+        finally:
+            self._updating_ui = False
+
+    def _update_ann_props(self, *args):
+        """Called when UI widgets change."""
+        if self._updating_ui:
+            return
+
+        # Get values
+        thickness = self.spin_ann_thickness.value()
+        style = self.combo_ann_style.currentData()
+        size = self.spin_ann_size.value()
+        measurable = self.chk_measurable.isChecked()
+        export = self.chk_export.isChecked()
+        
+        # Update visibility of dash length based on style immediately
+        tool_id = 'none'
+        selected_items = self.list_ann.selectedItems()
+        if selected_items:
+            rid = selected_items[0].data(Qt.UserRole)
+            roi = self.session.roi_manager.get_roi(rid)
+            if roi: tool_id = roi.roi_type
+        else:
+            tool_id = self.session.active_tool if hasattr(self.session, 'active_tool') else 'none'
+            
+        if style == 'dashed' and tool_id not in ['text', 'line_scan']:
+            self.widget_dash_params.show()
+        else:
+            self.widget_dash_params.hide()
+
+        # Advanced
+        dash_len = self.spin_dash_len.value()
+        dash_gap = self.spin_dash_gap.value()
+        text_content = self.edit_text.text()
+        font = self.combo_font.currentText()
+        align = "left"
+        if self.btn_align_center.isChecked(): align = "center"
+        if self.btn_align_right.isChecked(): align = "right"
+        head_shape = "triangle" # Defaulting as requested
+        arrow_head_size = size # Reuse standard size control
+        smooth = self.chk_ann_smooth.isChecked()
+
+        # Update Selection
+        selected_items = self.list_ann.selectedItems()
+        if selected_items:
+            for item in selected_items:
+                rid = item.data(Qt.UserRole)
+                roi = self.session.roi_manager.get_roi(rid)
+                if roi:
+                    roi.measurable = measurable
+                    roi.export_with_image = export
+                    
+                    # Update properties dict
+                    roi.properties['thickness'] = thickness
+                    roi.properties['style'] = style
+                    roi.properties['dash_length'] = dash_len
+                    roi.properties['dash_gap'] = dash_gap
+                    roi.properties['smooth'] = smooth
+                    
+                    if roi.roi_type == 'arrow':
+                        roi.properties['arrow_head_size'] = arrow_head_size
+                        roi.properties['arrow_head_shape'] = head_shape
+                    elif roi.roi_type == 'text':
+                        roi.properties['font_size'] = size
+                        roi.properties['text'] = text_content
+                        roi.properties['font_family'] = font
+                        roi.properties['alignment'] = align
+                    
+                    # Notify update
+                    self.session.roi_manager.roi_updated.emit(roi)
+            
+            # Also notify tool settings change for real-time preview
+            self.settings_changed.emit()
+        else:
+            # Update Defaults
+            self.default_properties['thickness'] = thickness
+            self.default_properties['style'] = style
+            self.default_properties['dash_length'] = dash_len
+            self.default_properties['dash_gap'] = dash_gap
+            self.default_properties['arrow_head_size'] = arrow_head_size
+            self.default_properties['measurable'] = measurable
+            self.default_properties['export_with_image'] = export
+            
+            # For defaults, also notify settings change
             self.settings_changed.emit()
 
-    def _update_style_controls_visibility(self):
-        style = self.combo_ann_style.currentData()
-        if style in ['dashed', 'dash_dot']:
-            self.widget_dash_params.show()
-            self.widget_dot_params.hide()
-        elif style == 'dotted':
-            self.widget_dash_params.hide()
-            self.widget_dot_params.show()
-        else:
-            self.widget_dash_params.hide()
-            self.widget_dot_params.hide()
-
-    def _on_selection_changed(self):
-        selected_items = self.list_ann.selectedItems()
-        # self.grp_props.setEnabled(len(selected_items) > 0) # Removed to allow default setting
+    def _pick_ann_color(self):
+        color = QColorDialog.getColor(QColor(self.default_properties['color']), self, tr("Select Color"))
+        if not color.isValid():
+            return
+            
+        self._update_ann_color_preview(color.name())
         
-        widgets_to_block = [
-            self.spin_ann_thickness,
-            self.combo_ann_style,
-            self.spin_ann_size,
-            self.spin_dash_len,
-            self.spin_dash_gap,
-            self.spin_dot_size,
-            self.spin_dot_spacing,
-            self.combo_font,
-            self.combo_arrow_head
-        ]
-
-        if len(selected_items) == 1:
-            # Load properties of the single selected annotation
-            idx = self.list_ann.row(selected_items[0])
-            if 0 <= idx < len(self.session.annotations):
-                ann = self.session.annotations[idx]
-                for w in widgets_to_block:
-                    w.blockSignals(True)
-                self.spin_ann_thickness.setValue(ann.thickness)
-                self._update_ann_color_preview(ann.color)
-                
-                # Update style combo
-                style_idx = self.combo_ann_style.findData(ann.style)
-                if style_idx >= 0:
-                    self.combo_ann_style.setCurrentIndex(style_idx)
-                else:
-                    self.combo_ann_style.setCurrentIndex(0) # Default to solid
-                
-                # Update Advanced Style Params
-                self.spin_dash_len.setValue(ann.properties.get('dash_length', 10))
-                self.spin_dash_gap.setValue(ann.properties.get('dash_gap', 5))
-                self.spin_dot_size.setValue(ann.properties.get('dot_size', 2))
-                self.spin_dot_spacing.setValue(ann.properties.get('dot_spacing', 3))
-                
-                # Update New Params
-                font = ann.properties.get('font_family', 'Arial')
-                self.combo_font.setCurrentText(font)
-                
-                self.group_align.blockSignals(True)
-                align = ann.properties.get('alignment', 'left')
-                if align == 'center': self.btn_align_center.setChecked(True)
-                elif align == 'right': self.btn_align_right.setChecked(True)
-                else: self.btn_align_left.setChecked(True)
-                self.group_align.blockSignals(False)
-                
-                head = ann.properties.get('arrow_head_shape', 'triangle')
-                idx = self.combo_arrow_head.findData(head)
-                if idx >= 0: self.combo_arrow_head.setCurrentIndex(idx)
-                
-                # Update Smooth Checkbox
-                self.chk_ann_smooth.blockSignals(True)
-                self.chk_ann_smooth.setChecked(ann.properties.get('smooth', True))
-                self.chk_ann_smooth.blockSignals(False)
-                
-                self._update_style_controls_visibility()
-                
-                # Update Size Spinbox (Arrow Head)
-                if ann.type == 'arrow':
-                     val = ann.properties.get('arrow_head_size', 15.0)
-                     self.spin_ann_size.setValue(float(val))
-                elif ann.type == 'text':
-                     val = ann.properties.get('font_size', 12.0)
-                     self.spin_ann_size.setValue(float(val))
-                
-                self._update_tool_specific_controls(ann.type)
-                
-                for w in widgets_to_block:
-                    w.blockSignals(False)
+        selected_items = self.list_ann.selectedItems()
+        if selected_items:
+            for item in selected_items:
+                rid = item.data(Qt.UserRole)
+                roi = self.session.roi_manager.get_roi(rid)
+                if roi:
+                    roi.color = color
+                    self.session.roi_manager.roi_updated.emit(roi)
         else:
-            # If nothing selected (or multiple), should we reset to defaults?
-            # Let's reset controls to show current defaults
-            for w in widgets_to_block:
-                w.blockSignals(True)
-            self.spin_ann_thickness.setValue(self.default_properties['thickness'])
-            self._update_ann_color_preview(self.default_properties['color'])
-            
-            style_idx = self.combo_ann_style.findData(self.default_properties['style'])
-            if style_idx >= 0:
-                self.combo_ann_style.setCurrentIndex(style_idx)
-                
-            self.spin_dash_len.setValue(self.default_properties['dash_length'])
-            self.spin_dash_gap.setValue(self.default_properties['dash_gap'])
-            self.spin_dot_size.setValue(self.default_properties['dot_size'])
-            self.spin_dot_spacing.setValue(self.default_properties['dot_spacing'])
-            
-            # Defaults for new params
-            self.combo_font.setCurrentText(self.default_properties.get('font_family', 'Arial'))
-            
-            self.group_align.blockSignals(True)
-            align = self.default_properties.get('alignment', 'left')
-            if align == 'center': self.btn_align_center.setChecked(True)
-            elif align == 'right': self.btn_align_right.setChecked(True)
-            else: self.btn_align_left.setChecked(True)
-            self.group_align.blockSignals(False)
-            
-            head = self.default_properties.get('arrow_head_shape', 'triangle')
-            idx = self.combo_arrow_head.findData(head)
-            if idx >= 0: self.combo_arrow_head.setCurrentIndex(idx)
-            
-            self._update_style_controls_visibility()
-                
-            self.spin_ann_size.setValue(self.default_properties['arrow_head_size'])
-            
-            # Check active tool to decide visibility
-            current_tool_btn = self.tool_group.checkedButton()
-            if current_tool_btn:
-                 tool_id = current_tool_btn.property("tool_id")
-                 self._update_tool_specific_controls(tool_id)
-            else:
-                 self._update_tool_specific_controls('none')
-            
-            for w in widgets_to_block:
-                w.blockSignals(False)
+            self.default_properties['color'] = color.name()
 
     def _update_ann_color_preview(self, color_hex):
         pix = QPixmap(20, 20)
         pix.fill(QColor(color_hex))
         self.btn_ann_color.setIcon(QIcon(pix))
 
-    def _pick_ann_color(self):
-        selected_items = self.list_ann.selectedItems()
-        
-        # Get initial color
-        if selected_items:
-            first_idx = self.list_ann.row(selected_items[0])
-            initial_color = self.session.annotations[first_idx].color
-        else:
-            initial_color = self.default_properties['color']
-        
-        color = QColorDialog.getColor(QColor(initial_color), self, tr("Select Annotation Color"))
-        if not color.isValid():
-            return
-
-        color_hex = color.name()
-        self._update_ann_color_preview(color_hex)
-            
-        if not selected_items:
-            # Update default
-            self.default_properties['color'] = color_hex
-            return
-
-        # Update selected
-        for item in selected_items:
-            idx = self.list_ann.row(item)
-            ann = self.session.annotations[idx]
-            ann.color = color_hex
-            
-            # USER REQUEST: Sync back to ROI if this is a roi_ref
-            if ann.roi_id:
-                if hasattr(self.session.roi_manager, 'get_roi'):
-                    roi = self.session.roi_manager.get_roi(ann.roi_id)
-                else:
-                    roi = None
-                    for r in self.session.roi_manager.get_all_rois():
-                        if r.id == ann.roi_id:
-                            roi = r
-                            break
-                
-                if roi:
-                    roi.color = color
-                    self.session.roi_manager.roi_updated.emit(roi)
-        
-        self.annotation_updated.emit()
-        self.settings_changed.emit()
-
-    def _update_ann_props(self):
-        if not hasattr(self, 'list_ann'):
-            return
-        # Ensure all widgets are initialized before accessing them
-        if not hasattr(self, 'spin_ann_thickness') or \
-           not hasattr(self, 'combo_ann_style') or \
-           not hasattr(self, 'spin_ann_size') or \
-           not hasattr(self, 'spin_dash_len') or \
-           not hasattr(self, 'spin_dash_gap') or \
-           not hasattr(self, 'spin_dot_size') or \
-           not hasattr(self, 'spin_dot_spacing') or \
-           not hasattr(self, 'combo_font') or \
-           not hasattr(self, 'combo_arrow_head'):
-            return
-
-        selected_items = self.list_ann.selectedItems()
-        
-        # Gather current values from UI
-        thickness = self.spin_ann_thickness.value()
-        style = self.combo_ann_style.currentData()
-        arrow_size = self.spin_ann_size.value()
-        
-        # Advanced Params
-        dash_len = self.spin_dash_len.value()
-        dash_gap = self.spin_dash_gap.value()
-        dot_size = self.spin_dot_size.value()
-        dot_spacing = self.spin_dot_spacing.value()
-        
-        # New Params
-        font = self.combo_font.currentText()
-        align = "left"
-        if self.btn_align_center.isChecked(): align = "center"
-        if self.btn_align_right.isChecked(): align = "right"
-        head_shape = self.combo_arrow_head.currentData()
-        smooth = self.chk_ann_smooth.isChecked()
-        
-        self._update_style_controls_visibility()
-        
-        if not selected_items:
-            # Update defaults
-            self.default_properties['thickness'] = thickness
-            if style in ['solid', 'dashed', 'dotted', 'dash_dot']:
-                self.default_properties['style'] = style
-            self.default_properties['arrow_head_size'] = arrow_size
-            self.default_properties['dash_length'] = dash_len
-            self.default_properties['dash_gap'] = dash_gap
-            self.default_properties['dot_size'] = dot_size
-            self.default_properties['dot_spacing'] = dot_spacing
-            
-            self.default_properties['font_family'] = font
-            self.default_properties['alignment'] = align
-            self.default_properties['arrow_head_shape'] = head_shape
-            self.default_properties['smooth'] = smooth
-            return
-            
-        from src.core.logger import Logger
-        for item in selected_items:
-            idx = self.list_ann.row(item)
-            ann = self.session.annotations[idx]
-            
-            # Update properties
-            ann.thickness = thickness
-            
-            # Update style
-            if style in ['solid', 'dashed', 'dotted', 'dash_dot']:
-                ann.style = style
-                
-            # Update Advanced Params
-            ann.properties['dash_length'] = dash_len
-            ann.properties['dash_gap'] = dash_gap
-            ann.properties['dot_size'] = dot_size
-            ann.properties['dot_spacing'] = dot_spacing
-                
-            # Update arrow size
-            if ann.type == 'arrow':
-                 ann.properties['arrow_head_size'] = arrow_size
-                 ann.properties['arrow_head_shape'] = head_shape
-            elif ann.type == 'text':
-                 ann.properties['font_size'] = arrow_size
-                 ann.properties['font_family'] = font
-                 ann.properties['alignment'] = align
-            elif ann.type in ['polygon', 'roi_ref']:
-                 ann.properties['smooth'] = smooth
-            
-            # 【核心修复】同步到关联的 ROI
-            # 这样 AnnotationGraphicsItem 在渲染时能拿到最新的样式数据
-            roi_obj = getattr(ann, 'roi', None)
-            if roi_obj:
-                if not hasattr(roi_obj, 'display_style'):
-                    roi_obj.display_style = {}
-                roi_obj.display_style['color'] = ann.color
-                roi_obj.display_style['thickness'] = ann.thickness
-                # 还可以同步更多属性
-                if ann.type == 'arrow':
-                    roi_obj.display_style['arrow_head_size'] = arrow_size
-                
-                # 触发 ROI 更新信号，确保所有视图同步 (包括可能正在显示该 ROI 的其他组件)
-                if hasattr(self, 'session') and self.session.roi_manager:
-                    self.session.roi_manager.roi_updated.emit(roi_obj.id)
-            
-            Logger.info(f"Updated annotation {ann.id} properties: thickness={thickness}, smooth={smooth}")
-            
-        self.annotation_updated.emit()
-        self.settings_changed.emit()
-
-    def get_current_properties(self):
-        """Returns the current properties (from selection or defaults)."""
-        selected_items = self.list_ann.selectedItems()
-        if not selected_items:
-            return self.default_properties.copy()
-            
-        props = self.default_properties.copy()
-        
-        # If selection, we can read from the annotation object
-        idx = self.list_ann.row(selected_items[0])
-        ann = self.session.annotations[idx]
-        props['color'] = ann.color
-        props['thickness'] = ann.thickness
-        props['style'] = ann.style
-        props['arrow_head_size'] = ann.properties.get('arrow_head_size', 15.0)
-        props['dash_length'] = ann.properties.get('dash_length', 10)
-        props['dash_gap'] = ann.properties.get('dash_gap', 5)
-        props['dot_size'] = ann.properties.get('dot_size', 2)
-        props['dot_spacing'] = ann.properties.get('dot_spacing', 3)
-        
-        return props
-
-    def refresh_from_session(self):
-        """Sync UI with current session settings."""
-        s = self.session.scale_bar_settings
-        self.chk_enabled.setChecked(s.enabled)
-        self.spin_length.setValue(s.bar_length_um)
-        self.spin_thickness.setValue(s.thickness)
-        if hasattr(self, 'chk_show_label'):
-            self.chk_show_label.setChecked(s.show_label)
-        self.combo_pos.setCurrentText(s.position)
-        
-        self.update_annotation_list()
-
     def update_annotation_list(self):
-        """Refreshes the annotation list widget."""
+        """Refreshes the list from RoiManager."""
         self.list_ann.blockSignals(True)
         self.list_ann.clear()
-        for ann in self.session.annotations:
-            label = f"{ann.type.capitalize()} - {ann.id[:8]}"
-            if ann.roi_id:
-                label += " (ROI)"
-            item = QListWidgetItem(label)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if ann.visible else Qt.Unchecked)
-            self.list_ann.addItem(item)
+        
+        if self.session.roi_manager:
+            for roi in self.session.roi_manager.get_all_rois():
+                label = f"{roi.label} ({roi.roi_type})"
+                item = QListWidgetItem(label)
+                item.setData(Qt.UserRole, roi.id)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked if roi.visible else Qt.Unchecked)
+                self.list_ann.addItem(item)
+                
         self.list_ann.blockSignals(False)
         self._update_ann_count()
+        
+        # Restore selection if needed?
+        self._on_manager_selection_changed()
+
+    def _on_roi_added(self, roi):
+        self.update_annotation_list()
+
+    def _on_roi_removed(self, roi_id):
+        self.update_annotation_list()
+
+    def _on_roi_updated(self, roi):
+        # Optional: Update label if name changed
+        # For now just ensure list item exists
+        pass
 
     def _update_ann_count(self):
-        self.lbl_ann_count.setText(tr("Total Annotations: {}").format(len(self.session.annotations)))
+        count = self.list_ann.count()
+        self.lbl_ann_count.setText(tr("Total Annotations: {0}").format(count))
 
     def _update_tool_specific_controls(self, tool_id):
         """Shows/hides controls based on selected tool or annotation type."""
-        # Hide all first
         self.lbl_ann_size.setVisible(False)
         self.spin_ann_size.setVisible(False)
         self.widget_text_params.hide()
         self.widget_arrow_params.hide()
         self.chk_ann_smooth.hide()
+        self.widget_dash_params.hide()
+        
+        # Reset common controls
+        self.lbl_ann_style.show()
+        self.combo_ann_style.show()
+        self.spin_ann_thickness.show()
+        self.lbl_ann_measurable.show()
+        self.chk_measurable.show()
+        self.lbl_ann_export.show()
+        self.chk_export.show()
+        
+        self.lbl_ann_size.setText(tr("Size:"))
         
         if tool_id == 'arrow':
+            # Arrow uses the standard Size control for Head Size
             self.lbl_ann_size.setText(tr("Head Size:"))
             self.lbl_ann_size.setVisible(True)
             self.spin_ann_size.setVisible(True)
-            self.widget_arrow_params.show()
+            self.lbl_ann_style.show() # Restore style (solid/dashed)
+            self.combo_ann_style.show()
+            self.lbl_ann_measurable.hide()
+            self.chk_measurable.hide()
         elif tool_id == 'text':
             self.lbl_ann_size.setText(tr("Font Size:"))
             self.lbl_ann_size.setVisible(True)
             self.spin_ann_size.setVisible(True)
             self.widget_text_params.show()
-        elif tool_id in ['polygon', 'roi_ref']:
+            self.lbl_ann_style.hide()
+            self.combo_ann_style.hide()
+            self.lbl_ann_measurable.hide()
+            self.chk_measurable.hide()
+        elif tool_id == 'polygon':
             self.chk_ann_smooth.show()
-
-        # Update visibility of style controls
-        self._update_style_controls_visibility()
+        elif tool_id == 'line_scan':
+            # LineScan doesn't need style/size controls usually
+            self.lbl_ann_style.hide()
+            self.combo_ann_style.hide()
+            self.lbl_ann_size.hide()
+            self.spin_ann_size.hide()
+            self.lbl_ann_measurable.show() # Should be measurable
+            self.lbl_ann_export.show() # Should be exportable
+            
+        style = self.combo_ann_style.currentData()
+        if style == 'dashed' and tool_id not in ['text', 'line_scan']:
+            self.widget_dash_params.show()
 
     def _toggle_annotations(self, visible):
-        self.session.show_annotations = visible
-        self.settings_changed.emit()
+        """Toggles visibility of all ROIs."""
+        if not self.session.roi_manager:
+            return
+            
+        # Batch update visibility
+        for roi in self.session.roi_manager.get_all_rois():
+            roi.visible = visible
+            # We don't emit individual signals to avoid storm
+            
+        # Force full view update
+        # We need a way to tell views to refresh ROI items from model
+        # But UnifiedGraphicsItem listens to roi_updated? No, CanvasView connects signals.
+        # CanvasView._on_roi_updated calls item.update_from_model
+        
+        # We can emit a special signal or just iterate views
+        # For now, let's just trigger a repaint which might not be enough if items are not updated
+        # Ideally, we emit a 'batch_updated' signal from manager
+        self.session.roi_manager.project_changed.emit() # This triggers a reload in some places?
 
+    # --- Scale Bar Methods (Preserved) ---
     def _update_color_button(self):
         color = self.session.scale_bar_settings.color
         self.btn_color.setStyleSheet(f"background-color: {color};")
@@ -894,38 +866,27 @@ class AnnotationPanel(QWidget):
 
     def _on_scope_changed(self, index):
         scope_name = self.combo_scope.currentData()
-        
         self.combo_obj.blockSignals(True)
         self.combo_obj.clear()
-        
         if scope_name == "Custom":
             self.combo_obj.setEnabled(False)
             self.spin_pixel.setEnabled(True)
         elif scope_name in MICROSCOPE_DB:
             self.combo_obj.setEnabled(True)
-            self.spin_pixel.setEnabled(True) # Allow manual override
-            
-            # Populate objectives
+            self.spin_pixel.setEnabled(True)
             objectives = MICROSCOPE_DB[scope_name]
             for obj_name in sorted(objectives.keys(), key=lambda x: int(x.split('x')[0]) if 'x' in x else 0):
                 val = objectives[obj_name]
                 self.combo_obj.addItem(f"{obj_name} (~{val} um/px)", val)
-                
-            # Trigger update for first item
             if self.combo_obj.count() > 0:
                 self.combo_obj.setCurrentIndex(0)
                 self._on_objective_changed(0)
-                
         self.combo_obj.blockSignals(False)
 
     def _on_objective_changed(self, index):
         val = self.combo_obj.currentData()
         if val is not None:
             self.spin_pixel.setValue(float(val))
-            
-            # Auto-suggest length
-            # We need image width. Where to get it?
-            # Session has channels.
             if self.session.channels:
                 width = self.session.channels[0].shape[1]
                 rec_len = get_recommended_bar_length(float(val), width)
@@ -940,176 +901,52 @@ class AnnotationPanel(QWidget):
         s.thickness = self.spin_thickness.value()
         s.show_label = self.chk_label.isChecked()
         s.font_size = self.spin_font.value()
-        
         self.settings_changed.emit()
 
-    def resizeEvent(self, event):
-        width = self.width()
-        is_compact = width < 150
-        is_tiny = width < 100
+    def refresh_from_session(self):
+        """Sync UI with current session settings."""
+        s = self.session.scale_bar_settings
+        self.chk_enabled.setChecked(s.enabled)
+        self.spin_length.setValue(s.bar_length_um)
+        self.spin_thickness.setValue(s.thickness)
+        self.chk_label.setChecked(s.show_label)
+        self.combo_pos.setCurrentText(s.position)
+        self.update_annotation_list()
+
+    def get_current_properties(self):
+        """Returns the current properties (from selection or defaults)."""
+        # If selection, return its props?
+        # Or just return defaults?
+        # Tools usually ask for defaults to start with.
+        return self.default_properties.copy()
         
-        # 1. 标题组优化
-        for grp in [self.grp_annotations, self.grp_props, self.grp_scale_bar]:
-            if hasattr(self, grp.objectName()): # 确保已初始化
-                grp.setTitle("" if is_compact else grp.property("full_title"))
-
-        # 2. 标注工具栏布局调整
-        if hasattr(self, 'tool_buttons_layout'):
-            # 极窄模式下切换为 2 列或 1 列
-            cols = 1 if is_tiny else (2 if is_compact else 4)
-            # 重新分配 grid 位置
-            btns = [self.btn_add_arrow, self.btn_add_line, self.btn_add_rect, self.btn_add_circle,
-                    self.btn_add_ellipse, self.btn_add_poly, self.btn_add_text, self.btn_batch_select]
-            for i, btn in enumerate(btns):
-                self.tool_buttons_layout.removeWidget(btn)
-                row = i // cols
-                col = i % cols
-                self.tool_buttons_layout.addWidget(btn, row, col)
-                
-                # 动态调整按钮尺寸与样式
-                if is_tiny:
-                    btn.setFixedSize(28, 28)
-                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                elif is_compact:
-                    btn.setMinimumHeight(28)
-                    btn.setMinimumWidth(28)
-                    btn.setMaximumWidth(16777215) # Unset fixed width
-                    btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                else:
-                    btn.setMinimumHeight(28)
-                    btn.setMaximumWidth(16777215)
-                    btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-
-        # 3. 标注列表可见性
-        if hasattr(self, 'list_ann'):
-            self.list_ann.setVisible(not is_compact)
-            if hasattr(self, 'lbl_ann_count'):
-                self.lbl_ann_count.setVisible(not is_compact)
-
-        # 4. 属性面板优化 (隐藏标签)
-        if hasattr(self, 'grid_props'):
-            for i in range(self.grid_props.count()):
-                item = self.grid_props.itemAt(i)
-                w = item.widget()
-                if isinstance(w, QLabel) and w.text() != tr("Size:"):
-                    w.setVisible(not is_compact)
-
-        # 5. 比例尺面板优化
-        if hasattr(self, 'grp_scale_bar'):
-            # 获取内部 layout
-            layout = self.grp_scale_bar.layout()
-            if layout:
-                for i in range(layout.count()):
-                    item = layout.itemAt(i)
-                    if item.layout() and isinstance(item.layout(), QGridLayout):
-                        grid = item.layout()
-                        # 隐藏 row 2 到 row 8 的所有控件
-                        for r in range(2, 9):
-                            for c in range(2):
-                                it = grid.itemAtPosition(r, c)
-                                if it and it.widget():
-                                    it.widget().setVisible(not is_compact)
-
-        super().resizeEvent(event)
+    def apply_text_to_selection(self):
+        selected_items = self.list_ann.selectedItems()
+        text_content = self.edit_text.text()
+        for item in selected_items:
+             rid = item.data(Qt.UserRole)
+             roi = self.session.roi_manager.get_roi(rid)
+             if roi and roi.roi_type == 'text':
+                 roi.properties['text'] = text_content
+                 self.session.roi_manager.roi_updated.emit(roi)
 
     def retranslate_ui(self):
         self.grp_scale_bar.setTitle(tr("Scale Bar"))
-        self.chk_enabled.setText(tr("Enable Scale Bar"))
-        self.lbl_pixel.setText(tr("Px Size:"))
-        self.lbl_length.setText(tr("Length:"))
-        self.lbl_pos.setText(tr("Pos:"))
-        self.lbl_adv_color.setText(tr("Color:"))
-        self.chk_label.setText(tr("Label"))
-        
+        self.lbl_enabled.setText(tr("Enable"))
         self.grp_annotations.setTitle(tr("Graphic Annotations"))
-        self.chk_ann_visible.setText(tr("Show Annotations"))
-        
-        # Tool buttons - tooltips and text (for beside icon mode)
+        self.lbl_ann_visible.setText(tr("Show Annotations"))
         self.btn_add_arrow.setToolTip(tr("Arrow Tool"))
-        self.btn_add_arrow.setText(tr("Arrow"))
-        
-        self.btn_add_line.setToolTip(tr("Line Tool"))
-        self.btn_add_line.setText(tr("Line"))
-        
-        self.btn_add_rect.setToolTip(tr("Rectangle Tool"))
-        self.btn_add_rect.setText(tr("Rect"))
-        
-        self.btn_add_circle.setToolTip(tr("Circle Tool"))
-        self.btn_add_circle.setText(tr("Circle"))
-        
-        self.btn_add_ellipse.setToolTip(tr("Ellipse Tool"))
-        self.btn_add_ellipse.setText(tr("Ellipse"))
-        
-        self.btn_add_poly.setToolTip(tr("Polygon Tool"))
-        self.btn_add_poly.setText(tr("Polygon"))
-        
         self.btn_add_text.setToolTip(tr("Text Tool"))
-        self.btn_add_text.setText(tr("Text"))
-        
-        self.btn_batch_select.setToolTip(tr("Batch Select"))
-        self.btn_batch_select.setText(tr("Batch"))
-        
-        self.btn_align_left.setToolTip(tr("Align Left"))
-        self.btn_align_center.setToolTip(tr("Align Center"))
-        self.btn_align_right.setToolTip(tr("Align Right"))
-        
-        self.btn_clear_ann.setText(tr("Clear All Annotations"))
+        self.btn_clear_ann.setToolTip(tr("Clear All Annotations"))
         self.grp_props.setTitle(tr("Properties"))
+        self.lbl_ann_measurable.setText(tr("Measurable:"))
+        self.lbl_ann_export.setText(tr("Export:"))
+        self.lbl_ann_smooth.setText(tr("Smooth Curve (Catmull-Rom)"))
         
-        # Property labels
-        # These are anonymous in grid_props, but we can find them if needed or just re-add labels to class
-        # For now, let's just update the ones we have handles for
-        self.chk_ann_smooth.setText(tr("Smooth Curve (Catmull-Rom)"))
-        
+        # Dash Params
+        if hasattr(self, 'spin_dash_len'):
+            self.spin_dash_len.setToolTip(tr("Dash Length"))
+        if hasattr(self, 'spin_dash_gap'):
+            self.spin_dash_gap.setToolTip(tr("Gap Length"))
+            
         self.update_annotation_list()
-        
-        # Update combo items
-        current_data = self.combo_pos.currentData()
-        self.combo_pos.blockSignals(True)
-        self.combo_pos.clear()
-        self.combo_pos.addItem(tr("Bottom Right"), "Bottom Right")
-        self.combo_pos.addItem(tr("Bottom Left"), "Bottom Left")
-        self.combo_pos.addItem(tr("Top Right"), "Top Right")
-        self.combo_pos.addItem(tr("Top Left"), "Top Left")
-        idx = self.combo_pos.findData(current_data)
-        if idx >= 0: self.combo_pos.setCurrentIndex(idx)
-        self.combo_pos.blockSignals(False)
-
-        current_style = self.combo_ann_style.currentData()
-        self.combo_ann_style.blockSignals(True)
-        self.combo_ann_style.clear()
-        self.combo_ann_style.addItem(tr("Solid"), "solid")
-        self.combo_ann_style.addItem(tr("Dashed"), "dashed")
-        self.combo_ann_style.addItem(tr("Dotted"), "dotted")
-        self.combo_ann_style.addItem(tr("Dash-Dot"), "dash_dot")
-        style_idx = self.combo_ann_style.findData(current_style)
-        if style_idx >= 0: self.combo_ann_style.setCurrentIndex(style_idx)
-        self.combo_ann_style.blockSignals(False)
-
-        # Update Tool Specific UI (Labels like Head Size / Font Size)
-        current_tool_btn = self.tool_group.checkedButton()
-        if current_tool_btn:
-            self._update_tool_specific_controls(current_tool_btn.property("tool_id"))
-        else:
-            self._update_tool_specific_controls('none')
-
-    def _on_data_changed(self):
-        """Called when session data (e.g. crop) changes."""
-        # Auto-adjust scale bar length if it exceeds image bounds
-        if self.session.channels:
-            # Use first channel as reference
-            width_px = self.session.channels[0].shape[1]
-            pixel_size = self.session.scale_bar_settings.pixel_size
-            current_len = self.session.scale_bar_settings.bar_length_um
-            
-            width_um = width_px * pixel_size
-            
-            # If current bar length is wider than the image (or dangerously close)
-            # Threshold: > 90% of image width
-            if current_len > width_um * 0.9:
-                rec_len = get_recommended_bar_length(pixel_size, width_px)
-                if rec_len < current_len:
-                    print(f"[AnnotationPanel] Auto-shrinking scale bar from {current_len} to {rec_len} um")
-                    self.spin_length.setValue(rec_len)

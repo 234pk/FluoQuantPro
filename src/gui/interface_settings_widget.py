@@ -1,6 +1,8 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QCheckBox, QLabel, QGroupBox)
-from PySide6.QtCore import QSettings
-from src.core.language_manager import tr
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QComboBox)
+from PySide6.QtCore import QSettings, Qt
+from src.core.language_manager import tr, LanguageManager
+from src.gui.theme_manager import ThemeManager
+from src.gui.toggle_switch import ToggleSwitch
 
 class InterfaceSettingsWidget(QWidget):
     """
@@ -9,57 +11,109 @@ class InterfaceSettingsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.settings = QSettings("FluoQuantPro", "AppSettings")
+        self.checkboxes = {}
+        self.labels = {}
         self.init_ui()
         self.load_settings()
+        LanguageManager.instance().language_changed.connect(self.retranslate_ui)
+
+    def _add_toggle_row(self, layout, label_text, key=None):
+        """Helper to add a row with label and toggle switch."""
+        row_layout = QHBoxLayout()
+        label = QLabel(label_text)
+        toggle = ToggleSwitch()
+        row_layout.addWidget(label)
+        row_layout.addStretch()
+        row_layout.addWidget(toggle)
+        layout.addLayout(row_layout)
+        if key:
+            self.checkboxes[key] = toggle
+            self.labels[key] = label
+        return toggle, label
 
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        group = QGroupBox(tr("Control Panel Tabs Visibility"))
-        group_layout = QVBoxLayout(group)
+        self.group_visibility = QGroupBox(tr("Control Panel Tabs Visibility"))
+        group_layout = QVBoxLayout(self.group_visibility)
         
         self.tabs_info = [
             ("toolbox", tr("Toolbox")),
             ("adjustments", tr("Adjustments")),
             ("enhance", tr("Enhance")),
             ("colocalization", tr("Colocalization")),
-            ("annotation", tr("annotation")),
+            ("annotation", tr("Annotations")),
             ("results", tr("Measure Results"))
         ]
         
-        self.checkboxes = {}
         for key, label in self.tabs_info:
-            cb = QCheckBox(label)
-            group_layout.addWidget(cb)
-            self.checkboxes[key] = cb
+            self._add_toggle_row(group_layout, label, key)
             
-        layout.addWidget(group)
+        layout.addWidget(self.group_visibility)
         
         # --- ROI Persistence Settings ---
-        roi_group = QGroupBox(tr("ROI Persistence"))
-        roi_layout = QVBoxLayout(roi_group)
+        self.roi_group = QGroupBox(tr("ROI Persistence"))
+        roi_layout = QVBoxLayout(self.roi_group)
         
-        self.chk_roi_save_on_switch = QCheckBox(tr("Auto-save ROI when switching samples"))
+        self.chk_roi_save_on_switch, self.lbl_roi_save_on_switch = self._add_toggle_row(roi_layout, tr("Auto-save ROI when switching samples"))
         self.chk_roi_save_on_switch.setToolTip(tr("If checked, ROIs will be saved to memory/disk when you switch to another sample."))
-        roi_layout.addWidget(self.chk_roi_save_on_switch)
         
-        self.chk_roi_save_on_close = QCheckBox(tr("Save ROI when closing project"))
+        self.chk_roi_save_on_close, self.lbl_roi_save_on_close = self._add_toggle_row(roi_layout, tr("Save ROI when closing project"))
         self.chk_roi_save_on_close.setToolTip(tr("If checked, ROIs will be saved to project.json when you close the application."))
-        roi_layout.addWidget(self.chk_roi_save_on_close)
         
-        layout.addWidget(roi_group)
+        layout.addWidget(self.roi_group)
         
         # --- Import Settings ---
-        import_group = QGroupBox(tr("Import Settings"))
-        import_layout = QVBoxLayout(import_group)
+        self.import_group = QGroupBox(tr("Import Settings"))
+        import_layout = QVBoxLayout(self.import_group)
         
-        self.chk_recursive_import = QCheckBox(tr("Import images from subfolders"))
+        self.chk_recursive_import, self.lbl_recursive_import = self._add_toggle_row(import_layout, tr("Import images from subfolders"))
         self.chk_recursive_import.setToolTip(tr("If checked, importing a folder will also search all subdirectories for images."))
-        import_layout.addWidget(self.chk_recursive_import)
         
-        layout.addWidget(import_group)
+        layout.addWidget(self.import_group)
+
+        # --- Theme Settings ---
+        self.theme_group = QGroupBox(tr("Theme Selection"))
+        theme_layout = QVBoxLayout(self.theme_group)
+        
+        self.theme_combo = QComboBox()
+        # Get theme names from ThemeManager
+        themes = ThemeManager.instance().THEMES
+        for theme_id, display_name in themes.items():
+            self.theme_combo.addItem(display_name, theme_id)
+            
+        theme_layout.addWidget(self.theme_combo)
+        layout.addWidget(self.theme_group)
         
         layout.addStretch()
+
+    def retranslate_ui(self):
+        self.group_visibility.setTitle(tr("Control Panel Tabs Visibility"))
+        
+        # Update tab labels
+        tab_labels = {
+            "toolbox": tr("Toolbox"),
+            "adjustments": tr("Adjustments"),
+            "enhance": tr("Enhance"),
+            "colocalization": tr("Colocalization"),
+            "annotation": tr("Annotations"),
+            "results": tr("Measure Results")
+        }
+        for key, label in self.labels.items():
+            if key in tab_labels:
+                label.setText(tab_labels[key])
+        
+        self.roi_group.setTitle(tr("ROI Persistence"))
+        self.lbl_roi_save_on_switch.setText(tr("Auto-save ROI when switching samples"))
+        self.chk_roi_save_on_switch.setToolTip(tr("If checked, ROIs will be saved to memory/disk when you switch to another sample."))
+        self.lbl_roi_save_on_close.setText(tr("Save ROI when closing project"))
+        self.chk_roi_save_on_close.setToolTip(tr("If checked, ROIs will be saved to project.json when you close the application."))
+        
+        self.import_group.setTitle(tr("Import Settings"))
+        self.lbl_recursive_import.setText(tr("Import images from subfolders"))
+        self.chk_recursive_import.setToolTip(tr("If checked, importing a folder will also search all subdirectories for images."))
+        
+        self.theme_group.setTitle(tr("Theme Selection"))
 
     def load_settings(self):
         # Default all to True if not set
@@ -81,6 +135,12 @@ class InterfaceSettingsWidget(QWidget):
         # Import Settings
         self.chk_recursive_import.setChecked(self.settings.value("import/recursive", False, type=bool))
 
+        # Theme Settings
+        current_theme = ThemeManager.instance().get_current_theme()
+        index = self.theme_combo.findData(current_theme)
+        if index >= 0:
+            self.theme_combo.setCurrentIndex(index)
+
     def save_settings(self):
         visible_list = []
         for key, cb in self.checkboxes.items():
@@ -95,3 +155,8 @@ class InterfaceSettingsWidget(QWidget):
         
         # Import Settings
         self.settings.setValue("import/recursive", self.chk_recursive_import.isChecked())
+
+        # Theme Settings
+        new_theme = self.theme_combo.currentData()
+        if new_theme:
+            ThemeManager.instance().set_theme(new_theme)

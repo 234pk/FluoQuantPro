@@ -22,8 +22,8 @@ class LanguageSettingsWidget(QWidget):
         self.combo_lang = QComboBox()
         
         # Add supported languages
-        self.combo_lang.addItem("English", "en")
-        self.combo_lang.addItem("简体中文", "zh")
+        self.combo_lang.addItem(tr("English"), "en")
+        self.combo_lang.addItem(tr("简体中文"), "zh")
         
         # Set current selection
         current_lang = self.lang_manager.current_lang

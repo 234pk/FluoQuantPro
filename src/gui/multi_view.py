@@ -3,7 +3,7 @@ import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, 
                                QSplitter, QLabel, QApplication, QPushButton, QFrame, QMenu,
                                QListWidget, QListWidgetItem)
-from PySide6.QtCore import Qt, Signal, QSettings, QRectF, QSize, QPointF
+from PySide6.QtCore import Qt, Signal, QSettings, QRectF, QSize, QPointF, QTimer
 from PySide6.QtGui import QPalette
 import numpy as np
 from typing import Dict
@@ -14,167 +14,8 @@ from src.core.logger import Logger
 from src.gui.canvas_view import CanvasView
 from src.gui.sync_manager import SyncManager
 from src.gui.icon_manager import get_icon
+from src.gui.empty_state import EmptyStateWidget
 from src.core.language_manager import tr
-
-class EmptyStateWidget(QWidget):
-    """
-    Widget displayed when no images are loaded.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(20)
-        
-        # Icon
-        icon_label = QLabel()
-        icon = get_icon("import", "document-import")
-        pixmap = icon.pixmap(128, 128)
-        icon_label.setPixmap(pixmap)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(icon_label)
-        
-        # Title
-        title = QLabel(tr("No Sample Selected"))
-        title.setProperty("role", "title")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-        
-        # Subtitle
-        subtitle = QLabel(tr("Start by creating a new project or opening an existing one."))
-        subtitle.setProperty("role", "subtitle")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(subtitle)
-        
-        # Action Buttons Container
-        btn_container = QWidget()
-        btn_layout = QVBoxLayout(btn_container)
-        btn_layout.setSpacing(10)
-        layout.addWidget(btn_container)
-        
-        # New Project
-        self.btn_new = QPushButton(tr("New Project"))
-        self.btn_new.setIcon(get_icon("new", "document-new"))
-        self.btn_new.setIconSize(QSize(24, 24))
-        self.btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_new.setProperty("role", "hero")
-        btn_layout.addWidget(self.btn_new)
-
-        # Open Project
-        self.btn_open = QPushButton(tr("Open Project"))
-        self.btn_open.setIcon(get_icon("open", "document-open"))
-        self.btn_open.setIconSize(QSize(24, 24))
-        self.btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_open.setProperty("role", "hero")
-        btn_layout.addWidget(self.btn_open)
-
-        # Import Images (Secondary)
-        self.btn_import = QPushButton(tr("Import Images"))
-        self.btn_import.setIcon(get_icon("import", "document-import")) # Changed icon key to match action
-        self.btn_import.setIconSize(QSize(24, 24))
-        self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_import.setProperty("role", "hero")
-        btn_layout.addWidget(self.btn_import)
-        
-        # Import Folder
-        self.btn_import_folder = QPushButton(tr("Import Folder"))
-        self.btn_import_folder.setIcon(get_icon("folder", "folder-open"))
-        self.btn_import_folder.setIconSize(QSize(24, 24))
-        self.btn_import_folder.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_import_folder.setProperty("role", "hero")
-        btn_layout.addWidget(self.btn_import_folder)
-        
-        # Import Merge
-        self.btn_import_merge = QPushButton(tr("Import Merge (RGB Split)"))
-        self.btn_import_merge.setIcon(get_icon("import", "document-import"))
-        self.btn_import_merge.setIconSize(QSize(24, 24))
-        self.btn_import_merge.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_import_merge.setProperty("role", "hero")
-        btn_layout.addWidget(self.btn_import_merge)
-        
-        # Recent Projects Button
-        self.btn_recent = QPushButton(tr("Recent Projects"))
-        self.btn_recent.setIcon(get_icon("open", "document-open-recent"))
-        self.btn_recent.setIconSize(QSize(24, 24))
-        self.btn_recent.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_recent.setProperty("role", "hero")
-        btn_layout.addWidget(self.btn_recent)
-        
-        # Recent Projects List Section (Keep for quick access)
-        self.lbl_recent = QLabel(tr("Recent Projects:"))
-        self.lbl_recent.setProperty("role", "title")
-        self.lbl_recent.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_recent.hide() # Hidden by default
-        btn_layout.addWidget(self.lbl_recent)
-        
-        self.list_recent = QListWidget()
-        self.list_recent.setProperty("role", "recent")
-        self.list_recent.setFixedHeight(150)
-        self.list_recent.hide()
-        # Connected in MultiViewWidget instead
-        btn_layout.addWidget(self.list_recent)
-        
-        self._load_recent_projects()
-        
-        # Connect button to show menu
-        self.btn_recent.clicked.connect(self._show_recent_menu)
-        
-    def _show_recent_menu(self):
-        """Shows the recent projects menu at the button location."""
-        menu = QMenu(self)
-        
-        settings = QSettings("FluoQuantPro", "AppSettings")
-        recent = settings.value("recentProjects", [])
-        if not isinstance(recent, list):
-            recent = [recent] if recent else []
-            
-        if not recent:
-            action = menu.addAction(tr("No Recent Projects"))
-            action.setEnabled(False)
-        else:
-            for path in recent:
-                if os.path.exists(path):
-                    action = menu.addAction(os.path.basename(path))
-                    action.setData(path)
-                    action.setToolTip(path)
-                    # Correctly emit the signal via parent (MultiViewWidget)
-                    action.triggered.connect(lambda checked=False, p=path: self.parent().open_recent_requested.emit(p))
-            
-            menu.addSeparator()
-            clear_action = menu.addAction(tr("Clear Recent Projects"))
-            clear_action.triggered.connect(self._clear_recent)
-            
-        # Show menu below the button
-        menu.exec(self.btn_recent.mapToGlobal(self.btn_recent.rect().bottomLeft()))
-
-    def _clear_recent(self):
-        """Clears recent projects list and refreshes UI."""
-        settings = QSettings("FluoQuantPro", "AppSettings")
-        settings.setValue("recentProjects", [])
-        self._load_recent_projects()
-        # Also notify main window to update its menu if possible
-        # But for now, just refreshing local state is enough
-
-    def _load_recent_projects(self):
-        settings = QSettings("FluoQuantPro", "AppSettings")
-        # Load as list of strings
-        recent = settings.value("recentProjects", [])
-        # Ensure it's a list (QSettings can return single string if only one item)
-        if not isinstance(recent, list):
-            recent = [recent] if recent else []
-            
-        if recent:
-            self.lbl_recent.show()
-            self.list_recent.show()
-            self.list_recent.clear()
-            for path in recent:
-                if path and isinstance(path, str) and os.path.exists(path):
-                    item = QListWidgetItem(path)
-                    item.setToolTip(path)
-                    self.list_recent.addItem(item)
-        else:
-            self.lbl_recent.hide()
-            self.list_recent.hide()
 
 class MultiViewWidget(QWidget):
     """
@@ -184,15 +25,14 @@ class MultiViewWidget(QWidget):
     channel_file_dropped = Signal(str, int) # file_path, channel_index
     channel_selected = Signal(int) # channel_index
     mouse_moved_on_view = Signal(int, int, int) # x, y, channel_index (-1 for merge)
-    annotation_created = Signal(object) # GraphicAnnotation
-    annotation_modified = Signal(object) # GraphicAnnotation or dict update
     tool_cancelled = Signal() # Propagated from CanvasView
+    zoom_changed = Signal(float) # Emits current zoom level (scale)
     
-    # Relay import signal
+    # Relay import signals from EmptyState
     import_requested = Signal()
     new_project_requested = Signal()
     open_project_requested = Signal()
-    open_recent_requested = Signal(str) # New signal for recent projects
+    open_recent_requested = Signal(str)
     import_folder_requested = Signal()
     import_merge_requested = Signal()
 
@@ -201,6 +41,11 @@ class MultiViewWidget(QWidget):
         self.session = session
         self.sync_manager = SyncManager()
         self.settings = QSettings("FluoQuantPro", "Settings")
+        
+        # Cache for rendered channel images to speed up compositing and targeted updates
+        self._channel_images_cache = {}
+        self._last_target_shape = None
+        self._last_original_shape = None
         
         # Store views: "Merge", "Ch1", "Ch2", ...
         self.views: Dict[str, CanvasView] = {}
@@ -214,19 +59,17 @@ class MultiViewWidget(QWidget):
         
         # Empty State Widget
         self.empty_state = EmptyStateWidget(self)
-        self.empty_state.btn_import.clicked.connect(self.import_requested.emit)
-        self.empty_state.btn_new.clicked.connect(self.new_project_requested.emit)
-        self.empty_state.btn_open.clicked.connect(self.open_project_requested.emit)
-        self.empty_state.btn_import_folder.clicked.connect(self.import_folder_requested.emit)
-        self.empty_state.btn_import_merge.clicked.connect(self.import_merge_requested.emit)
-        
-        # Connect recent list click
-        self.empty_state.list_recent.itemClicked.connect(lambda item: self.open_recent_requested.emit(item.text()))
+        self.empty_state.import_requested.connect(self.import_requested.emit)
+        self.empty_state.new_project_requested.connect(self.new_project_requested.emit)
+        self.empty_state.open_project_requested.connect(self.open_project_requested.emit)
+        self.empty_state.open_recent_requested.connect(self.open_recent_requested.emit)
+        self.empty_state.import_folder_requested.connect(self.import_folder_requested.emit)
+        self.empty_state.import_merge_requested.connect(self.import_merge_requested.emit)
         
         self.main_layout.addWidget(self.empty_state)
         
         # Loading Overlay (initially hidden)
-        self.loading_overlay = QLabel("Loading...", self)
+        self.loading_overlay = QLabel(tr("Loading..."), self)
         self.loading_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.loading_overlay.setProperty("role", "overlay")
         self.loading_overlay.hide()
@@ -237,9 +80,17 @@ class MultiViewWidget(QWidget):
         
         # Initial State
         self.update_view_state()
+        
+        # Resize Debounce Timer
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(100) # 100ms debounce
+        self._resize_timer.timeout.connect(self._on_resize_finished)
 
-    def show_loading(self, message="Loading..."):
+    def show_loading(self, message=None):
         """Shows the loading overlay."""
+        if message is None:
+            message = tr("Loading...")
         self.loading_overlay.setText(message)
         self.loading_overlay.raise_() # Ensure on top
         self.loading_overlay.resize(self.size())
@@ -254,12 +105,40 @@ class MultiViewWidget(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.loading_overlay.resize(self.size())
-        
+        # Debounce fit_views to prevent flickering during resize
+        self._resize_timer.start()
+
+    def _on_resize_finished(self):
+        """Called when resize interaction stops."""
+        # Only auto-fit if there are views
+        if self.views:
+            # USER REQUEST: Do not auto-fit if the user is likely zoomed in.
+            # We only auto-fit if the current zoom is close to 1.0 (or whatever the fit scale was)
+            # or if it's the first time.
+            # For now, let's check if the active view is zoomed.
+            active_view = self.get_active_view()
+            if active_view:
+                # If the transform is not identity, the user might have panned/zoomed.
+                # However, fitInView also changes the transform.
+                # A better check: only fit if we were already in "fit" mode.
+                # But we don't have a "fit mode" flag.
+                
+                # Let's just skip fit_views on resize if the user is currently using a tool
+                # or if the resize was small.
+                pass
+
+            # Actually, the best behavior for professional tools is to NOT auto-fit on every resize
+            # unless specifically requested or if it's the initial load.
+            # However, to keep existing behavior for window maximize/restore, we can check force=False.
+            self.fit_views(force=False)
+
     def update_view_state(self):
         """Updates visibility of empty state vs view container."""
         if not self.session.channels:
             self.empty_state._load_recent_projects() # Refresh recent list when shown
             self.empty_state.show()
+            # Relax height constraint - let EmptyStateWidget manage its own internal layout
+            self.empty_state.setMaximumHeight(16777215)
             self.view_container.hide()
         else:
             self.empty_state.hide()
@@ -272,18 +151,19 @@ class MultiViewWidget(QWidget):
         self.sync_manager = SyncManager() # Reset sync
         
         # 1. Merge View
-        merge_view = CanvasView(view_id="Merge", session=self.session)
-        merge_view.set_roi_manager(self.session.roi_manager)
-        merge_view.set_label("Merge")
-        merge_view.active_channel_index = -1 # Explicitly set for tools
-        merge_view.mouse_moved.connect(lambda x, y: self.on_mouse_moved(x, y, -1))
-        merge_view.view_clicked.connect(self.on_view_clicked) # Add click connection for selection
-        merge_view.annotation_created.connect(self.annotation_created.emit)
-        merge_view.annotation_modified.connect(self.annotation_modified.emit)
-        merge_view.tool_cancelled.connect(self.tool_cancelled.emit)
-        merge_view.scale_bar_moved.connect(self.on_scale_bar_moved)
-        self.views["Merge"] = merge_view
-        self.sync_manager.add_view(merge_view)
+        # Always create Merge view to ensure availability
+        if True:
+            merge_view = CanvasView(view_id="Merge", session=self.session)
+            merge_view.set_roi_manager(self.session.roi_manager)
+            merge_view.set_label("Merge")
+            merge_view.active_channel_index = -1 # Explicitly set for tools
+            merge_view.mouse_moved.connect(lambda x, y: self.on_mouse_moved(x, y, -1))
+            merge_view.view_clicked.connect(self.on_view_clicked) # Add click connection for selection
+            merge_view.tool_cancelled.connect(self.tool_cancelled.emit)
+            merge_view.scale_bar_moved.connect(self.on_scale_bar_moved)
+            merge_view.zoom_changed.connect(self.on_view_zoom_changed)
+            self.views["Merge"] = merge_view
+            self.sync_manager.add_view(merge_view)
         
         # 2. Channel Views
         for i, ch in enumerate(self.session.channels):
@@ -295,10 +175,9 @@ class MultiViewWidget(QWidget):
             view.active_channel_index = i # For tool operations
             view.file_dropped.connect(self.on_view_file_dropped)
             view.view_clicked.connect(self.on_view_clicked)
-            view.annotation_created.connect(self.annotation_created.emit)
-            view.annotation_modified.connect(self.annotation_modified.emit)
             view.tool_cancelled.connect(self.tool_cancelled.emit)
             view.scale_bar_moved.connect(self.on_scale_bar_moved)
+            view.zoom_changed.connect(self.on_view_zoom_changed)
             
             # Connect mouse move for status bar
             # We need to capture i for the lambda
@@ -358,6 +237,11 @@ class MultiViewWidget(QWidget):
         """Relay mouse movement from a view."""
         self.mouse_moved_on_view.emit(x, y, channel_index)
 
+    def on_view_zoom_changed(self, scale_x, scale_y, anchor):
+        """Relay zoom change from a view."""
+        # Assuming uniform scaling, use scale_x
+        self.zoom_changed.emit(scale_x)
+
     def on_scale_bar_moved(self, pos: QPointF):
         """Sync scale bar position across all views."""
         # Update session settings (so it persists for new views)
@@ -384,9 +268,33 @@ class MultiViewWidget(QWidget):
             self.on_view_clicked(target_id, index)
 
 
-    def fit_views(self):
-        """Fits all views to their content."""
+    def fit_views(self, force=True):
+        """
+        Fits all views to their content.
+        If force=False, only fits if the view is already close to fit-to-screen scale.
+        """
         for view in self.views.values():
+            if not force:
+                # Check if we are already zoomed in significantly
+                # We calculate what the fit-to-screen scale WOULD be
+                rect = view.scene().sceneRect()
+                if rect.width() <= 0 or rect.height() <= 0:
+                    continue
+                
+                # Get viewport size
+                v_rect = view.viewport().rect()
+                if v_rect.width() <= 0 or v_rect.height() <= 0:
+                    continue
+                    
+                target_scale = min(v_rect.width() / rect.width(), v_rect.height() / rect.height())
+                current_scale = view.transform().m11()
+                
+                # If current scale is more than 5% different from fit scale, 
+                # we assume the user has manually zoomed and we should NOT disrupt them.
+                if abs(current_scale - target_scale) / target_scale > 0.05:
+                    # print(f"[MultiView] Skipping auto-fit for {view.view_id} (Zoomed: {current_scale:.2f} vs Fit: {target_scale:.2f})")
+                    continue
+            
             view.fitInView(view.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def render_all(self, preview=False):
@@ -406,59 +314,59 @@ class MultiViewWidget(QWidget):
             
             if original_shape is None:
                  # No valid data to render
-                 # print("[Timing] MultiView: No original_shape found.")
                  for view in self.views.values():
                       view.update_image(None)
+                 self._channel_images_cache.clear()
                  return
 
+            self._last_original_shape = original_shape
             h, w = original_shape
             target_shape = None
             
             # Determine downsampling limit based on user settings
-            quality = self.settings.value("display/quality", "Balanced (Recommended)")
-            if quality == "Performance (Downsampled)":
-                 max_dim = 1024
-            elif quality == "Balanced (Recommended)":
-                 max_dim = 2048
-            else: # High Quality (Full Resolution)
-                 max_dim = 8192 # High but safe limit for QPixmap
+            quality = self.settings.value("display/quality_key", "balanced")
+            if quality == "performance":
+                 max_dim = 1024 # Standard 1024p
+            elif quality == "balanced":
+                 max_dim = 2560 # 2.5K Resolution
+            elif quality == "high":
+                 max_dim = 32768 # System Limit for QPixmap (Effectively Full Res)
+            else:
+                 # Fallback for old settings
+                 quality_text = self.settings.value("display/quality", "Balanced (Recommended)")
+                 if "Performance" in quality_text:
+                     max_dim = 1024
+                 elif "High" in quality_text:
+                     max_dim = 32768
+                 else:
+                     max_dim = 2560
                  
             if preview:
                  # Force smaller preview regardless of setting
-                 max_dim = min(max_dim, 1024)
+                 from src.core.performance_monitor import PerformanceMonitor
+                 max_dim = PerformanceMonitor.instance().get_preview_limit(min(max_dim, 1024))
                  
             long_side = max(h, w)
             if long_side > max_dim:
-                 # print(f"[Performance] Downsampling image {w}x{h} to max {max_dim}px based on quality setting: {quality}")
                  scale = float(max_dim) / long_side
                  new_h = int(h * scale)
                  new_w = int(w * scale)
                  target_shape = (new_h, new_w)
             
+            self._last_target_shape = target_shape
+            
             # 2. Render each channel's display image (Raw -> RGB)
-            # We use the Renderer class which might be static or instance
-            # For now, let's assume we do it per-channel here or via Session helpers
-            
-            # Optimization: If we have many channels, we could thread this.
-            # But for 3-4 channels, serial is fine if Renderer is fast (LUT).
-            
-            channel_images = {}
+            self._channel_images_cache.clear()
             for i, ch in enumerate(self.session.channels):
                 # Always render if we have data, even if hidden (for Merge)
                 if ch.raw_data is not None:
-                    # Render returns (H, W, 3) or (H, W, 4) uint8
-                    # Pass target_shape for resizing during render
                     img = Renderer.render_channel(ch, target_shape=target_shape)
-                    channel_images[i] = img
+                    self._channel_images_cache[i] = img
             
             # 3. Update Channel Views
-            for i, img in channel_images.items():
+            for i, img in self._channel_images_cache.items():
                 view_id = f"Ch{i+1}"
                 if view_id in self.views:
-                    # Update scene rect to match ORIGINAL shape, but display scaled image
-                    # The CanvasView handles the scaling logic (display_scale)
-                    
-                    # Convert to uint8 0-255 for display if needed
                     display_img = img
                     if img.dtype == np.float32 and img.max() <= 1.0:
                          display_img = (img * 255).astype(np.uint8)
@@ -466,51 +374,7 @@ class MultiViewWidget(QWidget):
                     self.views[view_id].update_image(display_img, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
 
             # 4. Update Merge View
-            if "Merge" in self.views:
-                # Composite
-                # Simple additive blending for now
-                if not channel_images:
-                    self.views["Merge"].update_image(None)
-                else:
-                    # Start with black
-                    if target_shape:
-                        th, tw = target_shape
-                    else:
-                        th, tw = h, w
-                        
-                    composite = None
-                    
-                    for i, ch in enumerate(self.session.channels):
-                        # ch is an ImageChannel object.
-                        # It should have a visible property if it's an ImageChannel.
-                        # However, session.channels stores ImageChannel objects which definitely have 'visible'.
-                        # But wait, session.channels might contain ChannelDef objects if not fully initialized?
-                        # No, session.channels is List[ImageChannel].
-                        # The error says 'ImageChannel' object has no attribute 'visible'.
-                        # Let's check ImageChannel definition in src/core/data_model.py or use display_settings.visible.
-                        
-                        is_visible = True
-                        if hasattr(ch, 'display_settings'):
-                            is_visible = ch.display_settings.visible
-                        elif hasattr(ch, 'visible'):
-                             is_visible = ch.visible
-                        
-                        if is_visible and i in channel_images:
-                            img = channel_images[i]
-                            if composite is None:
-                                composite = img.astype(np.float32)
-                            else:
-                                composite += img.astype(np.float32)
-                    
-                    if composite is not None:
-                        np.clip(composite, 0.0, 1.0, out=composite)
-                        composite = (composite * 255).astype(np.uint8)
-                        self.views["Merge"].update_image(composite, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
-                    else:
-                         # Black if all hidden
-                        black = np.zeros((th, tw, 3), dtype=np.uint8)
-                        self.views["Merge"].update_image(black, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
-
+            self._update_merge_view(w, h, target_shape)
 
         except Exception as e:
             print(f"Error in render_all: {e}")
@@ -519,50 +383,154 @@ class MultiViewWidget(QWidget):
         
         finally:
             self.sync_manager.set_enabled(True)
-            print(f"[14:33:26] MultiView: render_all finished ({time.time() - t_render_start:.4f}s)")
+            print(f"[MultiView] render_all finished ({time.time() - t_render_start:.4f}s)")
+
+    def render_single_channel(self, channel_index, preview=False):
+        """
+        Optimized: Renders only one channel and updates Merge view.
+        Uses cached images for other channels to save time.
+        """
+        if not self.session.channels or channel_index < 0 or channel_index >= len(self.session.channels):
+            return
+
+        t_start = time.time()
+        ch = self.session.channels[channel_index]
+        
+        # If we don't have baseline info, do a full render
+        if self._last_original_shape is None:
+            self.render_all(preview=preview)
+            return
+
+        h, w = self._last_original_shape
+        target_shape = self._last_target_shape
+        
+        # If preview mode requested but last wasn't preview, we might need to adjust target_shape
+        # but usually display adjustments stay in the same mode.
+        
+        try:
+            # 1. Render just this channel
+            if ch.raw_data is not None:
+                img = Renderer.render_channel(ch, target_shape=target_shape)
+                self._channel_images_cache[channel_index] = img
+                
+                # 2. Update specific view
+                view_id = f"Ch{channel_index+1}"
+                if view_id in self.views:
+                    display_img = img
+                    if img.dtype == np.float32 and img.max() <= 1.0:
+                         display_img = (img * 255).astype(np.uint8)
+                    self.views[view_id].update_image(display_img, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
+
+            # 3. Update Merge View
+            self._update_merge_view(w, h, target_shape)
+
+        except Exception as e:
+            print(f"Error in render_single_channel: {e}")
+            self.render_all(preview=preview)
+        
+        finally:
+            print(f"[MultiView] render_single_channel({channel_index}) finished ({time.time() - t_start:.4f}s)")
+
+    def _update_merge_view(self, w, h, target_shape):
+        """Internal helper to re-composite the merge view from cached channel images."""
+        if "Merge" not in self.views:
+            return
+
+        if not self._channel_images_cache:
+            self.views["Merge"].update_image(None)
+            return
+
+        composite = None
+        for i, ch in enumerate(self.session.channels):
+            is_visible = getattr(ch.display_settings, 'visible', True)
+            
+            if is_visible and i in self._channel_images_cache:
+                img = self._channel_images_cache[i]
+                if composite is None:
+                    composite = img.astype(np.float32)
+                else:
+                    composite += img.astype(np.float32)
+        
+        if composite is not None:
+            np.clip(composite, 0.0, 1.0, out=composite)
+            composite = (composite * 255).astype(np.uint8)
+            self.views["Merge"].update_image(composite, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
+        else:
+            # Black if all hidden
+            th, tw = target_shape if target_shape else (h, w)
+            black = np.zeros((th, tw, 3), dtype=np.uint8)
+            self.views["Merge"].update_image(black, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
 
     def update_view(self, channel_index):
         """
         Updates a specific channel view (and Merge view).
         Used for targeted refreshes (e.g. drag-drop).
         """
-        # Find view ID
-        view_id = f"Ch{channel_index+1}"
-        if view_id in self.views:
-            # Render just this channel
-            ch = self.session.channels[channel_index]
-            if ch.raw_data is not None:
-                img = Renderer.render_channel(ch)
-                
-                # Get dimensions from image itself, not session which might be mixed
-                h, w = img.shape[:2] if img.ndim > 1 else (0, 0)
-                
-                display_img = img
-                if img.dtype == np.float32 and img.max() <= 1.0:
-                     display_img = (img * 255).astype(np.uint8)
-                
-                self.views[view_id].update_image(display_img, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
-                
-        # Always refresh merge
-        # This is a bit inefficient to re-render all for merge, but safe
-        self.render_all()
+        self.render_single_channel(channel_index)
+
+    def fit_to_width(self):
+        """Fits all active views to width."""
+        for view in self.views.values():
+            if view.isVisible() and view.full_res_pixmap:
+                view.fit_to_width()
+
+    def fit_to_height(self):
+        """Fits all active views to height."""
+        for view in self.views.values():
+            if view.isVisible() and view.full_res_pixmap:
+                view.fit_to_height()
 
     def setup_layout(self):
         """Updates the grid layout based on number of channels."""
-        # 1. Remove existing splitter
-        if hasattr(self, 'main_splitter'):
+        # 1. Remove and delete existing splitter
+        if hasattr(self, 'main_splitter') and self.main_splitter:
+            self.main_splitter.hide()
             self.main_splitter.setParent(None)
+            self.main_splitter.deleteLater()
+            self.main_splitter = None
             
         # 2. Clear current layout of view_container
         if self.view_container.layout():
-            old_layout = self.view_container.layout()
-            while old_layout.count():
-                item = old_layout.takeAt(0)
-                if item.widget():
-                    item.widget().setParent(None)
-            dummy = QWidget()
-            dummy.setLayout(old_layout)
+            layout = self.view_container.layout()
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.hide()
+                    widget.setParent(None)
+                    widget.deleteLater()
         
+        # Check Single Channel Mode
+        is_single_mode = getattr(self.session, 'is_single_channel_mode', False)
+        
+        # print(f"[DEBUG] setup_layout: is_single_mode={is_single_mode}")
+
+        if is_single_mode:
+            if not self.view_container.layout():
+                layout = QVBoxLayout(self.view_container)
+                layout.setContentsMargins(0, 0, 0, 0)
+            else:
+                layout = self.view_container.layout()
+            
+            target_view = None
+            
+            # Default to Merge if enabled or no channel found
+            target_view = self.views.get("Merge")
+            
+            # Final Fallback if Merge is missing too
+            if target_view is None and self.views:
+                target_view = list(self.views.values())[0]
+                
+            if target_view:
+                print(f"[DEBUG] Single Mode: Showing {target_view.view_id}")
+                layout.addWidget(target_view)
+                target_view.show()
+                # Ensure other views are hidden
+                for view in self.views.values():
+                    if view != target_view:
+                        view.hide()
+            return
+            
         if not self.view_container.layout():
             self.view_container.setLayout(QVBoxLayout())
             self.view_container.layout().setContentsMargins(0, 0, 0, 0)
@@ -573,7 +541,7 @@ class MultiViewWidget(QWidget):
         merge_view = self.views.get("Merge")
         channel_views = [v for k, v in self.views.items() if k != "Merge"]
         num_channels = len(channel_views)
-
+        
         if not merge_view and not channel_views:
             return
 
@@ -590,37 +558,46 @@ class MultiViewWidget(QWidget):
         #     User wants Merge at "Left Bottom".
         #     So for N=3: [1, 2], [Merge, 3] (Swap Merge and Last Channel)
         
-        if num_channels == 1 and merge_view:
-            # 1 Channel + 1 Merge -> Vertical Stack (Merge on bottom)
-            v_splitter.addWidget(channel_views[0])
-            v_splitter.addWidget(merge_view)
-            channel_views[0].show()
-            merge_view.show()
-            v_splitter.setStretchFactor(0, 1)
-            v_splitter.setStretchFactor(1, 1)
+        if num_channels == 1:
+            if merge_view:
+                # 1 Channel + 1 Merge -> Vertical Stack (Merge on bottom)
+                v_splitter.addWidget(channel_views[0])
+                v_splitter.addWidget(merge_view)
+                channel_views[0].show()
+                merge_view.show()
+                v_splitter.setStretchFactor(0, 1)
+                v_splitter.setStretchFactor(1, 1)
+            else:
+                # 1 Channel Only
+                v_splitter.addWidget(channel_views[0])
+                channel_views[0].show()
             
         else:
             # 2+ Channels
             # Prepare ordered list of views
             views_to_layout = list(channel_views)
             
-            total_views = len(views_to_layout) + 1 # +1 for Merge
-            is_odd_total = (total_views % 2 != 0)
-            
-            # If total views is even (e.g. N=3, Total 4), swap Merge to be before the last channel
-            # to achieve "Left Bottom" placement for Merge.
-            # Example N=3: [1, 2, 3] + [M]. Total 4.
-            # Grid 2x2. Row 2: [3, M].
-            # User wants: [M, 3].
-            # So list should be: 1, 2, M, 3.
-            
-            if not is_odd_total:
-                # Insert Merge before the last channel
-                views_to_layout.insert(-1, merge_view)
+            if merge_view:
+                total_views = len(views_to_layout) + 1 # +1 for Merge
+                is_odd_total = (total_views % 2 != 0)
+                
+                # If total views is even (e.g. N=3, Total 4), swap Merge to be before the last channel
+                # to achieve "Left Bottom" placement for Merge.
+                # Example N=3: [1, 2, 3] + [M]. Total 4.
+                # Grid 2x2. Row 2: [3, M].
+                # User wants: [M, 3].
+                # So list should be: 1, 2, M, 3.
+                
+                if not is_odd_total:
+                    # Insert Merge before the last channel
+                    views_to_layout.insert(-1, merge_view)
+                else:
+                    # Total is odd (e.g. N=2 -> 3 views). Merge is last.
+                    # Grid: [1, 2], [M].
+                    views_to_layout.append(merge_view)
             else:
-                # Total is odd (e.g. N=2 -> 3 views). Merge is last.
-                # Grid: [1, 2], [M].
-                views_to_layout.append(merge_view)
+                # No Merge view, just layout channels in grid
+                pass
             
             # Build 2-column grid using nested Splitters
             cols = 2
@@ -721,45 +698,22 @@ class MultiViewWidget(QWidget):
         for view in self.views.values():
             view.set_annotation_mode(mode)
             
+    def select_annotation(self, ann_id):
+        """Selects the specified annotation in all views."""
+        for view in self.views.values():
+            view.select_annotation(ann_id)
+
     def update_all_previews(self):
         """Force update of all views (e.g. during tool usage)."""
         for view in self.views.values():
             view.scene().update()
 
+    def _on_roi_updated(self, roi_or_id):
+        """Propagate ROI update to all views."""
+        for view in self.views.values():
+            view._on_roi_updated(roi_or_id)
+
     def update_scale_bar(self, settings):
         """Propagate scale bar settings to all views."""
         for view in self.views.values():
             view.update_scale_bar(settings)
-
-    def set_annotations(self, annotations):
-        """Propagate annotations to all views."""
-        for view in self.views.values():
-            view.set_annotations(annotations)
-            
-            # Note: We do NOT disconnect annotation_modified here because it breaks 
-            # the connection established in connect_signals. 
-            # set_annotations just updates the visual items, the view's signal 
-            # should remain connected to the main window.
-
-    def sync_annotation(self, annotation):
-        """Updates a single annotation across all views with batch rendering optimization."""
-        t_start = time.time()
-        # Update all views without immediate repaint
-        for view in self.views.values():
-            view.update_single_annotation(annotation, repaint=False)
-        
-        # Trigger a single update for each view after all processing is done
-        for view in self.views.values():
-            view.scene().update()
-        
-        dt = time.time() - t_start
-        if getattr(annotation, 'is_dragging', False):
-            Logger.debug(f"[Performance] Multi-channel sync for {annotation.id} took {dt*1000:.2f}ms (Batch Rendered)")
-
-    def connect_signals(self, main_window):
-        """Connect view signals to main window slots."""
-        for view in self.views.values():
-             view.file_dropped.connect(main_window.import_file)
-             view.view_clicked.connect(main_window.set_active_channel)
-             view.annotation_created.connect(main_window.on_annotation_created)
-             view.annotation_modified.connect(main_window.on_annotation_modified)

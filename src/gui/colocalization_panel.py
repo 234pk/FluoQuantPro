@@ -1,7 +1,8 @@
 import numpy as np
 import os
+from pathlib import Path
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QCheckBox, QPushButton, QGroupBox, 
+                               QPushButton, QGroupBox, 
                                QTableWidget, QTableWidgetItem, QHeaderView,
                                QScrollArea, QToolButton, QSizePolicy, QMessageBox, QDoubleSpinBox,
                                QFrame, QFileDialog, QApplication, QDialog, QRadioButton, QTextEdit,
@@ -24,6 +25,7 @@ from src.core.data_model import Session
 from src.core.analysis import ColocalizationEngine
 from src.core.language_manager import tr, LanguageManager
 from src.gui.icon_manager import get_icon
+from src.gui.toggle_switch import ToggleSwitch
 
 from src.core.algorithms import bilinear_interpolate_numpy as bilinear_interpolate, sample_line_profile
 
@@ -105,7 +107,7 @@ class LineScanExportDialog(QDialog):
             if len(self.x_axis) > 5:
                 lines.append("...")
                 
-            self.preview_text.setText("\n".join(lines))
+            self.preview_text.setText(tr("\n").join(lines))
             
         else:
             # Generate JSON Preview
@@ -143,59 +145,68 @@ class ColocalizationPanel(QWidget):
     def init_ui(self):
         self.setObjectName("card")
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(4)
-        main_layout.setContentsMargins(6, 6, 6, 6)
-        self.setMinimumWidth(0)
+        main_layout.setSpacing(8) # Increased spacing
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        self.setMinimumWidth(0) # Allow full shrinking
         
-        # --- Top Section: Analysis Tools (Grid for Compactness) ---
-        tool_layout = QGridLayout()
-        tool_layout.setSpacing(4)
+        # --- Top Section: Analysis Tools ---
+        # 1. Action Buttons Row (Icons)
+        h_tools = QHBoxLayout()
+        h_tools.setSpacing(6)
         
         # Line Scan Button
-        self.btn_line_scan = QToolButton()
+        self.btn_line_scan = QPushButton()
         self.btn_line_scan.setIcon(get_icon("coloc"))
-        self.btn_line_scan.setIconSize(QSize(20, 20))
-        self.btn_line_scan.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.btn_line_scan.setFixedSize(28, 28)
+        self.btn_line_scan.setIconSize(QSize(22, 22))
         self.btn_line_scan.setCheckable(True)
+        self.btn_line_scan.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_line_scan.setMinimumHeight(36) # Slightly taller for better feel
         self.btn_line_scan.setToolTip(tr("Click here then draw a line on the image to see intensity profiles"))
         self.btn_line_scan.setProperty("role", "accent")
-        tool_layout.addWidget(self.btn_line_scan, 0, 0)
+        h_tools.addWidget(self.btn_line_scan, 1) 
         
         # Clear Line Button
-        self.btn_clear_line = QToolButton() # Changed from QPushButton to QToolButton for consistency
+        self.btn_clear_line = QPushButton()
         self.btn_clear_line.setIcon(get_icon("clear", "edit-clear"))
-        self.btn_clear_line.setIconSize(QSize(20, 20))
-        self.btn_clear_line.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.btn_clear_line.setFixedSize(28, 28)
+        self.btn_clear_line.setIconSize(QSize(22, 22))
+        self.btn_clear_line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_clear_line.setMinimumHeight(36)
         self.btn_clear_line.setToolTip(tr("Clear current line and plot"))
-        self.btn_clear_line.clicked.connect(self.clear_line)
-        tool_layout.addWidget(self.btn_clear_line, 0, 1)
+        self.btn_clear_line.clicked.connect(self.on_clear)
+        h_tools.addWidget(self.btn_clear_line, 1) 
+        
+        # Help Button
+        self.btn_help = QPushButton()
+        self.btn_help.setIcon(get_icon("help", "help-browser"))
+        self.btn_help.setIconSize(QSize(22, 22))
+        self.btn_help.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_help.setFixedSize(36, 36) # Keep help as a standard square
+        self.btn_help.setToolTip(tr("Show Analysis Guide"))
+        self.btn_help.clicked.connect(self.show_help)
+        h_tools.addWidget(self.btn_help)
+        
+        main_layout.addLayout(h_tools)
+        
+        # 2. Analysis Buttons Row (Text)
+        h_analysis = QHBoxLayout()
+        h_analysis.setSpacing(6)
         
         # Global Colocalization Button
         self.btn_global_coloc = QPushButton(tr("Global Analysis"))
         self.btn_global_coloc.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_global_coloc.setMinimumHeight(32)
         self.btn_global_coloc.setToolTip(tr("Calculate Pearson's Correlation (PCC) and Manders' Coefficients (M1/M2) for the entire image."))
         self.btn_global_coloc.clicked.connect(self.on_global_analysis_clicked)
-        tool_layout.addWidget(self.btn_global_coloc, 1, 0)
+        h_analysis.addWidget(self.btn_global_coloc)
         
         # Export Data Button
         self.btn_export_data = QPushButton(tr("Export Data"))
         self.btn_export_data.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_export_data.setMinimumHeight(32)
         self.btn_export_data.clicked.connect(self.on_export_data_clicked)
-        tool_layout.addWidget(self.btn_export_data, 1, 1)
+        h_analysis.addWidget(self.btn_export_data)
         
-        # Help Button
-        self.btn_help = QToolButton()
-        self.btn_help.setIcon(get_icon("help", "help-browser"))
-        self.btn_help.setIconSize(QSize(20, 20))
-        self.btn_help.setFixedSize(28, 28)
-        self.btn_help.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.btn_help.setToolTip(tr("Show Analysis Guide"))
-        self.btn_help.clicked.connect(self.show_help)
-        tool_layout.addWidget(self.btn_help, 0, 2)
-        
-        main_layout.addLayout(tool_layout)
+        main_layout.addLayout(h_analysis)
         
         self.chan_group = QGroupBox(tr("Channels"))
         chan_layout = QVBoxLayout()
@@ -224,13 +235,21 @@ class ColocalizationPanel(QWidget):
         opts_layout = QHBoxLayout()
         opts_layout.setSpacing(10)
         
-        self.chk_normalize = QCheckBox(tr("Normalize"))
+        # Normalize Toggle
+        self.lbl_normalize = QLabel(tr("Normalize"))
+        self.chk_normalize = ToggleSwitch()
         self.chk_normalize.setChecked(True)
-        self.chk_normalize.stateChanged.connect(self.update_plot)
+        self.chk_normalize.toggled.connect(self.update_plot)
+        opts_layout.addWidget(self.lbl_normalize)
         opts_layout.addWidget(self.chk_normalize)
         
-        self.chk_bg_sub = QCheckBox(tr("BG Sub"))
-        self.chk_bg_sub.stateChanged.connect(self.update_plot)
+        opts_layout.addSpacing(5)
+        
+        # BG Sub Toggle
+        self.lbl_bg_sub = QLabel(tr("BG Sub"))
+        self.chk_bg_sub = ToggleSwitch()
+        self.chk_bg_sub.toggled.connect(self.update_plot)
+        opts_layout.addWidget(self.lbl_bg_sub)
         opts_layout.addWidget(self.chk_bg_sub)
         
         opts_layout.addSpacing(10)
@@ -329,11 +348,13 @@ class ColocalizationPanel(QWidget):
         """Updates UI text based on current language."""
         self.btn_line_scan.setToolTip(tr("Click here then draw a line on the image to see intensity profiles"))
         self.btn_clear_line.setToolTip(tr("Clear current line and plot"))
+        self.btn_help.setToolTip(tr("Show Analysis Guide"))
         self.btn_global_coloc.setText(tr("Global Analysis"))
+        self.btn_global_coloc.setToolTip(tr("Calculate Pearson's Correlation (PCC) and Manders' Coefficients (M1/M2) for the entire image."))
         self.btn_export_data.setText(tr("Export Data"))
         self.chan_group.setTitle(tr("Channels"))
-        self.chk_normalize.setText(tr("Normalize"))
-        self.chk_bg_sub.setText(tr("BG Sub"))
+        self.lbl_normalize.setText(tr("Normalize"))
+        self.lbl_bg_sub.setText(tr("BG Sub"))
         self.lbl_global_thr.setText(tr("Global Thresholds:"))
         if "--" in self.lbl_pearson.text():
             self.lbl_pearson.setText(tr("Pearson r: --"))
@@ -343,31 +364,46 @@ class ColocalizationPanel(QWidget):
         # Update channel buttons text
         self.refresh_channels()
 
-    def clear_line(self):
-        """Clears the current line scan and resets the plot."""
-        self.current_line = None
-        self.last_profiles = {}
-        self.last_x_axis = None
+    def on_clear(self):
+        """Clears current analysis data and line ROIs."""
         self.ax.clear()
         self.canvas.draw()
-        self.lbl_pearson.setText("Pearson r: --")
+        self.lbl_pearson.setText(tr("Pearson r: --"))
         
-        # Clear line ROIs from session
+        # 1. Clear line ROIs (Unified Model)
         if self.session and hasattr(self.session, 'roi_manager'):
             rois = self.session.roi_manager.get_all_rois()
             for roi in rois:
-                if roi.roi_type == "line_scan":
+                if getattr(roi, 'roi_type', None) == "line_scan":
                     self.session.roi_manager.remove_roi(roi.id, undoable=True)
         
+        # 2. Force UI refresh
+        main_window = getattr(self.session, 'main_window', None)
+        if main_window and hasattr(main_window, 'multi_view'):
+            main_window.multi_view.update_all_previews()
+            
         self.update_plot()
 
     def set_line_scan_action(self, action):
-        """Connects the internal button to the global line scan action."""
-        self.btn_line_scan.setDefaultAction(action)
-        # Re-apply icon only settings because setDefaultAction might override them
-        self.btn_line_scan.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.btn_line_scan.setIconSize(QSize(20, 20))
-        self.btn_line_scan.setFixedSize(28, 28)
+        """Link the line scan button to a QAction (usually from main window)"""
+        if not action:
+            return
+            
+        # For QPushButton, we manually sync with the action
+        self.btn_line_scan.setCheckable(action.isCheckable())
+        self.btn_line_scan.setChecked(action.isChecked())
+        
+        # Connect button click to action trigger
+        self.btn_line_scan.clicked.connect(action.trigger)
+        
+        # Connect action toggle to button state
+        action.toggled.connect(self.btn_line_scan.setChecked)
+        
+        # Optional: Sync icon and tooltip if they aren't already set
+        if action.icon():
+            self.btn_line_scan.setIcon(action.icon())
+        if action.toolTip():
+            self.btn_line_scan.setToolTip(action.toolTip())
 
     def on_global_analysis_clicked(self):
         """Performs full-image colocalization analysis and displays results."""
@@ -581,22 +617,50 @@ class ColocalizationPanel(QWidget):
         if not file_path:
             return
             
+        target_path = Path(file_path)
+        
+        # Double check parent directory exists
+        if not target_path.parent.exists():
+            QMessageBox.warning(self, tr("Path Error"), tr("Target directory does not exist!"))
+            return
+
         try:
             if fmt == "csv":
-                import pandas as pd
+                import csv
                 
-                if export_mode == "single":
-                    # Single Mode: Shared Distance Column
-                    df_data = {tr("Distance (px)"): self.last_x_axis}
-                    df_data.update(data_dict)
-                    df = pd.DataFrame({k: pd.Series(v) for k, v in df_data.items()})
-                else:
-                    # Batch Mode: Independent Columns
-                    # data_dict already contains Distance columns for each ROI
-                    # We just need to make a DataFrame from it (Series handles varying lengths)
-                    df = pd.DataFrame({k: pd.Series(v) for k, v in data_dict.items()})
+                with target_path.open('w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
                     
-                df.to_csv(file_path, index=False)
+                    if export_mode == "single":
+                        # Single Mode: Shared Distance Column
+                        headers = [tr("Distance (px)")] + list(data_dict.keys())
+                        writer.writerow(headers)
+                        
+                        # Find max length
+                        max_len = len(self.last_x_axis)
+                        for i in range(max_len):
+                            row = [self.last_x_axis[i]]
+                            for k in data_dict:
+                                vals = data_dict[k]
+                                row.append(vals[i] if i < len(vals) else "")
+                            writer.writerow(row)
+                    else:
+                        # Batch Mode: Independent Columns
+                        # Each ROI has its own Distance and Channel columns
+                        headers = list(data_dict.keys())
+                        writer.writerow(headers)
+                        
+                        # Find max length across all columns
+                        max_len = 0
+                        for k in data_dict:
+                            max_len = max(max_len, len(data_dict[k]))
+                            
+                        for i in range(max_len):
+                            row = []
+                            for k in data_dict:
+                                vals = data_dict[k]
+                                row.append(vals[i] if i < len(vals) else "")
+                            writer.writerow(row)
             else:
                 # JSON
                 json_data = {
@@ -613,7 +677,7 @@ class ColocalizationPanel(QWidget):
                         "channels": {k: v.tolist() if hasattr(v, 'tolist') else v for k, v in data_dict.items()}
                      }
                 
-                with open(file_path, 'w', encoding='utf-8') as f:
+                with target_path.open('w', encoding='utf-8') as f:
                     json.dump(json_data, f, indent=4)
                     
             QMessageBox.information(self, tr("Success"), tr("Data exported successfully to:\n{0}").format(file_path))
@@ -681,7 +745,7 @@ class ColocalizationPanel(QWidget):
         if len(checked_indices) == 0:
             self.ax.clear()
             self.canvas.draw()
-            self.lbl_pearson.setText("Select channels to analyze")
+            self.lbl_pearson.setText(tr("Select channels to analyze"))
             return
             
         p1, p2 = self.current_line
@@ -701,8 +765,8 @@ class ColocalizationPanel(QWidget):
             for idx in checked_indices:
                 ch = self.session.get_channel(idx)
                 if ch:
-                    # Ensure grayscale for analysis/line scan (weighted conversion for RGB)
-                    raw_data = ColocalizationEngine._ensure_grayscale(ch.raw_data)
+                    # Ensure grayscale for analysis/line scan (uses biological mapping if available)
+                    raw_data = ColocalizationEngine._ensure_grayscale(ch.raw_data, channel_name=ch.name)
                     prof = sample_line_profile(raw_data, pt1, pt2)
                     
                     self.last_profiles[idx] = prof
@@ -740,10 +804,10 @@ class ColocalizationPanel(QWidget):
                             except Exception:
                                 pearson_texts.append(f"{channel_names[idx1]} vs {channel_names[idx2]}: r=N/A")
             
-            self.lbl_pearson.setText("\n".join(pearson_texts) if pearson_texts else "Pearson r: --")
+            self.lbl_pearson.setText(tr("\n").join(pearson_texts) if pearson_texts else "Pearson r: --")
             
-            self.ax.set_xlabel("Distance (pixels)")
-            self.ax.set_ylabel("Intensity (%)" if self.chk_normalize.isChecked() else "Intensity (Raw)")
+            self.ax.set_xlabel(tr("Distance (pixels)"))
+            self.ax.set_ylabel(tr("Intensity (%)") if self.chk_normalize.isChecked() else tr("Intensity (Raw)"))
             self.ax.legend(loc='upper right')
             self.ax.grid(True, linestyle='--', alpha=0.6)
             self.figure.tight_layout()

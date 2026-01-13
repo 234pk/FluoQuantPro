@@ -1,13 +1,15 @@
 from abc import abstractmethod
 from enum import Enum
+from typing import Optional, List, Dict, Tuple
 from PySide6.QtCore import QPointF, Qt, QObject, Signal, QRectF
 from PySide6.QtGui import QPainterPath, QColor, QPen
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsLineItem
-from src.core.algorithms import magic_wand_2d, mask_to_qpath
+from src.core.algorithms import magic_wand_2d, mask_to_qpath, mask_to_qpaths
 from src.core.analysis import calculate_intensity_stats
 from src.core.data_model import Session
 from src.core.roi_model import ROI, create_smooth_path_from_points
 import numpy as np
+import time
 from src.core.logger import Logger
 
 class ToolContext(Enum):
@@ -121,16 +123,15 @@ class AbstractTool(QObject):
         Base implementation for mouse release.
         Cleans up preview and calls finish_shape hook.
         """
-        # 1. Cleanup Preview
-        if self.preview_item:
-             if self.preview_item.scene():
-                 self.preview_item.scene().removeItem(self.preview_item)
-             self.preview_item = None
-        
-        self.current_view = None
-        
-        # 2. Finish
-        self.finish_shape(scene_pos, modifiers)
+        try:
+            self.finish_shape(scene_pos, modifiers)
+        finally:
+            if self.preview_item:
+                if self.preview_item.scene():
+                    self.preview_item.scene().removeItem(self.preview_item)
+                self.preview_item = None
+
+            self.current_view = None
     
     def mouse_double_click(self, scene_pos: QPointF):
         """Optional hook for double click events."""
@@ -201,7 +202,7 @@ class DrawingTool(AbstractTool):
         item.setVisible(True) # Ensure visibility
         
         # === 新增：体检日志 ===
-        print(f"[DEBUG] Preview Item Created: Type={type(item).__name__}, Color={item.pen().color().name()}, Width={item.pen().width()}, Z={item.zValue()}")
+        Logger.debug(f"[DrawingTool] Preview Item Created: Type={type(item).__name__}, Color={item.pen().color().name()}, Width={item.pen().width()}, Z={item.zValue()}")
         return item
 
     @abstractmethod
@@ -245,8 +246,12 @@ class MagicWandTool(AbstractTool):
         super().__init__(session)
         self.base_tolerance = 100.0 # Default base tolerance
         self.current_tolerance = 100.0
-        self.smoothing = 1.0
+        self.smoothing = 5.0
         self.relative = False
+        self.keep_largest = False
+        self.split_regions = False
+        self.convert_to_polygon = False # New: Convert to polygon on release
+        self.contour_smoothing = True # USER REQUEST: Smooth contour output
         
         # State for interactive dragging
         self.is_dragging = False
@@ -288,10 +293,16 @@ class MagicWandTool(AbstractTool):
         display_scale = context.get('display_scale', 1.0) if context else 1.0
         
         # 3. Convert coordinates to integer pixel indices
+        # FIX: Map scene_pos to image local coordinates to avoid offsets
+        image_pos = scene_pos
+        if view and hasattr(view, 'get_image_coordinates'):
+            image_pos = view.get_image_coordinates(scene_pos)
+            Logger.debug(f"[MagicWandTool] Mapped: Scene({scene_pos.x():.1f}, {scene_pos.y():.1f}) -> Image({image_pos.x():.1f}, {image_pos.y():.1f})")
+
         if display_data is not None:
             # We are running on downsampled data
-            # map scene_pos (full-res) to display_pos (downsampled)
-            x, y = int(scene_pos.x() * display_scale), int(scene_pos.y() * display_scale)
+            # map image_pos (full-res) to display_pos (downsampled)
+            x, y = int(image_pos.x() * display_scale), int(image_pos.y() * display_scale)
             work_data = display_data
             Logger.debug(f"[MagicWandTool] Using Downsampled Data ({work_data.shape}) at ({x}, {y})")
         else:
@@ -305,7 +316,7 @@ class MagicWandTool(AbstractTool):
                 Logger.error(f"[MagicWandTool] Channel {effective_idx} raw_data is None")
                 return
 
-            x, y = int(scene_pos.x()), int(scene_pos.y())
+            x, y = int(image_pos.x()), int(image_pos.y())
             work_data = channel.raw_data
             Logger.debug(f"[MagicWandTool] Using Raw Data ({work_data.shape}) at ({x}, {y})")
         
@@ -317,15 +328,57 @@ class MagicWandTool(AbstractTool):
 
         # Initialize state
         self.is_dragging = True
-        self.start_pos = scene_pos
+        self.start_pos = scene_pos # Use original scene_pos for drag delta calculation
         self.seed_pos = (x, y)
         self.tool_active_channel_idx = effective_idx
         self.current_tolerance = self.base_tolerance
         self.display_scale = display_scale # Store for mapping back
         
         # Initial calculation
-        self._update_selection(work_data)
+        ch_name = None
+        if effective_idx >= 0:
+            channel = self.session.get_channel(effective_idx)
+            if channel:
+                ch_name = channel.name
+        
+        self.tool_active_channel_name = ch_name # Cache for move event
+        self._update_selection(work_data, channel_name=ch_name)
         self.preview_changed.emit()
+
+    def _apply_polygon_conversion(self, roi, mask):
+        """Helper to convert a mask-based ROI to a polygon-based ROI."""
+        if mask is None:
+            return
+            
+        from src.core.algorithms import mask_to_qpath
+        # Use a reasonable epsilon for polygon conversion to avoid too many points
+        # USER REQUEST: Optimize handle point count for performance
+        # Increased epsilon from 1.0 to 2.5 for better default performance
+        poly_path = mask_to_qpath(mask, simplify_epsilon=2.5, smooth=False)
+        
+        pts = []
+        # Optimization: Limit maximum number of points for converted polygons
+        # Reduced max_points from 500 to 150 to significantly improve UI responsiveness
+        max_points = 150 
+        element_count = poly_path.elementCount()
+        
+        if element_count > max_points:
+            # If too many points, re-simplify with even larger epsilon
+            # Increased epsilon from 2.5 to 5.0 for very complex masks
+            poly_path = mask_to_qpath(mask, simplify_epsilon=5.0, smooth=False)
+            element_count = poly_path.elementCount()
+            Logger.debug(f"[MagicWandTool] Re-simplified path: {element_count} points (epsilon 5.0)")
+
+        for i in range(poly_path.elementCount()):
+            el = poly_path.elementAt(i)
+            pts.append(QPointF(el.x, el.y))
+        
+        if len(pts) >= 3:
+            roi.path = poly_path
+            roi.points = pts
+            roi.roi_type = "polygon"
+            if not roi.label.startswith("Poly"):
+                roi.label = f"Poly{roi.label}"
 
     def mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
         """
@@ -349,7 +402,8 @@ class MagicWandTool(AbstractTool):
         # We need the data we started with
         # Actually, let's store work_data in self
         if hasattr(self, 'current_work_data'):
-             self._update_selection(self.current_work_data)
+             ch_name = getattr(self, 'tool_active_channel_name', None)
+             self._update_selection(self.current_work_data, channel_name=ch_name)
         
         self.preview_changed.emit()
         
@@ -376,28 +430,75 @@ class MagicWandTool(AbstractTool):
             return
 
         try:
-            # Create the ROI
-            roi = ROI(
-                label=f"Wand_{int(np.sum(self.current_mask))}",
-                path=self.current_path,
-                color=self.get_channel_color(self.tool_active_channel_idx),
-                channel_index=self.tool_active_channel_idx
-            )
-            
-            # --- USER REQUEST: Reverse Mapping to Full Resolution ---
-            if self.display_scale < 1.0:
-                Logger.debug(f"[MagicWandTool] Mapping to Full Resolution (Scale: {self.display_scale:.4f})")
-                roi = roi.get_full_res_roi(self.display_scale)
-            
-            # Calculate stats on full-res data
-            if self.session.channels:
-                Logger.debug("[MagicWandTool] Calculating intensity stats")
-                stats = calculate_intensity_stats(roi, self.session.channels)
-                roi.stats.update(stats)
-            
-            self.session.roi_manager.add_roi(roi)
-            self.committed.emit(f"Created ROI: {roi.label}")
-            Logger.info(f"[MagicWandTool] Successfully created ROI: {roi.label}")
+            if self.split_regions and hasattr(self, 'current_paths') and self.current_paths:
+                base_prefix = "Wand"
+                existing = self.session.roi_manager.get_all_rois() if hasattr(self.session, 'roi_manager') else []
+                base_count = sum(1 for r in existing if r.label.startswith(base_prefix))
+                created = 0
+                for i, p in enumerate(self.current_paths):
+                    roi = ROI(
+                        label=f"{base_prefix}_{base_count + created + 1}",
+                        path=p,
+                        color=self.get_channel_color(self.tool_active_channel_idx),
+                        channel_index=self.tool_active_channel_idx
+                    )
+                    
+                    # USER REQUEST: Convert to polygon if enabled
+                    if self.convert_to_polygon:
+                        self._apply_polygon_conversion(roi, self.current_masks[i] if hasattr(self, 'current_masks') else None)
+
+                    if self.display_scale < 1.0:
+                        roi = roi.get_full_res_roi(self.display_scale)
+                    if self.session.channels:
+                        stats = calculate_intensity_stats(roi, self.session.channels)
+                        roi.stats.update(stats)
+                    self.session.roi_manager.add_roi(roi, undoable=True)
+                    created += 1
+                self.committed.emit(f"Created {created} ROIs")
+                Logger.info(f"[MagicWandTool] Created {created} ROIs")
+            else:
+                roi = ROI(
+                    label=f"Wand_{int(np.sum(self.current_mask))}",
+                    path=self.current_path,
+                    color=self.get_channel_color(self.tool_active_channel_idx),
+                    channel_index=self.tool_active_channel_idx
+                )
+                
+                # USER REQUEST: Convert to polygon if enabled
+                if self.convert_to_polygon:
+                    self._apply_polygon_conversion(roi, self.current_mask)
+
+                if self.display_scale < 1.0:
+                    roi = roi.get_full_res_roi(self.display_scale)
+                
+                if self.session.channels:
+                    # Optimization: Use detailed path for stats, but simplified path for display
+                    try:
+                        from src.core.algorithms import mask_to_qpath
+                        detailed_path = mask_to_qpath(self.current_mask, simplify_epsilon=0.5)
+                        temp_roi = roi.clone()
+                        temp_roi.path = detailed_path
+                        # If we are in downsampled mode, we need to scale the detailed path too
+                        if self.display_scale < 1.0:
+                             temp_roi = temp_roi.get_full_res_roi(self.display_scale)
+                        stats = calculate_intensity_stats(temp_roi, self.session.channels)
+                        roi.stats.update(stats)
+                    except Exception as e:
+                        Logger.warning(f"[MagicWand] Detailed stats calculation failed, falling back to simplified: {e}")
+                        stats = calculate_intensity_stats(roi, self.session.channels)
+                        roi.stats.update(stats)
+                self.session.roi_manager.add_roi(roi, undoable=True)
+                self.committed.emit(f"Created ROI: {roi.label}")
+                Logger.info(f"[MagicWandTool] Successfully created ROI: {roi.label}")
+
+                # USER REQUEST: Restore focus to view after creation to ensure shortcut responsiveness
+                # Note: view is defined in the block below, let's move it up or re-find it
+                if hasattr(self.session, 'main_window') and self.session.main_window:
+                    mw = self.session.main_window
+                    if hasattr(mw, 'multi_view'):
+                        v = mw.multi_view.get_active_view()
+                        if v:
+                            v.setFocus(Qt.FocusReason.OtherFocusReason)
         except Exception as e:
             Logger.error(f"[MagicWandTool] Failed to create ROI: {e}", exc_info=True)
         finally:
@@ -420,11 +521,13 @@ class MagicWandTool(AbstractTool):
                      view = mw.multi_view.get_active_view()
                      if view:
                          view.set_active_tool(None)
-                         Logger.debug("[MagicWandTool] Auto-switched to Hand Tool after creation")
+                         # FORCE FOCUS back to the view to ensure keyboard events are captured
+                         view.setFocus(Qt.FocusReason.OtherFocusReason)
+                         Logger.debug("[MagicWandTool] Auto-switched to Hand Tool after creation and restored focus")
                  except Exception as e:
                      Logger.error(f"[MagicWandTool] Failed to auto-switch to Hand Tool: {e}")
 
-    def _update_selection(self, data: np.ndarray):
+    def _update_selection(self, data: np.ndarray, channel_name: Optional[str] = None):
         """Internal helper to calculate mask and path."""
         self.current_work_data = data # Cache for move event
         self.current_mask = magic_wand_2d(
@@ -432,13 +535,44 @@ class MagicWandTool(AbstractTool):
             self.seed_pos, 
             self.current_tolerance,
             smoothing=self.smoothing,
-            relative=self.relative
+            relative=self.relative,
+            channel_name=channel_name
         )
         
         if np.any(self.current_mask):
-            self.current_path = mask_to_qpath(self.current_mask, simplify_epsilon=0.5)
+            # OPTIMIZATION: Dynamic Simplification based on area to reduce lag for large/complex ROIs
+            area = np.sum(self.current_mask)
+            # Reduced base epsilon from 1.0 to 0.1 for smoother graphics
+            # For 100x100 (10k area) -> epsilon ~ 0.3 (was 2.0)
+            # For 1000x1000 (1M area) -> epsilon ~ 2.1 (was 11.0)
+            dynamic_epsilon = 0.1 + (area ** 0.5) / 500.0
+            dynamic_epsilon = max(0.1, min(dynamic_epsilon, 5.0)) # Clamp between 0.1 and 5.0
+            
+            Logger.debug(f"[MagicWandTool] Area: {area}, Dynamic Epsilon: {dynamic_epsilon:.2f}")
+
+            if self.keep_largest:
+                import cv2
+                m = self.current_mask.astype(np.uint8)
+                nlabels, labels, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+                if nlabels > 1:
+                    areas = stats[1:, cv2.CC_STAT_AREA]
+                    idx = int(np.argmax(areas)) + 1
+                    largest_mask = (labels == idx)
+                    self.current_path = mask_to_qpath(largest_mask, simplify_epsilon=dynamic_epsilon, smooth=self.contour_smoothing)
+                    self.current_paths = [self.current_path] if self.current_path else []
+                else:
+                    self.current_path = mask_to_qpath(self.current_mask, simplify_epsilon=dynamic_epsilon, smooth=self.contour_smoothing)
+                    self.current_paths = [self.current_path] if self.current_path else []
+            elif self.split_regions:
+                paths = mask_to_qpaths(self.current_mask, simplify_epsilon=dynamic_epsilon, smooth=self.contour_smoothing)
+                self.current_paths = paths
+                self.current_path = mask_to_qpath(self.current_mask, simplify_epsilon=dynamic_epsilon, smooth=self.contour_smoothing)
+            else:
+                self.current_path = mask_to_qpath(self.current_mask, simplify_epsilon=dynamic_epsilon, smooth=self.contour_smoothing)
+                self.current_paths = [self.current_path] if self.current_path else []
         else:
             self.current_path = None
+            self.current_paths = []
 
     def _reset_state(self):
         self.is_dragging = False
@@ -572,6 +706,11 @@ class PointCounterTool(AbstractTool):
         self.session.roi_manager.add_roi(roi, undoable=True)
         
         self.committed.emit(f"Counted {roi.label}")
+
+        # USER REQUEST: Restore focus to view after creation to ensure shortcut responsiveness
+        if view:
+            view.setFocus(Qt.FocusReason.OtherFocusReason)
+
         Logger.debug(f"[PointCounterTool.mouse_press] EXIT - Logic took {(time.perf_counter()-start_time)*1000:.2f}ms")
         
     def _create_shape_path(self, center, radius, shape):
@@ -649,7 +788,8 @@ class PointCounterTool(AbstractTool):
     def get_preview_path(self) -> QPainterPath:
         return self.current_path or QPainterPath()
 
-class PolygonSelectionTool(AbstractTool):
+# [弃用说明] 注解模式已迁移至 BaseDrawTool/DrawToolFactory。本类仅用于 ROI 专用交互（固定大小/多点预览等）。
+class PolygonTool(AbstractTool):
     """
     Polygon Selection Tool (Click-to-Add-Point).
     User clicks to add points, moves to see preview line.
@@ -803,7 +943,7 @@ class PolygonSelectionTool(AbstractTool):
            b. If we have few points, maybe Toggle Freehand?
            User said: "Right click to change to freehand... then right click to close".
         """
-        print(f"DEBUG: Polygon Right Click at {scene_pos}, Active: {self.is_active}, Freehand: {self.is_freehand_mode}, Points: {len(self.points)}")
+        Logger.debug(f"[PolygonTool] Right Click at {scene_pos}, Active: {self.is_active}, Freehand: {self.is_freehand_mode}, Points: {len(self.points)}")
         if not self.is_active:
              return
 
@@ -822,7 +962,7 @@ class PolygonSelectionTool(AbstractTool):
                 self.finish_polygon()
             else:
                 self.is_freehand_mode = True
-                print("Switched to Freehand Mode")
+                Logger.info("[PolygonTool] Switched to Freehand Mode")
                 if not self.points:
                     self.points.append(scene_pos)
 
@@ -831,16 +971,17 @@ class PolygonSelectionTool(AbstractTool):
         if not self.is_active:
             return
 
-        print(f"DEBUG: finish_polygon called with {len(self.points)} points")
+        Logger.debug(f"[PolygonTool] finish_polygon called with {len(self.points)} points")
 
         # Relaxed check: Allow closing even with few points, but ROI creation requires valid shape.
         # If < 3 points, we can't make a polygon area.
         # But we should reset state so user isn't stuck.
         if len(self.points) < 3:
-            print(f"Polygon creation cancelled: Need at least 3 points. (Has {len(self.points)})")
+            Logger.warning(f"[PolygonTool] Creation cancelled: Need at least 3 points. (Has {len(self.points)})")
             # If the user tries to close with < 3 points, we should probably just reset
             # But maybe they want to see what happened.
-            self.session.main_window.lbl_status.setText(f"Cannot close polygon: Need 3+ points (Current: {len(self.points)})")
+            if hasattr(self.session, 'main_window') and self.session.main_window and hasattr(self.session.main_window, 'lbl_status'):
+                 self.session.main_window.lbl_status.setText(f"Cannot close polygon: Need 3+ points (Current: {len(self.points)})")
             # self.points = [] # Don't clear, let them add more?
             # Actually, if they right click to close and fail, they might want to try again.
             return
@@ -866,48 +1007,10 @@ class PolygonSelectionTool(AbstractTool):
              
         if view and hasattr(view, 'get_image_coordinates'):
              image_points = [view.get_image_coordinates(p) for p in self.points]
-             print(f"DEBUG: Polygon Mapped {len(self.points)} points from Scene -> Image")
+             Logger.debug(f"[PolygonTool] Mapped {len(self.points)} points from Scene -> Image")
         else:
              image_points = self.points # Fallback
-             print("DEBUG: Polygon used Raw Scene coordinates (No View found)")
-
-        # --- PHASE 3: Context Branching ---
-        context_mode = ToolContext.ROI # Default
-        if view and hasattr(view, 'current_context'):
-            context_mode = view.current_context
-        
-        Logger.info(f"[PolygonTool] Committing shape in context: {context_mode}")
-
-        if context_mode == ToolContext.ANNOTATION:
-            # Create Annotation
-            import uuid
-            from src.core.data_model import GraphicAnnotation
-            
-            # Store points as list of tuples (x, y)
-            pts_data = [(p.x(), p.y()) for p in image_points]
-            
-            ann = GraphicAnnotation(
-                id=str(uuid.uuid4()),
-                type='polygon',
-                points=pts_data,
-                color=self.get_channel_color(self.tool_active_channel_idx).name(),
-                thickness=2,
-                visible=True
-            )
-            # Add 'smooth' property if needed, default to True for polygons usually
-            ann.properties['smooth'] = True 
-            
-            # Use Manager if available, else append to list
-            if hasattr(view, 'annotation_manager') and view.annotation_manager:
-                view.annotation_manager.add_annotation(ann)
-            elif hasattr(self.session, 'annotations'):
-                self.session.annotations.append(ann)
-                # Trigger update?
-                view.scene().update()
-            
-            self.committed.emit(f"Created Annotation: {ann.id}")
-            self._cleanup_polygon()
-            return
+             Logger.debug("[PolygonTool] Used Raw Scene coordinates (No View found)")
 
         # --- ROI Creation (Default) ---
         # Create ROI with scientific rigor (Store raw points for full-res mapping)
@@ -923,10 +1026,14 @@ class PolygonSelectionTool(AbstractTool):
         if self.session.channels:
             stats = calculate_intensity_stats(roi, self.session.channels)
             roi.stats.update(stats)
-            print(f"Polygon Closed. Stats: {stats}")
+            Logger.debug(f"[PolygonTool] Closed. Stats: {stats}")
         
         self.session.roi_manager.add_roi(roi, undoable=True)
         self.committed.emit(f"Created ROI: {roi.label}")
+
+        # USER REQUEST: Restore focus to view after creation to ensure shortcut responsiveness
+        if view:
+            view.setFocus(Qt.FocusReason.OtherFocusReason)
 
         self._cleanup_polygon()
 
@@ -946,524 +1053,7 @@ class PolygonSelectionTool(AbstractTool):
         self.is_active = False
         self.is_freehand_mode = False
 
-class RectangleSelectionTool(DrawingTool):
-    """
-    Rectangle Selection Tool.
-    Drag to draw a rectangle. Release to create ROI.
-    """
-    def __init__(self, session: Session):
-        super().__init__(session)
-        self.start_pos = None
-        self.end_pos = None
-        self.current_path = None
-        self.is_dragging = False
-        self.active_channel_idx = -1
-        
-        # Fixed Size Mode
-        self.fixed_size_mode = False
-        self.last_size = None # QSizeF
-        self.is_moving = False # For moving fixed rect
-        
-    def set_fixed_size_mode(self, enabled: bool):
-        self.fixed_size_mode = enabled
-    
-    def _create_specific_item(self):
-        return QGraphicsRectItem()
-        
-    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
-        Logger.debug(f"[RectangleSelectionTool.start_preview] ENTER: pos={scene_pos}, channel={channel_index}")
-        # Item creation handled by DrawingTool.mouse_press
-        
-        effective_idx = channel_index
-        if effective_idx < 0:
-            effective_idx = self.active_channel_idx
-        self.tool_active_channel_idx = effective_idx
-        
-        # --- USER REQUEST: Store scale for reverse mapping ---
-        self.display_scale = context.get('display_scale', 1.0) if context else 1.0
-        Logger.debug(f"[RectangleSelectionTool.start_preview] display_scale={self.display_scale}")
-        
-        if self.fixed_size_mode and self.last_size:
-            # Fixed Mode: Place rect centered at click (or top-left?)
-            # Let's do top-left for consistency with visual start
-            self.start_pos = scene_pos
-            self.end_pos = scene_pos + QPointF(self.last_size.width(), self.last_size.height())
-            self.is_moving = True
-            # No need to call update, base class handles it via get_preview_path
-        else:
-            # Normal Mode
-            self.start_pos = scene_pos
-            self.end_pos = scene_pos
-            self.is_dragging = True
-            
-        # --- CRITICAL FIX: Ensure Geometry is Updated Immediately ---
-        if self.preview_item and isinstance(self.preview_item, QGraphicsRectItem):
-             rect = QRectF(self.start_pos, self.end_pos).normalized()
-             self.preview_item.setRect(rect)
-             Logger.debug(f"[RectangleSelectionTool.start_preview] updated rect: {rect}")
-
-        
-    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        import time
-        start = time.perf_counter()
-        
-        # 调试：检查 self.preview_item 是否存在且有效
-        if not self.preview_item:
-            Logger.warning("[RectangleSelectionTool.on_mouse_move] preview_item is None!")
-        elif not self.preview_item.scene():
-            Logger.warning("[RectangleSelectionTool.on_mouse_move] preview_item has no scene!")
-        elif not self.preview_item.isVisible():
-            Logger.debug("[RectangleSelectionTool.on_mouse_move] Force showing preview_item")
-            self.preview_item.setVisible(True)
-            
-        if self.is_moving and self.last_size:
-            # Move the entire rect
-            self.start_pos = scene_pos
-            self.end_pos = scene_pos + QPointF(self.last_size.width(), self.last_size.height())
-        elif self.is_dragging and self.start_pos:
-            # Resize
-            self.end_pos = scene_pos
-            
-            # Handle Square constraint (Shift Key)
-            if modifiers & Qt.KeyboardModifier.ShiftModifier:
-                width = self.end_pos.x() - self.start_pos.x()
-                height = self.end_pos.y() - self.start_pos.y()
-                
-                # Determine max dimension and sign
-                size = max(abs(width), abs(height))
-                new_w = size if width >= 0 else -size
-                new_h = size if height >= 0 else -size
-                
-                self.end_pos = QPointF(self.start_pos.x() + new_w, self.start_pos.y() + new_h)
-        
-        # --- CRITICAL FIX: Update Rect Geometry ---
-        if self.preview_item and isinstance(self.preview_item, QGraphicsRectItem):
-            if self.start_pos and self.end_pos:
-                rect = QRectF(self.start_pos, self.end_pos).normalized()
-                self.preview_item.setRect(rect)
-                
-        Logger.debug(f"[RectangleSelectionTool.on_mouse_move] Logic took {(time.perf_counter()-start)*1000:.2f}ms")
-            
-    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        Logger.debug(f"[RectangleSelectionTool.finish_shape] ENTER: pos={scene_pos}")
-        if self.is_moving:
-            self.is_moving = False
-            self._create_roi()
-        elif self.is_dragging and self.start_pos:
-            self.end_pos = scene_pos
-            
-            # Handle Square constraint (Shift Key) - Re-apply on release to ensure precision
-            if modifiers & Qt.KeyboardModifier.ShiftModifier:
-                width = self.end_pos.x() - self.start_pos.x()
-                height = self.end_pos.y() - self.start_pos.y()
-                size = max(abs(width), abs(height))
-                new_w = size if width >= 0 else -size
-                new_h = size if height >= 0 else -size
-                self.end_pos = QPointF(self.start_pos.x() + new_w, self.start_pos.y() + new_h)
-                
-            self._create_roi()
-            
-        # Reset
-        self.start_pos = None
-        self.end_pos = None
-        self.current_path = None
-        self.is_dragging = False
-        self.is_moving = False
-        self.preview_changed.emit()
-        Logger.debug("[RectangleSelectionTool.finish_shape] EXIT")
-            
-    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
-        path = QPainterPath()
-        if self.start_pos and self.end_pos:
-            rect = QRectF(self.start_pos, self.end_pos).normalized()
-            path.addRect(rect)
-        self.current_path = path
-        self.preview_changed.emit()
-        return path
-
-    def _update_rect(self):
-        # Legacy method, might be called by set_fixed_size_mode?
-        # Actually no, set_fixed_size_mode just sets flag.
-        # This method is no longer needed by mouse events, but let's keep it safe or remove it.
-        # It's called by set_fixed_size_mode logic if we were to preview immediately, but
-        # usually preview only happens on mouse interaction.
-        pass
-
-    def _create_roi(self):
-        print("DEBUG: RectTool._create_roi start")
-        if not self.start_pos or not self.end_pos:
-            print("DEBUG: RectTool._create_roi aborted: start_pos or end_pos missing")
-            return
-            
-        rect = QRectF(self.start_pos, self.end_pos).normalized()
-        
-        # Minimum size check
-        if rect.width() < 2 or rect.height() < 2:
-            print("DEBUG: RectTool._create_roi aborted: too small")
-            return
-        
-        # Update last size for fixed mode
-        self.last_size = rect.size()
-        
-        # FIX: Coordinate Mapping (Scene -> Image)
-        image_start = self.start_pos
-        image_end = self.end_pos
-        
-        view = None
-        try:
-            if hasattr(self.session, 'main_window') and self.session.main_window:
-                 view = self.session.main_window.multi_view.get_active_view()
-                 print(f"DEBUG: RectTool got active view: {view}")
-                 
-            if view and hasattr(view, 'get_image_coordinates'):
-                 image_start = view.get_image_coordinates(self.start_pos)
-                 image_end = view.get_image_coordinates(self.end_pos)
-                 print(f"DEBUG: Rectangle Mapped: Scene({self.start_pos.x():.1f}, {self.start_pos.y():.1f}) -> Image({image_start.x():.1f}, {image_start.y():.1f})")
-            else:
-                 print("DEBUG: Rectangle used Raw Scene coordinates (No View found)")
-            
-            # --- PHASE 3: Context Branching ---
-            context_mode = ToolContext.ROI # Default
-            if view and hasattr(view, 'current_context'):
-                context_mode = view.current_context
-            
-            Logger.info(f"[RectTool] Committing shape in context: {context_mode}")
-
-            if context_mode == ToolContext.ANNOTATION:
-                # Create Annotation
-                import uuid
-                from src.core.data_model import GraphicAnnotation
-                
-                # Annotations use Scene Coordinates (usually) or Image? 
-                # Existing TextTool uses scene_pos (which is Scene Coords).
-                # But CanvasView._on_roi_added uses display_scale=1.0.
-                # Let's assume Annotations should use Image Coordinates for consistency if they scale with image?
-                # Actually, GraphicAnnotation usually stores points.
-                # Let's use Image Coordinates to be safe and consistent with ROIs.
-                
-                pts = [(image_start.x(), image_start.y()), (image_end.x(), image_end.y())]
-                
-                ann = GraphicAnnotation(
-                    id=str(uuid.uuid4()),
-                    type='rect',
-                    points=pts,
-                    color=self.get_channel_color(self.tool_active_channel_idx).name(),
-                    thickness=2,
-                    visible=True
-                )
-                
-                # Use Manager if available, else append to list
-                if hasattr(view, 'annotation_manager') and view.annotation_manager:
-                    view.annotation_manager.add_annotation(ann)
-                elif hasattr(self.session, 'annotations'):
-                    self.session.annotations.append(ann)
-                    # Trigger update?
-                    view.scene().update()
-                
-                self.committed.emit(f"Created Annotation: {ann.id}")
-                return
-
-            # --- ROI Creation (Default) ---
-            # Create ROI with scientific rigor (Store raw points for full-res mapping)
-            print("DEBUG: Creating ROI object...")
-            roi = ROI(
-                label=f"Rectangle_{len(self.session.roi_manager.get_all_rois()) + 1}",
-                color=self.get_channel_color(self.tool_active_channel_idx),
-                channel_index=self.tool_active_channel_idx
-            )
-            print("DEBUG: Reconstructing ROI from points...")
-            roi.reconstruct_from_points([image_start, image_end], roi_type="rectangle")
-            
-            # Calculate stats
-            if self.session.channels:
-                print("DEBUG: Calculating stats...")
-                stats = calculate_intensity_stats(roi, self.session.channels)
-                roi.stats.update(stats)
-                print(f"DEBUG: Stats calculated: {stats.keys()}")
-                
-            print("DEBUG: Adding ROI to manager...")
-            self.session.roi_manager.add_roi(roi, undoable=True)
-            self.committed.emit(f"Created ROI: {roi.label}")
-            print("DEBUG: RectTool._create_roi success")
-            
-        except Exception as e:
-            print(f"ERROR: Crash in RectTool._create_roi: {e}")
-            import traceback
-            traceback.print_exc()
-
-class TextTool(AbstractTool):
-    """
-    Tool for creating text annotations.
-    """
-    def __init__(self, session: Session):
-        super().__init__(session)
-        self.start_pos = None
-        self.end_pos = None
-        self.current_path = None
-        self.is_dragging = False
-        self.color = "#FFFF00"
-        self.font_size = 12
-        
-    def set_color(self, hex_color: str):
-        self.color = hex_color
-        
-    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
-        self.start_pos = scene_pos
-        self.end_pos = scene_pos
-        self.is_dragging = True
-        self.display_scale = context.get('display_scale', 1.0) if context else 1.0
-        
-    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        if self.is_dragging:
-            self.end_pos = scene_pos
-            
-    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        if self.is_dragging:
-            self.end_pos = scene_pos
-            self._create_annotation()
-            
-        self.is_dragging = False
-        self.start_pos = None
-        self.end_pos = None
-        self.current_path = None
-        self.preview_changed.emit()
-        
-    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
-        path = QPainterPath()
-        if self.start_pos and self.end_pos:
-            path.moveTo(self.start_pos)
-            path.lineTo(self.end_pos) # Just a line to show where text starts
-        self.current_path = path
-        return path
-
-    def _update_path(self):
-        pass
-
-
-    def _create_annotation(self):
-        if not self.start_pos or not self.end_pos:
-            return
-            
-        import uuid
-        from src.core.data_model import GraphicAnnotation
-        from PySide6.QtWidgets import QInputDialog
-        
-        # Ask for text
-        text, ok = QInputDialog.getText(None, "Annotation Text", "Enter text:")
-        if not ok or not text:
-            return
-            
-        # Points are in scene coordinates (full resolution)
-        pts = [(self.start_pos.x(), self.start_pos.y()), 
-               (self.end_pos.x(), self.end_pos.y())]
-               
-        ann = GraphicAnnotation(
-            id=str(uuid.uuid4()),
-            type='text',
-            points=pts,
-            color=self.color,
-            thickness=1,
-            visible=True
-        )
-        ann.text = text
-        ann.properties['font_size'] = self.font_size
-        
-        self.session.annotations.append(ann)
-        self.committed.emit(f"Added text annotation")
-
-class EllipseSelectionTool(DrawingTool):
-    """
-    Ellipse Selection Tool.
-    Drag to draw an ellipse. Release to create ROI.
-    """
-    def __init__(self, session: Session):
-        super().__init__(session)
-        self.start_pos = None
-        self.end_pos = None
-        self.current_path = None
-        self.is_dragging = False
-        self.tool_active_channel_idx = -1
-        
-        # Fixed Size Mode
-        self.fixed_size_mode = False
-        self.last_size = None # QSizeF
-        self.is_moving = False # For moving fixed shape
-        
-    def set_fixed_size_mode(self, enabled: bool):
-        self.fixed_size_mode = enabled
-    
-    def _create_specific_item(self):
-        return QGraphicsEllipseItem()
-
-    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
-        # --- CRITICAL FIX: Ensure Correct Item Type & Visibility ---
-        # Item creation handled by DrawingTool.mouse_press
-        # -----------------------------------------------------------
-
-        effective_idx = channel_index
-        if effective_idx < 0:
-            effective_idx = self.active_channel_idx
-        self.tool_active_channel_idx = effective_idx
-        
-        # --- USER REQUEST: Store scale for reverse mapping ---
-        self.display_scale = context.get('display_scale', 1.0) if context else 1.0
-        
-        if self.fixed_size_mode and self.last_size:
-            # Fixed Mode
-            self.start_pos = scene_pos
-            self.end_pos = scene_pos + QPointF(self.last_size.width(), self.last_size.height())
-            self.is_moving = True
-        else:
-            # Normal Mode
-            self.start_pos = scene_pos
-            self.end_pos = scene_pos
-            self.is_dragging = True
-        
-    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        if self.is_moving and self.last_size:
-            # Move the entire shape
-            self.start_pos = scene_pos
-            self.end_pos = scene_pos + QPointF(self.last_size.width(), self.last_size.height())
-        elif self.is_dragging and self.start_pos:
-            self.end_pos = scene_pos
-            
-            # Handle Circle constraint (Shift Key)
-            if modifiers & Qt.KeyboardModifier.ShiftModifier:
-                width = self.end_pos.x() - self.start_pos.x()
-                height = self.end_pos.y() - self.start_pos.y()
-                
-                # Determine max dimension and sign
-                size = max(abs(width), abs(height))
-                new_w = size if width >= 0 else -size
-                new_h = size if height >= 0 else -size
-                
-                self.end_pos = QPointF(self.start_pos.x() + new_w, self.start_pos.y() + new_h)
-        
-        # --- CRITICAL FIX: Update Ellipse Geometry ---
-        if self.preview_item and isinstance(self.preview_item, QGraphicsEllipseItem):
-             if self.start_pos and self.end_pos:
-                 rect = QRectF(self.start_pos, self.end_pos).normalized()
-                 self.preview_item.setRect(rect)
-        # ---------------------------------------------
-            
-    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
-        if self.is_moving:
-            self.is_moving = False
-            self._create_roi()
-        elif self.is_dragging and self.start_pos:
-            self.end_pos = scene_pos
-            
-            # Handle Circle constraint (Shift Key) - Re-apply on release to ensure precision
-            if modifiers & Qt.KeyboardModifier.ShiftModifier:
-                width = self.end_pos.x() - self.start_pos.x()
-                height = self.end_pos.y() - self.start_pos.y()
-                size = max(abs(width), abs(height))
-                new_w = size if width >= 0 else -size
-                new_h = size if height >= 0 else -size
-                self.end_pos = QPointF(self.start_pos.x() + new_w, self.start_pos.y() + new_h)
-                
-            self._create_roi()
-            
-        # Reset
-        self.start_pos = None
-        self.end_pos = None
-        self.current_path = None
-        self.is_dragging = False
-        self.is_moving = False
-        self.preview_changed.emit()
-            
-    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
-        path = QPainterPath()
-        if self.start_pos and self.end_pos:
-            rect = QRectF(self.start_pos, self.end_pos).normalized()
-            path.addEllipse(rect)
-        self.current_path = path
-        self.preview_changed.emit()
-        return path
-
-    def _update_ellipse(self):
-        pass
-
-    def _create_roi(self):
-        if not self.start_pos or not self.end_pos:
-            return
-            
-        rect = QRectF(self.start_pos, self.end_pos).normalized()
-        
-        # Minimum size check
-        if rect.width() < 2 or rect.height() < 2:
-            return
-            
-        # Update last size for fixed mode
-        self.last_size = rect.size()
-        
-        # FIX: Coordinate Mapping (Scene -> Image)
-        image_start = self.start_pos
-        image_end = self.end_pos
-        
-        view = None
-        if hasattr(self.session, 'main_window') and self.session.main_window:
-             view = self.session.main_window.multi_view.get_active_view()
-             
-        if view and hasattr(view, 'get_image_coordinates'):
-             image_start = view.get_image_coordinates(self.start_pos)
-             image_end = view.get_image_coordinates(self.end_pos)
-             print(f"DEBUG: Ellipse Mapped: Scene({self.start_pos.x():.1f}, {self.start_pos.y():.1f}) -> Image({image_start.x():.1f}, {image_start.y():.1f})")
-        else:
-             print("DEBUG: Ellipse used Raw Scene coordinates (No View found)")
-            
-        # --- PHASE 3: Context Branching ---
-        context_mode = ToolContext.ROI # Default
-        if view and hasattr(view, 'current_context'):
-            context_mode = view.current_context
-        
-        Logger.info(f"[EllipseTool] Committing shape in context: {context_mode}")
-
-        if context_mode == ToolContext.ANNOTATION:
-            # Create Annotation
-            import uuid
-            from src.core.data_model import GraphicAnnotation
-            
-            pts = [(image_start.x(), image_start.y()), (image_end.x(), image_end.y())]
-            
-            ann = GraphicAnnotation(
-                id=str(uuid.uuid4()),
-                type='ellipse',
-                points=pts,
-                color=self.get_channel_color(self.tool_active_channel_idx).name(),
-                thickness=2,
-                visible=True
-            )
-            
-            # Use Manager if available, else append to list
-            if hasattr(view, 'annotation_manager') and view.annotation_manager:
-                view.annotation_manager.add_annotation(ann)
-            elif hasattr(self.session, 'annotations'):
-                self.session.annotations.append(ann)
-                # Trigger update?
-                view.scene().update()
-            
-            self.committed.emit(f"Created Annotation: {ann.id}")
-            return
-
-        # --- ROI Creation (Default) ---
-        # Create ROI with scientific rigor (Store raw points for full-res mapping)
-        roi = ROI(
-            label=f"Ellipse_{len(self.session.roi_manager.get_all_rois()) + 1}",
-            color=self.get_channel_color(self.tool_active_channel_idx),
-            channel_index=self.tool_active_channel_idx
-        )
-        roi.reconstruct_from_points([image_start, image_end], roi_type="ellipse")
-        
-        # Calculate stats
-        if self.session.channels:
-            stats = calculate_intensity_stats(roi, self.session.channels)
-            roi.stats.update(stats)
-            
-        self.session.roi_manager.add_roi(roi, undoable=True)
-        self.committed.emit(f"Created ROI: {roi.label}")
-
-
+# [弃用说明] 注解模式已迁移至 BaseDrawTool/DrawToolFactory。本类仅用于 ROI 专用交互（固定大小等）。
 class LineScanTool(DrawingTool):
     """
     Line Scan Tool.
@@ -1600,43 +1190,6 @@ class LineScanTool(DrawingTool):
         else:
              print("DEBUG: LineScan used Raw Scene coordinates (No View found)")
             
-        # --- PHASE 3: Context Branching ---
-        context_mode = ToolContext.ROI # Default
-        if view and hasattr(view, 'current_context'):
-            context_mode = view.current_context
-        
-        Logger.info(f"[LineTool] Committing shape in context: {context_mode}")
-
-        if context_mode == ToolContext.ANNOTATION:
-            # Create Annotation
-            import uuid
-            from src.core.data_model import GraphicAnnotation
-            
-            pts = [(image_start.x(), image_start.y()), (image_end.x(), image_end.y())]
-            
-            ann = GraphicAnnotation(
-                id=str(uuid.uuid4()),
-                type='line', # Or arrow? Default to line for LineScanTool. ArrowTool is separate usually.
-                points=pts,
-                color=self.get_channel_color(self.active_channel_idx).name(), # Use active channel or default yellow
-                thickness=2,
-                visible=True
-            )
-            # Maybe use yellow default for line scan?
-            if self.active_channel_idx < 0:
-                 ann.color = "#FFFF00" # Yellow
-            
-            # Use Manager if available, else append to list
-            if hasattr(view, 'annotation_manager') and view.annotation_manager:
-                view.annotation_manager.add_annotation(ann)
-            elif hasattr(self.session, 'annotations'):
-                self.session.annotations.append(ann)
-                # Trigger update?
-                view.scene().update()
-            
-            self.committed.emit(f"Created Annotation: {ann.id}")
-            return
-
         # --- ROI Creation (Default) ---
         path = QPainterPath()
         path.moveTo(image_start)
@@ -1646,14 +1199,19 @@ class LineScanTool(DrawingTool):
             label=f"LineScan_{len(self.session.roi_manager.get_all_rois()) + 1}",
             path=path,
             color=QColor(255, 255, 0), # Yellow for line scans
-            channel_index=-1 # Global line scan
+            channel_index=-1, # Global line scan
+            roi_type="line_scan",
+            measurable=True,
+            export_with_image=True
         )
-        # Mark as line scan for filtering
-        roi.roi_type = "line_scan"
         roi.line_points = (image_start, image_end)
             
         self.session.roi_manager.add_roi(roi, undoable=True)
         self.committed.emit(f"Created Line Scan: {roi.label}")
+
+        # USER REQUEST: Restore focus to view after creation to ensure shortcut responsiveness
+        if view:
+            view.setFocus(Qt.FocusReason.OtherFocusReason)
 
 
 class CropTool(AbstractTool):
@@ -1745,6 +1303,10 @@ class CropTool(AbstractTool):
         # Better to be undoable so user can see what they cropped
         self.session.roi_manager.add_roi(roi, undoable=True)
         
+        # USER REQUEST: Restore focus to view after creation to ensure shortcut responsiveness
+        if view:
+            view.setFocus(Qt.FocusReason.OtherFocusReason)
+        
         # 4. Trigger Crop
         if self.session.main_window:
             self.session.main_window.crop_to_selection()
@@ -1807,3 +1369,384 @@ class BatchSelectionTool(AbstractTool):
 
     def _update_preview(self):
         pass
+
+
+class DrawStyleStrategy:
+    def preview_pen(self, shape_type: str, props: dict) -> QPen:
+        return QPen(QColor("#FFFF00"), 2, Qt.PenStyle.SolidLine)
+    def preview_brush(self, shape_type: str, props: dict):
+        return Qt.BrushStyle.NoBrush
+    def default_properties(self, shape_type: str) -> dict:
+        return {}
+    def map_to_model(self, session: Session, points, shape_type: str, color: str, thickness: int, extra: dict):
+        return None
+
+
+class ROIStyleStrategy(DrawStyleStrategy):
+    def preview_pen(self, shape_type: str, props: dict) -> QPen:
+        # Unified preview style
+        pen = QPen(QColor("#FFFF00"), 1, Qt.PenStyle.DashLine)
+        if shape_type in ["arrow", "text"]:
+             pen = QPen(QColor("#FFFF00"), 2, Qt.PenStyle.SolidLine)
+        
+        pen.setCosmetic(True)
+        return pen
+        
+    def preview_brush(self, shape_type: str, props: dict):
+        if shape_type in ["arrow", "text", "line"]:
+            return Qt.BrushStyle.NoBrush
+        return Qt.BrushStyle.Dense4Pattern
+        
+    def default_properties(self, shape_type: str) -> dict:
+        props = {"compute_stats": True}
+        if shape_type in ["arrow", "text"]:
+            props["compute_stats"] = False
+        return props
+        
+    def map_to_model(self, session: Session, points, shape_type: str, color: str, thickness: int, extra: dict):
+        roi_type = {
+            "rect": "rectangle",
+            "ellipse": "ellipse",
+            "circle": "ellipse",
+            "line": "line",
+            "polygon": "polygon",
+            "arrow": "arrow",
+            "text": "text"
+        }.get(shape_type, "polygon")
+        
+        # Determine if measurable based on type
+        measurable = True
+        if roi_type in ["arrow", "text"]:
+            measurable = False
+            
+        roi = ROI(
+            label=f"{roi_type.capitalize()}_{len(session.roi_manager.get_all_rois()) + 1}", 
+            color=QColor(color), 
+            channel_index=extra.get("channel_index", -1)
+        )
+        roi.roi_type = roi_type
+        roi.measurable = measurable
+        
+        # --- EXPORT LOGIC SYNC ---
+        # Default to exportable, but if annotation panel exists, follow its default
+        export_with_image = True
+        if hasattr(session, "main_window") and session.main_window:
+            if hasattr(session.main_window, "annotation_panel"):
+                # Use current export state from panel defaults if available
+                export_with_image = session.main_window.annotation_panel.default_properties.get('export_with_image', True)
+        
+        roi.export_with_image = export_with_image
+        # -------------------------
+        
+        # Transfer properties
+        roi.properties.update(extra.get("properties", {}))
+        # Ensure thickness is stored
+        roi.properties['thickness'] = thickness
+        
+        qpoints = []
+        for p in points:
+            qpoints.append(QPointF(p[0], p[1]))
+            
+        if shape_type in ["rect", "ellipse", "circle"] and len(qpoints) >= 2:
+            roi.reconstruct_from_points(qpoints[:2], roi_type=roi_type)
+        elif shape_type in ["line", "arrow"] and len(qpoints) >= 2:
+            roi.reconstruct_from_points(qpoints[:2], roi_type=roi_type)
+        elif shape_type == "text" and len(qpoints) >= 1:
+             roi.reconstruct_from_points(qpoints[:1], roi_type=roi_type)
+        else:
+            roi.reconstruct_from_points(qpoints, roi_type=roi_type)
+            
+        if session.channels and measurable and extra.get("compute_stats", True):
+            stats = calculate_intensity_stats(roi, session.channels)
+            roi.stats.update(stats)
+            
+        return roi
+
+
+class BaseDrawTool(AbstractTool):
+    def __init__(self, session: Session, shape_type: str, strategy: DrawStyleStrategy):
+        super().__init__(session)
+        self.shape_type = shape_type
+        self.strategy = strategy
+        self.start_pos = None
+        self.end_pos = None
+        self.points = []
+        self.is_dragging = False
+        self.display_scale = 1.0
+        self.tool_channel_index = -1
+        self.extra_props = {}
+        
+        # Fixed Size Mode
+        self.fixed_size_mode = False
+        self.last_vector = None # Vector from start to end for fixed shapes
+        self.is_moving = False  # If moving a fixed shape
+        self._press_time = 0.0
+        self._drag_threshold = 0.2 # 200ms threshold for short clicks
+
+    def set_fixed_size_mode(self, enabled: bool):
+        self.fixed_size_mode = enabled
+        Logger.info(f"[BaseDrawTool] {self.shape_type} fixed size mode: {enabled}")
+
+    def set_properties(self, props: dict):
+        self.extra_props.update(props)
+    def start_preview(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+        Logger.debug(f"[BaseDrawTool] start_preview shape={self.shape_type} pos={scene_pos} channel={channel_index}")
+        self.start_pos = scene_pos
+        self.tool_channel_index = channel_index
+        self._press_time = time.time()
+        if context:
+            self.display_scale = context.get("display_scale", 1.0)
+            self.current_view = context.get("view")
+
+        if self.shape_type == "text":
+            # Text tool: Show input box immediately on click
+            view = self.current_view if self.current_view else self._get_active_view()
+            if view and hasattr(view, "show_text_input"):
+                initial_text = self.extra_props.get("text", "Text")
+                view.show_text_input(scene_pos, initial_text=initial_text, callback=self._on_text_input_finished)
+                return
+
+        if self.fixed_size_mode and self.last_vector:
+            self.end_pos = self.start_pos + self.last_vector
+            self.is_moving = True
+            self.is_dragging = False
+        else:
+            self.end_pos = scene_pos
+            self.is_dragging = True
+            self.is_moving = False
+
+        self.preview_changed.emit()
+
+    def _on_text_input_finished(self, text: str):
+        """Callback from CanvasView when text input is done."""
+        if text:
+            self.extra_props["text"] = text
+            # For text, end_pos is the same as start_pos
+            self.end_pos = self.start_pos
+            self._commit()
+        
+        # Reset tool state
+        self.start_pos = None
+        self.end_pos = None
+        self.preview_changed.emit()
+
+    def on_mouse_move(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+        if self.shape_type == "text":
+            return # No dragging for text tool in this mode
+        if self.is_moving:
+            # Moving fixed shape
+            self.start_pos = scene_pos
+            if self.last_vector:
+                self.end_pos = self.start_pos + self.last_vector
+            self.preview_changed.emit()
+            return
+
+        if not self.is_dragging:
+            return
+        # Apply constraints for square/circle when Shift is pressed
+        if self.shape_type in ["rect", "ellipse", "circle"] and self.start_pos:
+            end = scene_pos
+            if modifiers & Qt.KeyboardModifier.ShiftModifier:
+                dx = end.x() - self.start_pos.x()
+                dy = end.y() - self.start_pos.y()
+                size = max(abs(dx), abs(dy))
+                end = QPointF(self.start_pos.x() + (size if dx >= 0 else -size),
+                              self.start_pos.y() + (size if dy >= 0 else -size))
+            self.end_pos = end
+        else:
+            self.end_pos = scene_pos
+        self.preview_changed.emit()
+
+    def finish_shape(self, scene_pos: QPointF, modifiers=Qt.KeyboardModifier.NoModifier):
+        if self.is_moving:
+            self.start_pos = scene_pos
+            if self.last_vector:
+                self.end_pos = self.start_pos + self.last_vector
+            self.is_moving = False
+            self._commit()
+            self.preview_changed.emit()
+            return
+
+        if not self.is_dragging:
+            return
+
+        # USER REQUEST: Prevent accidental shape creation from short clicks/drags.
+        # Check duration and distance.
+        duration = time.time() - self._press_time
+        dist = 0.0
+        if self.start_pos:
+            diff = scene_pos - self.start_pos
+            dist = (diff.x()**2 + diff.y()**2)**0.5
+            
+        if duration < self._drag_threshold and dist < 5.0:
+            Logger.info(f"[BaseDrawTool] Click/drag too short (dur={duration:.3f}s, dist={dist:.1f}px). Ignoring shape creation.")
+            self.is_dragging = False
+            self.start_pos = None
+            self.end_pos = None
+            self.preview_changed.emit()
+            # Cleanup preview item
+            if self.preview_item and self.preview_item.scene():
+                try:
+                    self.preview_item.scene().removeItem(self.preview_item)
+                except:
+                    pass
+            self.preview_item = None
+            return
+
+        # Apply final constraints on release
+        if self.shape_type in ["rect", "ellipse", "circle"] and self.start_pos:
+            end = scene_pos
+            if modifiers & Qt.KeyboardModifier.ShiftModifier:
+                dx = end.x() - self.start_pos.x()
+                dy = end.y() - self.start_pos.y()
+                size = max(abs(dx), abs(dy))
+                end = QPointF(self.start_pos.x() + (size if dx >= 0 else -size),
+                              self.start_pos.y() + (size if dy >= 0 else -size))
+            self.end_pos = end
+        else:
+            self.end_pos = scene_pos
+        
+        # Store vector for next fixed size use
+        if self.start_pos and self.end_pos:
+            self.last_vector = self.end_pos - self.start_pos
+
+        self.is_dragging = False
+        self._commit()
+        self.start_pos = None
+        self.end_pos = None
+        self.preview_changed.emit()
+    def get_preview_path(self, scene_pos: QPointF) -> QPainterPath:
+        path = QPainterPath()
+        if self.shape_type in ["rect", "ellipse", "circle"] and self.start_pos and self.end_pos:
+            rect = QRectF(self.start_pos, self.end_pos).normalized()
+            if self.shape_type == "ellipse" or self.shape_type == "circle":
+                if self.shape_type == "circle":
+                    w = rect.width()
+                    h = rect.height()
+                    d = max(w, h)
+                    rect.setWidth(d)
+                    rect.setHeight(d)
+                path.addEllipse(rect)
+            else:
+                path.addRect(rect)
+        elif self.shape_type in ["line", "arrow"] and self.start_pos and self.end_pos:
+            path.moveTo(self.start_pos)
+            path.lineTo(self.end_pos)
+            if self.shape_type == "arrow":
+                try:
+                    import math
+                    dx = self.end_pos.x() - self.start_pos.x()
+                    dy = self.end_pos.y() - self.start_pos.y()
+                    angle = math.atan2(dy, dx)
+                    view = self._get_active_view()
+                    head_size = float(self.extra_props.get("arrow_head_size", 15.0))
+                    if view and hasattr(view, 'display_scale') and view.display_scale > 0:
+                        head_size = head_size / view.display_scale
+                    arrow_angle = math.pi / 6
+                    p1 = QPointF(self.end_pos.x() - head_size * math.cos(angle - arrow_angle),
+                                 self.end_pos.y() - head_size * math.sin(angle - arrow_angle))
+                    p2 = QPointF(self.end_pos.x() - head_size * math.cos(angle + arrow_angle),
+                                 self.end_pos.y() - head_size * math.sin(angle + arrow_angle))
+                    path.moveTo(self.end_pos); path.lineTo(p1)
+                    path.moveTo(self.end_pos); path.lineTo(p2)
+                except Exception as e:
+                    Logger.warning(f"[BaseDrawTool] Arrow preview head failed: {e}")
+        elif self.shape_type == "polygon":
+            if self.start_pos and self.end_pos:
+                pts = [self.start_pos, self.end_pos]
+                path = create_smooth_path_from_points(pts, closed=False)
+        elif self.shape_type == "text" and self.end_pos:
+            # User requested no placeholder box for text
+            pass
+        if self.preview_item:
+            pen = self.strategy.preview_pen(self.shape_type, self.extra_props)
+            brush = self.strategy.preview_brush(self.shape_type, self.extra_props)
+            self.preview_item.setPen(pen)
+            self.preview_item.setBrush(brush)
+            self.preview_item.setPath(path)
+            self.preview_item.setVisible(True)
+        return path
+    def _get_image_points(self, view, scene_points):
+        pts = []
+        for p in scene_points:
+            if hasattr(view, "get_image_coordinates"):
+                ip = view.get_image_coordinates(p)
+            else:
+                ip = p
+            pts.append((ip.x(), ip.y()))
+        return pts
+    def _commit(self):
+        Logger.debug(f"[BaseDrawTool] commit shape={self.shape_type}")
+        view = self._get_active_view()
+        
+        # Determine points based on shape type
+        if self.shape_type in ["rect", "ellipse", "circle"]:
+            if not (self.start_pos and self.end_pos):
+                return
+            pts = self._get_image_points(view, [self.start_pos, self.end_pos])
+        elif self.shape_type in ["line", "arrow"]:
+            if not (self.start_pos and self.end_pos):
+                return
+            pts = self._get_image_points(view, [self.start_pos, self.end_pos])
+        elif self.shape_type == "polygon":
+             pts = self._get_image_points(view, [self.start_pos, self.end_pos])
+        elif self.shape_type == "text":
+            # 支持延迟应用：仅创建占位框，不立即写入文本
+            defer_apply = bool(self.extra_props.get("defer_text_apply", False))
+            text = self.extra_props.get("text")
+            if not defer_apply:
+                if not text:
+                    try:
+                        if hasattr(self.session, "main_window") and hasattr(self.session.main_window, "annotation_panel"):
+                            text = self.session.main_window.annotation_panel.get_current_properties().get("text", "")
+                    except Exception:
+                        text = ""
+                if not text:
+                    default_text = "Text"
+                    try:
+                        if hasattr(self.session, "main_window") and hasattr(self.session.main_window, "annotation_panel"):
+                            default_text = self.session.main_window.annotation_panel.default_properties.get("text", "Text")
+                    except Exception:
+                        pass
+                    text = default_text
+                self.extra_props["text"] = text
+            else:
+                # 延迟应用：不设置 text，保留空，占位框将显示
+                text = ""
+            pts = self._get_image_points(view, [self.end_pos])
+        else:
+            return
+            
+        color = self.extra_props.get("color", "#FFFF00")
+        thickness = int(self.extra_props.get("thickness", 2))
+        
+        extra = self.strategy.default_properties(self.shape_type)
+        extra.update({"channel_index": self.tool_channel_index})
+        extra.update({"properties": self.extra_props})
+        
+        # Always use ROIStyleStrategy (strategy is injected)
+        model = self.strategy.map_to_model(self.session, pts, self.shape_type, color, thickness, extra)
+        
+        if model:
+            self.session.roi_manager.add_roi(model, undoable=True)
+            self.committed.emit(f"Created ROI: {model.label}")
+            
+            # USER REQUEST: Restore focus to view after creation to ensure shortcut responsiveness
+            if view:
+                view.setFocus(Qt.FocusReason.OtherFocusReason)
+            
+        if self.preview_item and self.preview_item.scene():
+            self.preview_item.scene().removeItem(self.preview_item)
+        self.preview_item = None
+
+
+class DrawToolFactory:
+    @staticmethod
+    def create(session: Session, shape_type: str, module: str = "roi"):
+        if shape_type == "polygon":
+            return PolygonTool(session)
+        # Always return ROI strategy
+        strategy = ROIStyleStrategy()
+        return BaseDrawTool(session, shape_type, strategy)
+
+# [弃用说明] 注解模式建议使用 BaseDrawTool('arrow')。本类保留箭头预览逻辑以兼容旧流程。

@@ -1,7 +1,8 @@
 from PySide6.QtWidgets import QWidget, QMenu, QApplication
-from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QPolygonF, QCursor, QAction, QPalette
+from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QPolygonF, QCursor, QAction, QPalette, QPainterPath
 from PySide6.QtCore import Qt, QPointF, Signal
 import numpy as np
+from src.core.language_manager import tr
 
 class HistogramWidget(QWidget):
     """
@@ -13,42 +14,42 @@ class HistogramWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(100)
-        # Allow width to shrink (remove implicit constraints)
         self.setMinimumWidth(0) 
-        # Theme-aware default histogram color
         palette = QApplication.palette()
         self.hist_color = palette.color(QPalette.ColorRole.Mid)
         self.min_val = 0      
         self.max_val = 65535  
-        self.data_max_range = 65535 # The logical maximum value of the x-axis (e.g. image max)
+        self.data_max_range = 65535 
         self.bins = 256
-        self.hist_norm = None # Initialize to None
-        self.log_scale = True # Default to Log scale
+        self.hist_norm = None 
+        self.enhanced_norm = None 
+        self.log_scale = True 
+        self.show_markers = True # New flag to toggle visibility of interactive markers
         
-        # Interaction state
         self.dragging_min = False
         self.dragging_max = False
-        self.drag_tolerance = 5 # pixels
+        self.drag_tolerance = 5 
         
-        # Theme-aware style: Use palette instead of hardcoded white
         self.setAutoFillBackground(True)
-        self.setMouseTracking(True) # Enable mouse tracking for hover effects
+        self.setMouseTracking(True) 
 
     def set_range_max(self, range_max):
         """Sets the logical maximum value for the X-axis (e.g., max pixel value)."""
         self.data_max_range = float(range_max) if range_max > 0 else 65535.0
         self.update()
 
-    def set_data(self, hist_data: np.ndarray, color: str = "#888888"):
+    def set_data(self, hist_data: np.ndarray, color: str = "#888888", enhanced_hist: np.ndarray = None):
         """
         Updates the histogram data.
-        hist_data: array of length 256 (binned counts).
+        hist_data: original array of length 256.
+        enhanced_hist: optional enhanced array of length 256.
         """
         self.hist_data = hist_data
+        self.enhanced_hist = enhanced_hist
         self.hist_color = QColor(color)
         self._update_norm_data()
         self.update()
-        
+
     def set_log_scale(self, enabled: bool):
         """Toggles between Log and Linear scale."""
         self.log_scale = enabled
@@ -57,21 +58,29 @@ class HistogramWidget(QWidget):
 
     def _update_norm_data(self):
         """Recalculates normalized histogram data based on scale mode."""
-        if self.hist_data is not None and self.hist_data.max() > 0:
-            if self.log_scale:
-                # Log Scale: log(1 + x)
-                log_data = np.log1p(self.hist_data)
-                max_log = log_data.max()
-                if max_log > 0:
-                    self.hist_norm = log_data / max_log
-                else:
-                    self.hist_norm = np.zeros_like(log_data)
-            else:
-                # Linear Scale
-                max_val = self.hist_data.max()
-                self.hist_norm = self.hist_data.astype(np.float32) / max_val
+        # 1. Normalize Original
+        if self.hist_data is not None:
+            self.hist_norm = self._normalize_array(self.hist_data)
         else:
             self.hist_norm = None
+            
+        # 2. Normalize Enhanced
+        if self.enhanced_hist is not None:
+            self.enhanced_norm = self._normalize_array(self.enhanced_hist)
+        else:
+            self.enhanced_norm = None
+
+    def _normalize_array(self, data: np.ndarray) -> np.ndarray:
+        if data is None or data.size == 0:
+            return np.zeros(self.bins, dtype=np.float32)
+            
+        if self.log_scale:
+            log_data = np.log1p(data)
+            max_v = log_data.max()
+            return log_data / max_v if max_v > 0 else np.zeros_like(log_data, dtype=np.float32)
+        else:
+            max_v = data.max()
+            return data.astype(np.float32) / max_v if max_v > 0 else np.zeros_like(data, dtype=np.float32)
 
     def set_markers(self, min_val, max_val):
         """Updates min/max markers without recalculating histogram."""
@@ -90,6 +99,8 @@ class HistogramWidget(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if not self.show_markers or self.hist_norm is None:
+                return
             x = event.position().x()
             w = self.width()
             
@@ -111,7 +122,7 @@ class HistogramWidget(QWidget):
         elif event.button() == Qt.RightButton:
              # Context Menu for Log/Linear Scale
              menu = QMenu(self)
-             action_log = QAction("Log Scale", self)
+             action_log = QAction(tr("Log Scale"), self)
              action_log.setCheckable(True)
              action_log.setChecked(self.log_scale)
              action_log.triggered.connect(lambda c: self.set_log_scale(c))
@@ -119,6 +130,8 @@ class HistogramWidget(QWidget):
              menu.exec(event.globalPosition().toPoint())
 
     def mouseMoveEvent(self, event):
+        if not self.show_markers or self.hist_norm is None:
+            return
         x = event.position().x()
         w = self.width()
         
@@ -153,101 +166,100 @@ class HistogramWidget(QWidget):
             self.dragging_max = False
             self.setCursor(Qt.ArrowCursor)
 
+    def set_show_markers(self, show: bool):
+        self.show_markers = show
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        if w < 10 or h < 10:
+            return
+
+        # Background
+        painter.fillRect(self.rect(), Qt.GlobalColor.white)
         
-        palette = QApplication.palette()
-        bg_color = palette.color(QPalette.ColorRole.Base)
-        text_color = palette.color(QPalette.ColorRole.WindowText)
-        
+        # Optional: Subtle border
+        painter.setPen(QPen(QColor(220, 220, 220), 1))
+        painter.drawRect(0, 0, w - 1, h - 1)
+
+        if self.hist_norm is None:
+            return
+
+        # 1. Draw Original Histogram (Gray Background - Always visible as reference)
+        # Use a slightly darker gray for the baseline to be visible on white
+        self._draw_hist_path(painter, self.hist_norm, QColor(200, 200, 200, 100), QColor(180, 180, 180, 150))
+
+        # 2. Draw Enhanced Histogram (Colored Overlay)
+        if self.enhanced_norm is not None:
+            # Use the channel color but make it distinct
+            fill_color = QColor(self.hist_color)
+            fill_color.setAlpha(100) # Increased transparency (was 160)
+            
+            # Draw with a stronger outline to make it pop
+            outline_color = fill_color.darker(130)
+            outline_color.setAlpha(200) # Keep outline relatively visible
+            
+            self._draw_hist_path(painter, self.enhanced_norm, fill_color, outline_color, line_width=1.5)
+        else:
+            # Only draw original in color if no enhanced version exists
+            fill_color = QColor(self.hist_color)
+            fill_color.setAlpha(100)
+            outline_color = fill_color.darker(110)
+            self._draw_hist_path(painter, self.hist_norm, fill_color, outline_color)
+
+        # 3. Draw Markers (Only if enabled)
+        if self.show_markers:
+            self._draw_markers(painter, w, h)
+
+    def _draw_hist_path(self, painter, norm_data, fill_color, outline_color, line_width=1):
+        if norm_data is None or len(norm_data) == 0:
+            return
+            
         w = self.width()
         h = self.height()
         
-        # Draw Background
-        painter.fillRect(0, 0, w, h, bg_color)
+        # Calculate x scale
+        num_bins = len(norm_data)
+        bin_width = w / num_bins if num_bins > 0 else 0
         
-        if self.hist_norm is None:
-            painter.setPen(text_color)
-            painter.drawText(self.rect(), Qt.AlignCenter, "No Data")
-            return
+        path = QPainterPath()
+        path.moveTo(0, h)
 
-        # Draw Histogram
-        # Map 0-255 bins to 0-w width
-        bin_width = w / self.bins
-        
-        path = QPolygonF()
-        path.append(QPointF(0, h)) # Start bottom-left
-        
-        for i, val in enumerate(self.hist_norm):
+        for i, val in enumerate(norm_data):
             x = i * bin_width
-            y = h - (val * h) # Invert y (0 is top)
-            path.append(QPointF(x, y))
-            path.append(QPointF(x + bin_width, y))
+            # Clamp y to [0, h] to prevent drawing outside or NaN issues
+            y = h - (float(val) * h)
+            y = max(0, min(h, y))
             
-        path.append(QPointF(w, h)) # End bottom-right
-        
-        # Smart visibility adjustment based on background brightness
-        fill_color = QColor(self.hist_color)
-        is_dark_bg = bg_color.lightness() < 128
-        
-        if is_dark_bg:
-            # On dark background, very dark colors should be lightened
-            if fill_color.lightness() < 50:
-                fill_color = fill_color.lighter(150)
-        else:
-            # On light background, very light colors should be darkened
-            if fill_color.lightness() > 220:
-                fill_color = QColor("#888888")
-            
-        fill_color.setAlpha(200) # Slightly transparent
+            # Use lineTo for a step-like histogram look or smooth look
+            # Here we use a direct line to each point for simplicity and speed
+            path.lineTo(x, y)
+            path.lineTo(x + bin_width, y)
+
+        path.lineTo(w, h)
+        path.closeSubpath()
+
         painter.setBrush(QBrush(fill_color))
+        painter.setPen(QPen(outline_color, line_width))
+        painter.drawPath(path)
+
+    def _draw_markers(self, painter, w, h):
+        # Use a high-contrast color for markers on white background
+        marker_color = QColor(60, 60, 60) # Dark gray
         
-        # Add Outline for visibility
-        # Create a darker version of the channel color for the outline
-        outline_color = QColor(self.hist_color)
-        if outline_color.lightness() > 150:
-             outline_color = outline_color.darker(150) # Make it darker
-        
-        # Fallback if still too light (Use Palette Mid)
-        if outline_color.lightness() > 200:
-            outline_color = QApplication.palette().color(QPalette.ColorRole.Mid)
-            
-        pen = QPen(outline_color)
-        pen.setWidth(1)
-        painter.setPen(pen)
-        
-        painter.drawPolygon(path)
-        
-        # Draw Markers (Min/Max)
-        # Map 0-data_max_range to 0-w
-        # Clamp marker positions to widget width
         x_min = (self.min_val / self.data_max_range) * w
         x_max = (self.max_val / self.data_max_range) * w
-        
-        # Clamp for display
         x_min = max(0, min(w, x_min))
         x_max = max(0, min(w, x_max))
         
-        # Draw active range highlight (Optional: darken outside or highlight inside?)
-        # Let's highlight inside with very subtle color or just rely on markers
-        
-        # Draw Lines (Distinguish Min and Max)
-        highlight_color = palette.color(QPalette.ColorRole.Highlight)
-        
-        # Min Line
-        pen_min = QPen(highlight_color)
-        pen_min.setWidth(2)
-        pen_min.setStyle(Qt.PenStyle.SolidLine)
-        painter.setPen(pen_min)
+        # Draw dotted vertical lines for markers
+        pen = QPen(marker_color, 1.5, Qt.PenStyle.DashLine)
+        painter.setPen(pen)
         painter.drawLine(int(x_min), 0, int(x_min), h)
-        
-        # Max Line (Slightly different or same with different style?)
-        # For now, use the same highlight color but maybe a different dash pattern or just same
-        pen_max = QPen(highlight_color)
-        pen_max.setWidth(2)
-        pen_max.setStyle(Qt.PenStyle.SolidLine)
-        painter.setPen(pen_max)
         painter.drawLine(int(x_max), 0, int(x_max), h)
         
         # Draw Min/Max Labels
@@ -256,8 +268,7 @@ class HistogramWidget(QWidget):
         font.setBold(True)
         painter.setFont(font)
         
-        # Min Label
-        painter.setPen(highlight_color)
+        painter.setPen(marker_color)
         # Check if near left edge
         if x_min < 25:
             align_flag = Qt.AlignLeft
@@ -268,7 +279,6 @@ class HistogramWidget(QWidget):
         painter.drawText(pos_x, 15, "Min")
 
         # Max Label
-        painter.setPen(highlight_color)
         # Check if near right edge
         if x_max > w - 25:
             align_flag = Qt.AlignRight

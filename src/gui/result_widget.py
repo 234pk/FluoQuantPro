@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QHeaderView, QMenu, QPushButton)
+from pathlib import Path
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QHeaderView, QMenu, QPushButton)
 from PySide6.QtCore import Qt
 from src.core.language_manager import tr, LanguageManager
 from src.core.logger import Logger
@@ -88,6 +89,8 @@ class MeasurementResultTree(QTreeWidget):
         if not file_path:
             return
             
+        target_path = Path(file_path)
+        
         try:
             data = self.get_all_data()
             if not data:
@@ -111,7 +114,7 @@ class MeasurementResultTree(QTreeWidget):
                 if k not in keys:
                     keys.append(k)
             
-            with open(file_path, 'w', newline='', encoding='utf-8-sig') as f:
+            with target_path.open('w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.DictWriter(f, fieldnames=keys)
                 writer.writeheader()
                 writer.writerows(data)
@@ -353,15 +356,31 @@ class MeasurementResultTree(QTreeWidget):
             font.setBold(True)
             sample_item.setFont(0, font)
 
+        accumulate = settings.get('Accumulate', True)
+
         # Add Count Summary if provided
         if count_summary:
             total_counts = sum(count_summary.values())
-            summary_item = QTreeWidgetItem(sample_item)
+            
+            # Find existing summary if not accumulating
+            summary_item = None
+            if not accumulate:
+                for i in range(sample_item.childCount()):
+                    item = sample_item.child(i)
+                    if item.data(0, Qt.UserRole) == "summary":
+                        summary_item = item
+                        while summary_item.childCount() > 0:
+                            summary_item.removeChild(summary_item.child(0))
+                        break
+            
+            if not summary_item:
+                summary_item = QTreeWidgetItem(sample_item)
+                summary_item.setData(0, Qt.UserRole, "summary") # Special marker
+                font = summary_item.font(0)
+                font.setItalic(True)
+                summary_item.setFont(0, font)
+
             summary_item.setText(0, tr("Point Summary (Total: {0})").format(total_counts))
-            summary_item.setData(0, Qt.UserRole, "summary") # Special marker
-            font = summary_item.font(0)
-            font.setItalic(True)
-            summary_item.setFont(0, font)
             
             for ch_name, count in sorted(count_summary.items()):
                 ch_count_item = QTreeWidgetItem(summary_item)
@@ -382,13 +401,23 @@ class MeasurementResultTree(QTreeWidget):
             roi_id = data.get('ROI_ID', '')
             
             # Upsert Logic
-            if roi_id in existing_roi_items:
+            if not accumulate and roi_id in existing_roi_items:
                 roi_item = existing_roi_items[roi_id]
                 # Clear existing channel children to rebuild
                 while roi_item.childCount() > 0:
                     roi_item.removeChild(roi_item.child(0))
             else:
                 roi_item = QTreeWidgetItem(sample_item)
+                # If accumulating and already exists, add a marker
+                if accumulate and roi_id in existing_roi_items:
+                    # Find how many measurements exist for this ROI to add a counter
+                    count = 0
+                    for i in range(sample_item.childCount()):
+                        item = sample_item.child(i)
+                        if item.data(0, Qt.UserRole) == roi_id:
+                            count += 1
+                    if count > 1:
+                        roi_label = f"{roi_label} ({count})"
             
             roi_item.setText(0, f"{roi_label}")
             roi_item.setData(0, Qt.UserRole, roi_id)
@@ -513,13 +542,7 @@ class MeasurementResultTree(QTreeWidget):
             part_item.setText(0, tr("Non-Overlapping (Union-Intersection)"))
             part_item.setText(self.columns_map['Area'], f"{data['Non_Common_Area']:.2f}")
 
-        for key, val in data.items():
-            if key.endswith("_Only_Area"):
-                label = key.replace("_Only_Area", "")
-                part_item = QTreeWidgetItem(roi_item)
-                part_item.setText(0, f"{label} ({tr('Only')})")
-                part_item.setText(self.columns_map['Area'], f"{val:.2f}")
-
+        # 1. Collect and add Intersection stats
         channel_stats = {}
         for key, val in data.items():
             if key.startswith("Intersection (") and ")_" in key:
@@ -536,6 +559,41 @@ class MeasurementResultTree(QTreeWidget):
             for metric, val in stats.items():
                 if metric in self.columns_map:
                     ch_item.setText(self.columns_map[metric], f"{val:.2f}")
+
+        # 2. Collect and add "Only" stats for each ROI
+        only_parts = {} # label -> part_item
+        for key, val in data.items():
+            if key.endswith("_Only_Area"):
+                label = key.replace("_Only_Area", "")
+                part_item = QTreeWidgetItem(roi_item)
+                part_item.setText(0, f"{label} ({tr('Only')})")
+                part_item.setText(self.columns_map['Area'], f"{val:.2f}")
+                only_parts[label] = part_item
+
+        only_channel_stats = {} # label -> ch_name -> metric -> val
+        for key, val in data.items():
+            if "_Only (" in key and ")_" in key:
+                prefix, metric = key.rsplit('_', 1)
+                # Key format: "{label}_Only ({ch_name})_{metric}"
+                label_part, ch_part = prefix.split("_Only (", 1)
+                ch_name = ch_part[:-1]
+                
+                if label_part not in only_channel_stats:
+                    only_channel_stats[label_part] = {}
+                if ch_name not in only_channel_stats[label_part]:
+                    only_channel_stats[label_part][ch_name] = {}
+                only_channel_stats[label_part][ch_name][metric] = val
+
+        for label, ch_dict in only_channel_stats.items():
+            if label in only_parts:
+                parent_item = only_parts[label]
+                for ch_name in sorted(ch_dict.keys()):
+                    ch_item = QTreeWidgetItem(parent_item)
+                    ch_item.setText(0, ch_name)
+                    stats = ch_dict[ch_name]
+                    for metric, val in stats.items():
+                        if metric in self.columns_map:
+                            ch_item.setText(self.columns_map[metric], f"{val:.2f}")
 
         if 'Metrics_Mean' in data:
             roi_item.setText(self.columns_map['Mean'], f"IoU: {data['Metrics_Mean']:.3f}")
@@ -594,14 +652,28 @@ class MeasurementResultWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setContentsMargins(4, 4, 4, 4)
+        self.layout.setSpacing(4)
         
         self.tree = MeasurementResultTree()
-        self.layout.addWidget(self.tree)
+        self.layout.addWidget(self.tree, 1) # Give tree stretch factor 1
+        
+        # Bottom Buttons
+        btn_layout = QHBoxLayout()
+        
+        self.btn_export = QPushButton(tr("Export Results (CSV)..."))
+        self.btn_export.clicked.connect(self.export_results)
+        btn_layout.addWidget(self.btn_export)
         
         self.btn_clear = QPushButton(tr("Clear All Results"))
         self.btn_clear.clicked.connect(self.clear_results)
-        self.layout.addWidget(self.btn_clear)
+        btn_layout.addWidget(self.btn_clear)
+        
+        self.layout.addLayout(btn_layout)
+        
+    def export_results(self):
+        """Exports the current tree structure to a CSV file."""
+        self.tree.export_csv_data()
         
     def clear(self):
         """Clears all items from the tree."""

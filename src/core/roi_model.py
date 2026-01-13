@@ -66,6 +66,10 @@ class ROI:
     line_points: Optional[tuple] = None # (start_qpointf, end_qpointf)
     is_dragging: bool = False # Temporary state for performance optimization
     
+    # Unified Model Fields
+    measurable: bool = True # Whether this ROI should be included in measurements/statistics
+    export_with_image: bool = True # Whether this ROI should be rendered when exporting images
+    
     # --- Scientific Rigor: Sub-pixel Accuracy ---
     # Store raw points for resolution-independent reconstruction
     points: List[QPointF] = field(default_factory=list)
@@ -78,7 +82,7 @@ class ROI:
 
     def clone(self):
         """Creates a deep copy of the ROI."""
-        return ROI(
+        new_roi = ROI(
             id=self.id,
             label=self.label,
             path=QPainterPath(self.path),
@@ -92,6 +96,9 @@ class ROI:
             stats=self.stats.copy(),
             properties=self.properties.copy()
         )
+        new_roi.measurable = self.measurable
+        new_roi.export_with_image = self.export_with_image
+        return new_roi
 
     def get_full_res_roi(self, display_scale: float) -> 'ROI':
         """
@@ -212,6 +219,26 @@ class ROI:
                 path.lineTo(x, y + r)
             else:
                 path.addEllipse(center, r, r)
+        elif self.roi_type == "text" and len(points) >= 1:
+            # Text ROI: Use points[0] as anchor
+            # For selection purposes, we create a small rect around the anchor
+            # The actual text rendering handles the rest
+            anchor = points[0]
+            # Create a reasonable hit box for the text anchor
+            # If we have font size in properties, use it to estimate
+            font_size = self.properties.get('font_size', 12.0)
+            text_len = len(self.properties.get('text', 'Text'))
+            est_width = text_len * font_size * 0.6
+            est_height = font_size * 1.5
+            
+            rect = QRectF(anchor.x(), anchor.y(), est_width, est_height)
+            path.addRect(rect)
+        elif self.roi_type == "arrow" and len(points) >= 2:
+            # Arrow ROI: Main path is the line
+            path.moveTo(points[0])
+            path.lineTo(points[1])
+            self.line_points = (points[0], points[1])
+            # Note: Arrow head is purely visual in UnifiedGraphicsItem
         else:
             # Default fallback (e.g. for wand which generates path directly)
             Logger.debug(f"[ROI.reconstruct_from_points] Using default fallback for type: {self.roi_type}")
@@ -223,30 +250,36 @@ class ROI:
     @classmethod
     def from_dict(cls, data):
         """Deserializes ROI from a dictionary (JSON)."""
-        from PySide6.QtGui import QPainterPath
-        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QPainterPath, QPolygonF, QColor
+        from PySide6.QtCore import QPointF, QRectF
         
-        # Reconstruct QPainterPath
+        roi_type = data.get("roi_type", "general")
+        points = [QPointF(pt[0], pt[1]) for pt in data.get("points", [])]
+        
+        # 1. Reconstruct Path
         path = QPainterPath()
-        shape_type = data.get("shape_type", "rect")
+        polygons_data = data.get("polygons", [])
         
-        # Simplified reconstruction: Assumes rectangle or ellipse or polygon
-        # Ideally, we should store control points.
-        # But serialization usually stores bounding rect for simple shapes.
-        # For complex paths, we need a better serializer.
-        
-        # Current implementation in serialization (see serialize_rois below)
-        # saves bounds. Let's use bounds to reconstruct.
-        # This is LOSS for freehand polygons! 
-        # TODO: Implement full path serialization.
-        
-        bounds = data.get("bounds", [0, 0, 10, 10]) # x, y, w, h
-        x, y, w, h = bounds
-        
-        if shape_type == "ellipse":
-            path.addEllipse(x, y, w, h)
+        if polygons_data:
+            # Restore complex paths (Wand, etc.)
+            for poly_pts in polygons_data:
+                qpoly = QPolygonF([QPointF(pt[0], pt[1]) for pt in poly_pts])
+                path.addPolygon(qpoly)
+        elif points:
+            # Fallback to points reconstruction
+            qpoly = QPolygonF(points)
+            path.addPolygon(qpoly)
+            if roi_type not in ["line", "line_scan", "arrow"]:
+                path.closeSubpath()
         else:
-            path.addRect(x, y, w, h) # Default to rect
+            # Fallback to legacy bounds if nothing else exists
+            bounds = data.get("bounds", [0, 0, 10, 10]) # x, y, w, h
+            x, y, w, h = bounds
+            shape_type = data.get("shape_type", "rect")
+            if shape_type == "ellipse":
+                path.addEllipse(x, y, w, h)
+            else:
+                path.addRect(x, y, w, h)
             
         roi = cls(
             id=data.get("id", str(uuid.uuid4())),
@@ -256,9 +289,22 @@ class ROI:
             channel_index=data.get("channel_index", -1),
             visible=data.get("visible", True),
             selected=data.get("selected", False),
+            roi_type=roi_type,
+            points=points,
             stats=data.get("stats", {}),
             properties=data.get("properties", {})
         )
+        roi.measurable = data.get("measurable", True)
+        roi.export_with_image = data.get("export_with_image", True)
+        
+        if "line_points" in data:
+            lp = data["line_points"]
+            roi.line_points = (QPointF(lp[0][0], lp[0][1]), QPointF(lp[1][0], lp[1][1]))
+            
+        # Final reconstruction for specialized types to ensure geometry consistency
+        if roi_type in ["rectangle", "ellipse", "arrow", "line", "line_scan", "point", "text"]:
+            roi.reconstruct_from_points(points)
+            
         return roi
 
 class AddRoiCommand(QUndoCommand):
@@ -412,31 +458,31 @@ class RoiManager(QObject):
                 self._remove_roi_internal(rid)
     
     def serialize_rois(self) -> List[dict]:
-        """Serializes all ROIs to a list of dicts."""
-        from PySide6.QtGui import QPolygonF
+        """Serializes all ROIs to a list of dicts using full-resolution coordinates."""
         serialized = []
         for roi in self._rois.values():
-            # Convert Path to Polygons
-            polygons = roi.path.toSubpathPolygons()
-            points = []
-            if polygons:
-                # Store as list of lists of [x, y]
-                # Assuming single polygon for now, or handle multi-path
-                # Just take the first one or merge?
-                # For simplicity, store all points of the first subpath
-                # In complex cases (donut), we might need more complex serialization
-                poly = polygons[0]
-                points = [[pt.x(), pt.y()] for pt in poly]
+            # 1. Convert path to subpath polygons to preserve complex shapes (Magic Wand)
+            polygons_data = []
+            for poly in roi.path.toSubpathPolygons():
+                polygons_data.append([[pt.x(), pt.y()] for pt in poly])
+            
+            # 2. Main points for reconstruction (if available)
+            points_data = [[pt.x(), pt.y()] for pt in roi.points]
             
             data = {
                 "id": roi.id,
                 "label": roi.label,
                 "color": roi.color.name(), # Hex
-                "points": points,
-                "visible": roi.visible,
                 "roi_type": roi.roi_type,
-                "properties": roi.properties
+                "points": points_data,
+                "polygons": polygons_data, # Full path data
+                "visible": roi.visible,
+                "measurable": roi.measurable,
+                "export_with_image": roi.export_with_image,
+                "properties": roi.properties,
+                "stats": roi.stats
             }
+            
             if roi.line_points:
                 p1, p2 = roi.line_points
                 data["line_points"] = [[p1.x(), p1.y()], [p2.x(), p2.y()]]
@@ -446,34 +492,14 @@ class RoiManager(QObject):
 
     def deserialize_rois(self, data_list: List[dict]):
         """Restores ROIs from a list of dicts."""
-        from PySide6.QtGui import QPolygonF, QPainterPath
-        from PySide6.QtCore import QPointF
-        
         self.clear()
-        
         for data in data_list:
-            points = data.get("points", [])
-            if not points: continue
-            
-            path = QPainterPath()
-            poly = QPolygonF([QPointF(x, y) for x, y in points])
-            path.addPolygon(poly)
-            path.closeSubpath() # Ensure closed
-            
-            roi = ROI(
-                id=data.get("id", str(uuid.uuid4())),
-                label=data.get("label", "ROI"),
-                path=path,
-                color=QColor(data.get("color", "#FF0000")),
-                visible=data.get("visible", True),
-                roi_type=data.get("roi_type", "general")
-            )
-            
-            lp = data.get("line_points")
-            if lp and len(lp) == 2:
-                roi.line_points = (QPointF(lp[0][0], lp[0][1]), QPointF(lp[1][0], lp[1][1]))
-            
-            self._add_roi_internal(roi)
+            try:
+                roi = ROI.from_dict(data)
+                self._add_roi_internal(roi)
+            except Exception as e:
+                from src.core.logger import Logger
+                Logger.error(f"Failed to deserialize ROI: {e}")
 
     def select_all(self):
         """Selects all ROIs."""
@@ -554,23 +580,14 @@ class RoiManager(QObject):
         1. A dict of {roi_id: ROI_Object} (used by Undo/Redo within session)
         2. A list of dicts (serialized data) (used by Project Loading / Scene Switching)
         """
-        # 1. Clear current
-        current_ids = list(self._rois.keys())
-        for roi_id in current_ids:
-            self._remove_roi_internal(roi_id)
-            
-        # 2. Add new
-        if isinstance(rois, dict):
-             # Dict of ROI objects (Undo Stack)
-             for roi in rois.values():
+        if isinstance(rois, list):
+            # List of Serialized Dicts (Scene Data)
+            self.deserialize_rois(rois)
+        elif isinstance(rois, dict):
+            # Dict of ROI objects (Undo Stack)
+            self.clear()
+            for roi in rois.values():
                 self._add_roi_internal(roi)
-        elif isinstance(rois, list):
-             # List of Serialized Dicts (Scene Data)
-             for roi_data in rois:
-                 if isinstance(roi_data, dict):
-                     # Deserialize
-                     try:
-                         roi = ROI.from_dict(roi_data)
-                         self._add_roi_internal(roi)
-                     except Exception as e:
-                         print(f"Failed to restore ROI: {e}")
+        else:
+            from src.core.logger import Logger
+            Logger.warning(f"[RoiManager.set_rois] Unknown input type: {type(rois)}")

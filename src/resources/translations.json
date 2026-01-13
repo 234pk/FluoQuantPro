@@ -29,6 +29,363 @@
     "Select Language:": {
         "zh": "选择语言:"
     },
+    "English": {
+        "zh": "英文"
+    },
+    "Loading...": {
+        "zh": "正在加载..."
+    },
+    "Mode: Magic Wand (Click to Auto-Select, Drag horizontally to adjust tolerance)": {
+        "zh": "模式：魔棒工具（点击自动选择，水平拖动调整容差）"
+    },
+    "Mode: Polygon Lasso (Left Click to Add, Right Click to Finish)": {
+        "zh": "模式：多边形套索（左键点击添加点，右键点击完成）"
+    },
+    "Mode: Rectangle Selection (Drag to Draw)": {
+        "zh": "模式：矩形选择（拖动绘制）"
+    },
+    "Mode: Ellipse Selection (Drag to Draw)": {
+        "zh": "模式：椭圆选择（拖动绘制）"
+    },
+    "Mode: Point Counter (Click to count spots in current channel or merge view)": {
+        "zh": "模式：计数工具（在当前通道或合并视图中点击计数）"
+    },
+    "Mode: Line Scan (Drag to Draw Line for Colocalization)": {
+        "zh": "模式：线扫描（拖动绘制线条进行共定位分析）"
+    },
+    "Mode: Batch Select (Drag to select multiple items)": {
+        "zh": "模式：批量选择（拖动选择多个项目）"
+    },
+    "Mode: Pan/Hand (Drag to Move View/ROI)": {
+        "zh": "模式：平移/抓手（拖动移动视图/ROI）"
+    },
+    "Mode: View/Pan": {
+        "zh": "模式：视图/平移"
+    },
+    "Switch to Freehand Mode": {
+        "zh": "切换到自由手绘模式"
+    },
+    "Switch to Polygon Mode": {
+        "zh": "切换到多边形模式"
+    },
+    "Freehand": {
+        "zh": "自由手绘"
+    },
+    "Polygon": {
+        "zh": "多边形"
+    },
+    "Keep Largest Only": {
+        "zh": "仅保留最大区域"
+    },
+    "Only keep the largest connected region in the selection": {
+        "zh": "仅保留选区中最大的连通区域"
+    },
+    "Total: 0 Puncta": {
+        "zh": "总计: 0 个点"
+    },
+    "Channel/Category": {
+        "zh": "通道/类别"
+    },
+    "Count": {
+        "zh": "计数"
+    },
+    "%": {
+        "zh": "%"
+    },
+    "Reset Counts": {
+        "zh": "重置计数"
+    },
+    "Categories...": {
+        "zh": "类别设置..."
+    },
+    "Manage custom point categories": {
+        "zh": "管理自定义点类别"
+    },
+    "Current Category:": {
+        "zh": "当前类别:"
+    },
+    "Puncta": {
+        "zh": "点"
+    },
+    "Cells": {
+        "zh": "细胞"
+    },
+    "Nuclei": {
+        "zh": "细胞核"
+    },
+    "Preferences": {
+        "zh": "偏好设置"
+    },
+    "Performance": {
+        "zh": "性能"
+    },
+    "Select channels to analyze": {
+        "zh": "选择通道进行分析"
+    },
+    "Distance (pixels)": {
+        "zh": "距离 (像素)"
+    },
+    "Intensity (%)": {
+        "zh": "强度 (%)"
+    },
+    "Intensity (Raw)": {
+        "zh": "强度 (原始值)"
+    },
+    "Distance in Pixels:": {
+        "zh": "像素距离:"
+    },
+    "Known Distance:": {
+        "zh": "已知距离:"
+    },
+    "Unit of Length:": {
+        "zh": "长度单位:"
+    },
+    "Current Scale:": {
+        "zh": "当前比例尺:"
+    },
+    "New Scale: {0:.4f} {1}/px": {
+        "zh": "新比例尺: {0:.4f} {1}/px"
+    },
+    "Draw a line to calculate scale": {
+        "zh": "画一条线以计算比例尺"
+    },
+    "Set Scale": {
+        "zh": "设置比例尺"
+    },
+    "Red Channel:": {
+        "zh": "红色通道:"
+    },
+    "Green Channel:": {
+        "zh": "绿色通道:"
+    },
+    "Blue Channel:": {
+        "zh": "蓝色通道:"
+    },
+    "Assign Fluorophores": {
+        "zh": "分配荧光团"
+    },
+    "Assign fluorophores for RGB Merge image:\n<b>{0}</b>": {
+        "zh": "为 RGB 合并图像分配荧光团：\n<b>{0}</b>"
+    },
+    "<None>": {
+        "zh": "<无>"
+    },
+    "Other": {
+        "zh": "其他"
+    },
+    "Export Format": {
+        "zh": "导出格式"
+    },
+    "Min (Black Point)": {
+        "zh": "最小值 (黑点)"
+    },
+    "Max (White Point)": {
+        "zh": "最大值 (白点)"
+    },
+    "Gamma": {
+        "zh": "Gamma"
+    },
+    "Reset brightness/contrast to default": {
+        "zh": "将亮度/对比度重置为默认值"
+    },
+    "Basic Adjustments": {
+        "zh": "基础调节"
+    },
+    "Graphic Annotations": {
+        "zh": "图形标注"
+    },
+    "Show Annotations": {
+        "zh": "显示标注"
+    },
+    "Clear All Annotations": {
+        "zh": "清除所有标注"
+    },
+    "Manage Annotations:": {
+        "zh": "管理标注:"
+    },
+    "Total Annotations: {0}": {
+        "zh": "总计标注: {0}"
+    },
+    "Properties": {
+        "zh": "属性"
+    },
+    "Color:": {
+        "zh": "颜色:"
+    },
+    "Thick:": {
+        "zh": "线宽:"
+    },
+    "Style:": {
+        "zh": "样式:"
+    },
+    "Solid": {
+        "zh": "实线"
+    },
+    "Dashed": {
+        "zh": "虚线"
+    },
+    "Size:": {
+        "zh": "大小:"
+    },
+    "Measurable:": {
+        "zh": "可测量:"
+    },
+    "Export:": {
+        "zh": "导出:"
+    },
+    "Dash Len:": {
+        "zh": "虚线长度:"
+    },
+    "Text:": {
+        "zh": "文本:"
+    },
+    "Enter text": {
+        "zh": "输入文本"
+    },
+    "Apply": {
+        "zh": "Apply"
+    },
+    "Apply text to selected annotation": {
+        "zh": "将文本应用到选中的标注"
+    },
+    "Font:": {
+        "zh": "字体:"
+    },
+    "Align Left": {
+        "zh": "左对齐"
+    },
+    "Align Center": {
+        "zh": "居中对齐"
+    },
+    "Align Right": {
+        "zh": "右对齐"
+    },
+    "Smooth Curve (Catmull-Rom)": {
+        "zh": "平滑曲线 (Catmull-Rom)"
+    },
+    "Arrow Tool": {
+        "zh": "箭头工具"
+    },
+    "Text Tool": {
+        "zh": "文本工具"
+    },
+    "Scale Bar": {
+        "zh": "比例尺"
+    },
+    "Enable": {
+        "zh": "启用"
+    },
+    "Scope:": {
+        "zh": "显微镜:"
+    },
+    "Custom": {
+        "zh": "自定义"
+    },
+    "Obj:": {
+        "zh": "物镜:"
+    },
+    "Px:": {
+        "zh": "像素:"
+    },
+    "Len:": {
+        "zh": "长度:"
+    },
+    "Pos:": {
+        "zh": "位置:"
+    },
+    "Bottom Right": {
+        "zh": "右下角"
+    },
+    "Bottom Left": {
+        "zh": "左下角"
+    },
+    "Top Right": {
+        "zh": "右上角"
+    },
+    "Top Left": {
+        "zh": "左上角"
+    },
+    "Show Label": {
+        "zh": "显示标签"
+    },
+    "Export Line Scan Data": {
+        "zh": "导出线扫描数据"
+    },
+    "Data Preview (First 5 Rows)": {
+        "zh": "数据预览 (前 5 行)"
+    },
+    "Cancel": {
+        "zh": "Cancel"
+    },
+    "Export": {
+        "zh": "导出"
+    },
+    "Distance (px)": {
+        "zh": "距离 (px)"
+    },
+    "Click here then draw a line on the image to see intensity profiles": {
+        "zh": "点击此处，然后在图像上画一条线以查看强度分布"
+    },
+    "Clear current line and plot": {
+        "zh": "清除当前线条和图表"
+    },
+    "Show Analysis Guide": {
+        "zh": "显示分析指南"
+    },
+    "Global Analysis": {
+        "zh": "全局分析"
+    },
+    "Calculate Pearson's Correlation (PCC) and Manders' Coefficients (M1/M2) for the entire image.": {
+        "zh": "计算整个图像的 Pearson 相关系数 (PCC) 和 Manders 系数 (M1/M2)。"
+    },
+    "Export Data": {
+        "zh": "导出数据"
+    },
+    "Normalize": {
+        "zh": "归一化"
+    },
+    "BG Sub": {
+        "zh": "背景扣除"
+    },
+    "Global Thresholds:": {
+        "zh": "全局阈值:"
+    },
+    "Pearson r: --": {
+        "zh": "Pearson 相关系数: --"
+    },
+    "Saved Line Scans": {
+        "zh": "已保存的线扫描"
+    },
+    "Label": {
+        "zh": "标签"
+    },
+    "Length": {
+        "zh": "长度"
+    },
+    "Colocalization Guide": {
+        "zh": "共定位分析指南"
+    },
+    "<h3>Colocalization Analysis Guide</h3><p><b>Pearson's Correlation Coefficient (PCC):</b><br>Measures the linear correlation between two channels. Range: -1 to +1.<br><i>+1 = Perfect correlation, 0 = No correlation, -1 = Anti-correlation.</i></p><p><b>Manders' Coefficients (M1 & M2):</b><br>Measures the fraction of signal overlap above threshold.<br><i>M1: Fraction of Ch1 overlapping with Ch2.</i><br><i>M2: Fraction of Ch2 overlapping with Ch1.</i><br>Range: 0 to 1.</p><p><b>Thresholds (t1, t2):</b><br>Intensity values below these thresholds are ignored (treated as background) for Manders' calculation. PCC is independent of thresholds (unless background subtracted).</p>": {
+        "zh": "<h3>共定位分析指南</h3><p><b>Pearson 相关系数 (PCC):</b><br>衡量两个通道之间的线性相关性。范围：-1 到 +1。<br><i>+1 = 完全正相关，0 = 不相关，-1 = 完全负相关。</i></p><p><b>Manders 系数 (M1 和 M2):</b><br>衡量阈值以上信号重叠的比例。<br><i>M1: 通道 1 与通道 2 重叠的比例。</i><br><i>M2: 通道 2 与通道 1 重叠的比例。</i><br>范围：0 到 1。</p><p><b>阈值 (t1, t2):</b><br>在计算 Manders 系数时，低于这些阈值的强度值将被忽略（视为背景）。PCC 与阈值无关（除非扣除了背景）。</p>"
+    },
+    "Global Results ({0} vs {1}):": {
+        "zh": "全局分析结果 ({0} vs {1}):"
+    },
+    "Pearson's (PCC): {0:.4f}": {
+        "zh": "Pearson 相关系数 (PCC): {0:.4f}"
+    },
+    "Mander's M1 (Ch1 in Ch2): {0:.4f}": {
+        "zh": "Mander's M1 (通道1在通道2中): {0:.4f}"
+    },
+    "Mander's M2 (Ch2 in Ch1): {0:.4f}": {
+        "zh": "Mander's M2 (通道2在通道1中): {0:.4f}"
+    },
+    "Balanced": {
+        "zh": "平衡"
+    },
+    "High Quality": {
+        "zh": "高质量"
+    },
     "General": {
         "zh": "常规"
     },
@@ -40,12 +397,6 @@
     },
     "Measurement": {
         "zh": "测量"
-    },
-    "Export": {
-        "zh": "导出"
-    },
-    "Preferences": {
-        "zh": "首选项"
     },
     "Exit": {
         "zh": "退出"
@@ -120,10 +471,10 @@
         "zh": "标注"
     },
     "Undo": {
-        "zh": "撤销"
+        "zh": "Undo"
     },
     "Redo": {
-        "zh": "重做"
+        "zh": "Redo"
     },
     "Clear ROIs": {
         "zh": "清除选区"
@@ -154,9 +505,6 @@
     },
     "Analysis": {
         "zh": "分析"
-    },
-    "Export": {
-        "zh": "导出"
     },
     "Point Size:": {
         "zh": "点大小:"
@@ -221,7 +569,6 @@
     "Load Error": {
         "zh": "加载错误"
     },
-
     "No project.json found in selected folder.": {
         "zh": "选定文件夹中未找到 project.json。"
     },
@@ -375,6 +722,231 @@
     "Select Export Folder": {
         "zh": "选择导出文件夹"
     },
+    "Signal Range": {
+        "zh": "亮度范围"
+    },
+    "Background Suppression": {
+        "zh": "背景清除"
+    },
+    "Local Contrast": {
+        "zh": "结构突出"
+    },
+    "Noise Smoothing": {
+        "zh": "噪声平滑"
+    },
+    "Display Gamma": {
+        "zh": "显示亮度"
+    },
+    "Lock enhancement parameters for all images (freeze auto-calculation)": {
+        "zh": "锁定所有图像的增强参数（冻结自动计算）"
+    },
+    "Set to Recommended Maximum Value": {
+        "zh": "设置为推荐的最大值"
+    },
+    "Apply current enhancement parameters": {
+        "zh": "应用当前增强参数"
+    },
+    "Set {0} %": {
+        "zh": "设置 {0} %"
+    },
+    "Percentage ({0} to {1}):": {
+        "zh": "百分比 ({0} 到 {1}):"
+    },
+    "Content Selection": {
+        "zh": "内容选择"
+    },
+    "Export Single Channels": {
+        "zh": "导出单个通道"
+    },
+    "If checked, individual image files will be generated for each channel (e.g., DAPI, GFP).": {
+        "zh": "如果勾选，将为每个通道生成单独的图像文件（例如 DAPI、GFP）。"
+    },
+    "Generates separate files for each channel.": {
+        "zh": "为每个通道生成单独的文件。"
+    },
+    "Export Merge Image (Composite)": {
+        "zh": "导出合并图像（复合图）"
+    },
+    "If checked, a combined multi-channel image will be generated.": {
+        "zh": "如果勾选，将生成一张合并的多通道图像。"
+    },
+    "Generates a single composite image of all visible channels.": {
+        "zh": "生成一张包含所有可见通道的复合图像。"
+    },
+    "Data Mode": {
+        "zh": "数据模式"
+    },
+    "Raw Data (Scientific)": {
+        "zh": "原始数据（科研用）"
+    },
+    "Best for quantification. Preserves original 16-bit pixel values.": {
+        "zh": "最适合定量分析。保留原始 16 位像素值。"
+    },
+    "Format:": {
+        "zh": "格式:"
+    },
+    "Use for:": {
+        "zh": "用途:"
+    },
+    "Note: Ignores display adjustments.": {
+        "zh": "注意：忽略显示调节。"
+    },
+    "Rendered (Presentation)": {
+        "zh": "渲染图（演示用）"
+    },
+    "Best for display. Applies current brightness, contrast, and color settings.": {
+        "zh": "最适合展示。应用当前的亮度、对比度和颜色设置。"
+    },
+    "Note: 'What You See Is What You Get'.": {
+        "zh": "注意：‘所见即所得’。"
+    },
+    "Bit Depth:": {
+        "zh": "位深:"
+    },
+    "8-bit RGB (Standard)": {
+        "zh": "8 位 RGB（标准）"
+    },
+    "16-bit RGB (High Precision)": {
+        "zh": "16 位 RGB（高精度）"
+    },
+    "16-bit RGB preserves more intensity detail but files are larger and not all viewers support it.": {
+        "zh": "16 位 RGB 保留更多强度细节，但文件较大，且并非所有查看器都支持。"
+    },
+    "Resolution (DPI):": {
+        "zh": "分辨率 (DPI):"
+    },
+    "150 DPI (Draft/Internal)": {
+        "zh": "150 DPI (草稿/内部)"
+    },
+    "300 DPI (Standard Publication)": {
+        "zh": "300 DPI (标准出版)"
+    },
+    "400 DPI (High Detail)": {
+        "zh": "400 DPI (高细节)"
+    },
+    "600 DPI (🌟 High Quality Publication)": {
+        "zh": "600 DPI (🌟 高质量出版)"
+    },
+    "900 DPI (Ultra High Definition)": {
+        "zh": "900 DPI (超高清)"
+    },
+    "1200 DPI (Professional Print)": {
+        "zh": "1200 DPI (专业印刷)"
+    },
+    "Higher DPI increases print quality and detail but also increases file size.": {
+        "zh": "更高的 DPI 会增加打印质量和细节，但也会增加文件大小。"
+    },
+    "Annotations & ROIs": {
+        "zh": "标注与选区"
+    },
+    "Include Graphic Annotations": {
+        "zh": "包含图形标注"
+    },
+    "If checked, visible arrows, shapes, and text will be drawn on rendered images.": {
+        "zh": "如果勾选，可见的箭头、形状和文本将绘制在渲染图像上。"
+    },
+    "Includes user-drawn annotations and synchronized ROIs.": {
+        "zh": "包含用户绘制的标注和同步的选区。"
+    },
+    "Custom Export Path (Optional)": {
+        "zh": "自定义导出路径（可选）"
+    },
+    "Default: Project/exports": {
+        "zh": "默认：项目/exports"
+    },
+    "Browse for export folder": {
+        "zh": "浏览导出文件夹"
+    },
+    "Folder:": {
+        "zh": "文件夹:"
+    },
+    "Export Configuration": {
+        "zh": "导出配置"
+    },
+    "OK": {
+        "zh": "OK"
+    },
+    "Control Panel Tabs Visibility": {
+        "zh": "控制面板标签可见性"
+    },
+    "Toolbox": {
+        "zh": "工具箱"
+    },
+    "Adjustments": {
+        "zh": "图像调节"
+    },
+    "Enhance": {
+        "zh": "图像增强"
+    },
+    "Colocalization": {
+        "zh": "共定位/线扫描"
+    },
+    "Measure Results": {
+        "zh": "测量结果"
+    },
+    "ROI Persistence": {
+        "zh": "ROI 持久化"
+    },
+    "Auto-save ROI when switching samples": {
+        "zh": "切换样本时自动保存 ROI"
+    },
+    "Save ROI when closing project": {
+        "zh": "关闭项目时自动保存 ROI"
+    },
+    "Import images from subfolders": {
+        "zh": "从子文件夹导入图像"
+    },
+    "If checked, importing a folder will also search all subdirectories for images.": {
+        "zh": "如果勾选，导入文件夹时还将搜索所有子目录中的图像。"
+    },
+    "Theme Selection": {
+        "zh": "主题选择"
+    },
+    "Select Metrics": {
+        "zh": "选择指标"
+    },
+    "Area": {
+        "zh": "面积"
+    },
+    "Mean": {
+        "zh": "平均值"
+    },
+    "IntDen": {
+        "zh": "综合强度"
+    },
+    "BgMean": {
+        "zh": "背景平均值"
+    },
+    "CorrectedMean": {
+        "zh": "校正后的平均值"
+    },
+    "Behavior": {
+        "zh": "行为"
+    },
+    "Accumulate Results": {
+        "zh": "累加结果"
+    },
+    "If checked, new measurements will be appended. If unchecked, they will overwrite existing results for the same ROI.": {
+        "zh": "如果勾选，新测量值将被追加。如果不勾选，它们将覆盖同一 ROI 的现有结果。"
+    },
+    "Measurement Settings": {
+        "zh": "测量设置"
+    },
+    "New Project Setup": {
+        "zh": "新建项目设置"
+    },
+    "Select channels to include in this project:": {
+        "zh": "选择本项目要包含的通道:"
+    },
+    "Add a new custom channel to the project": {
+        "zh": "向项目添加新的自定义通道"
+    },
+    "Pick channel color": {
+        "zh": "选取通道颜色"
+    },
+    "Select Channel Color": {
+        "zh": "选择通道颜色"
+    },
     "No Channels": {
         "zh": "无通道"
     },
@@ -411,20 +983,11 @@
     "Data exported successfully (via CSV module) to:\n{0}": {
         "zh": "数据已成功导出 (通过 CSV 模块) 至:\n{0}"
     },
-    "General": {
-        "zh": "常规"
-    },
-    "Display": {
-        "zh": "显示"
-    },
     "Multichannel Image Detected": {
         "zh": "检测到多通道图像"
     },
     "The file '{0}' has multiple active channels.\n\nDo you want to continue?": {
         "zh": "文件 '{0}' 包含多个活动通道。\n\n是否继续？"
-    },
-    "Language": {
-        "zh": "语言"
     },
     "Enable Auto Save": {
         "zh": "启用自动保存"
@@ -477,44 +1040,47 @@
     "Detecting GPU...": {
         "zh": "正在检测 GPU..."
     },
-    "Recommendation: {rec} (Reason: {reason})": {
-        "zh": "建议：{rec} (原因：{reason})"
+    "Performance (1024px)": {
+        "zh": "性能模式 (1024px)"
+    },
+    "Balanced (2048px)": {
+        "zh": "平衡模式 (2048px)"
+    },
+    "High Quality (4096px)": {
+        "zh": "高质量模式 (4096px)"
+    },
+    "4K Ultra (8192px)": {
+        "zh": "4K 超清 (8192px)"
+    },
+    "Low RAM detected ({0:.1f} GB)": {
+        "zh": "检测到内存较低 ({0:.1f} GB)"
+    },
+    "Moderate RAM detected ({0:.1f} GB)": {
+        "zh": "检测到内存适中 ({0:.1f} GB)"
+    },
+    "Sufficient RAM detected ({0:.1f} GB)": {
+        "zh": "检测到内存充足 ({0:.1f} GB)"
+    },
+    "Recommendation: {0} (Reason: {1})": {
+        "zh": "建议：{0} (原因：{1})"
+    },
+    "Detected: {0}\nVersion: {1}\nDriver: {2}": {
+        "zh": "检测到：{0}\n版本：{1}\n驱动：{2}"
+    },
+    "OpenCL Not Available: No compatible GPU detected or driver issue.": {
+        "zh": "OpenCL 不可用：未检测到兼容的 GPU 或驱动程序问题。"
+    },
+    "GPU Detection Error: {0}": {
+        "zh": "GPU 检测错误: {0}"
     },
     "Recommendation: Balanced (Auto)": {
         "zh": "建议：平衡 (自动)"
     },
-    "New Project Setup": {
-        "zh": "新建项目设置"
-    },
-    "Select channels to include in this project:": {
-        "zh": "选择本项目包含的通道:"
-    },
     " Add Custom Channel": {
         "zh": " 添加自定义通道"
     },
-    "Measurement Settings": {
-        "zh": "测量设置"
-    },
-    "Select Metrics": {
-        "zh": "选择指标"
-    },
     "Ready": {
         "zh": "就绪"
-    },
-    "Toolbox": {
-        "zh": "工具箱"
-    },
-    "Adjustments": {
-        "zh": "图像调节"
-    },
-    "Enhance": {
-        "zh": "图像增强"
-    },
-    "Colocalization": {
-        "zh": "共定位/线扫描"
-    },
-    "Measure Results": {
-        "zh": "测量结果"
     },
     "Project Samples": {
         "zh": "项目样本"
@@ -594,21 +1160,6 @@
     "Add new empty channel slot": {
         "zh": "添加新的空白通道插槽"
     },
-    "Click here then draw a line on the image to see intensity profiles": {
-        "zh": "点击此处，然后在图像上画一条线以查看强度分布"
-    },
-    "Clear current line and plot": {
-        "zh": "清除当前线段和图表"
-    },
-    "Reset brightness/contrast to default": {
-        "zh": "将亮度/对比度重置为默认值"
-    },
-    "Set to Recommended Maximum Value": {
-        "zh": "设置为推荐的最大值"
-    },
-    "Lock enhancement parameters for all images (freeze auto-calculation)": {
-        "zh": "锁定所有图片的增强参数 (冻结自动计算)"
-    },
     "Export current enhancement parameters to a file": {
         "zh": "将当前增强参数导出到文件"
     },
@@ -617,12 +1168,6 @@
     },
     "Uses GPU for faster image rendering and enhancement.": {
         "zh": "使用 GPU 进行更快的图像渲染和增强。"
-    },
-    "Add a new custom channel to the project": {
-        "zh": "向项目添加新的自定义通道"
-    },
-    "Pick channel color": {
-        "zh": "选取通道颜色"
     },
     "Create a new project in a selected folder": {
         "zh": "在选定文件夹中创建新项目"
@@ -798,38 +1343,11 @@
     "Enhancement Params": {
         "zh": "增强参数"
     },
-    "Apply": {
-        "zh": "应用"
-    },
-    "Pearson r: --": {
-        "zh": "Pearson 相关系数: --"
-    },
     "Clear Line": {
         "zh": "清除线条"
     },
-    "Global Analysis": {
-        "zh": "全局分析"
-    },
-    "Export Data": {
-        "zh": "导出数据"
-    },
     "Channels": {
         "zh": "通道"
-    },
-    "Normalize": {
-        "zh": "归一化"
-    },
-    "BG Sub": {
-        "zh": "背景扣除"
-    },
-    "Global Thresholds:": {
-        "zh": "全局阈值:"
-    },
-    "Saved Line Scans": {
-        "zh": "已保存的线扫描"
-    },
-    "Label": {
-        "zh": "标签"
     },
     "Rename Channel...": {
         "zh": "重命名通道..."
@@ -840,7 +1358,6 @@
     "New Channel Name:": {
         "zh": "新通道名称:"
     },
-
     "Confirm Delete": {
         "zh": "确认删除"
     },
@@ -861,10 +1378,6 @@
     },
     "New Sample Name:": {
         "zh": "新样本名称:"
-    }
-,
-    "Length": {
-        "zh": "长度"
     },
     "Pearson's (PCC)": {
         "zh": "皮尔逊 (PCC)"
@@ -884,14 +1397,8 @@
     "Export Colocalization Data": {
         "zh": "导出共定位数据"
     },
-    "Distance (px)": {
-        "zh": "距离 (px)"
-    },
     "Data exported successfully to": {
         "zh": "数据成功导出至"
-    },
-    "Measurement": {
-        "zh": "测量"
     },
     "ID": {
         "zh": "ID"
@@ -899,26 +1406,11 @@
     "Item": {
         "zh": "项目"
     },
-    "Area": {
-        "zh": "面积"
-    },
-    "Mean": {
-        "zh": "平均值"
-    },
-    "IntDen": {
-        "zh": "积分密度"
-    },
     "Min": {
         "zh": "最小值"
     },
     "Max": {
         "zh": "最大值"
-    },
-    "BgMean": {
-        "zh": "背景平均值"
-    },
-    "CorrectedMean": {
-        "zh": "校正平均值"
     },
     "Point Summary (Total: {0})": {
         "zh": "点计数汇总 (总计: {0})"
@@ -931,9 +1423,6 @@
     },
     "You have unsaved changes. Do you want to save them?": {
         "zh": "您有未保存的更改。是否保存？"
-    },
-    "Select Language:": {
-        "zh": "选择语言:"
     },
     "Auto Save": {
         "zh": "自动保存"
@@ -949,36 +1438,6 @@
     },
     "High Quality (Slower)": {
         "zh": "高质量 (较慢)"
-    },
-    "Signal Range": {
-        "zh": "亮度范围"
-    },
-    "Background Suppression": {
-        "zh": "背景清除"
-    },
-    "Local Contrast": {
-        "zh": "结构突出"
-    },
-    "Noise Smoothing": {
-        "zh": "噪声平滑"
-    },
-    "Display Gamma": {
-        "zh": "显示亮度"
-    },
-    "Select Channel Color": {
-        "zh": "选择通道颜色"
-    },
-    "Global Results ({0} vs {1}):": {
-        "zh": "全局分析结果 ({0} vs {1}):"
-    },
-    "Pearson's (PCC): {0:.4f}": {
-        "zh": "Pearson 相关系数 (PCC): {0:.4f}"
-    },
-    "Mander's M1 (Ch1 in Ch2): {0:.4f}": {
-        "zh": "Mander's M1 (通道1在通道2中): {0:.4f}"
-    },
-    "Mander's M2 (Ch2 in Ch1): {0:.4f}": {
-        "zh": "Mander's M2 (通道2在通道1中): {0:.4f}"
     },
     "Intensity {0}": {
         "zh": "强度 {0}"
@@ -1004,12 +1463,6 @@
     "Failed to export data: {0}": {
         "zh": "导出数据失败: {0}"
     },
-    "OK": {
-        "zh": "确定"
-    },
-    "Cancel": {
-        "zh": "取消"
-    },
     "Close": {
         "zh": "关闭"
     },
@@ -1031,75 +1484,107 @@
     "Assign Fluorophores (分配荧光)": {
         "zh": "分配荧光"
     },
-    "Assign fluorophores for RGB Merge image:\n<b>{0}</b>": {
-        "zh": "为 RGB 合并图像分配荧光：\n<b>{0}</b>"
+    "Line Tool": {
+        "zh": "直线工具"
     },
-    "Graphic Annotations": { "zh": "图形标注" },
-    "Show Annotations": { "zh": "显示标注" },
-    "Arrow Tool": { "zh": "箭头工具" },
-    "Line Tool": { "zh": "直线工具" },
-    "Rectangle Tool": { "zh": "矩形工具" },
-    "Circle Tool": { "zh": "圆形工具" },
-    "Ellipse Tool": { "zh": "椭圆工具" },
-    "Polygon Tool": { "zh": "多边形工具" },
-    "Text Tool": { "zh": "文本工具" },
-
-    "Clear All Annotations": { "zh": "清除所有标注" },
-    "Sync ROIs as Annotations": { "zh": "将选区同步为标注" },
-    "Automatically include ROIs in annotation list and exports": { "zh": "自动将选区包含在标注列表和导出中" },
-    "Fixed Size Mode": { "zh": "固定大小模式" },
-    "Create new annotations with a fixed size on click": { "zh": "点击时创建固定大小的标注" },
-    "Manage Annotations:": { "zh": "管理标注:" },
-    "Total Annotations: 0": { "zh": "标注总数: 0" },
-    "Properties": { "zh": "属性" },
-    "Click to change color": { "zh": "点击更改颜色" },
-    "Color:": { "zh": "颜色:" },
-    "Width:": { "zh": "宽度:" },
-    "Size:": { "zh": "大小:" },
-    "Style:": { "zh": "样式:" },
-    "Solid": { "zh": "实线" },
-    "Dashed": { "zh": "虚线" },
-    "Dotted": { "zh": "点线" },
-    "Len:": { "zh": "长度:" },
-    "Gap:": { "zh": "间距:" },
-    "Dash Length": { "zh": "虚线长度" },
-    "Dash Gap": { "zh": "虚线间距" },
-    "Dot Size (Diameter)": { "zh": "点大小 (直径)" },
-    "Dot Spacing": { "zh": "点间距" },
-    "Space:": { "zh": "间距:" },
-    "Font:": { "zh": "字体:" },
-    "Font Family": { "zh": "字体家族" },
-    "Head:": { "zh": "箭头:" },
-    "V-Shape": { "zh": "V 形" },
-    "Triangle": { "zh": "三角形" },
-    "Diamond": { "zh": "菱形" },
-    "Export Only": { "zh": "仅导出" },
-    "If checked, only visible in exported images, not on canvas analysis": { "zh": "如果勾选，仅在导出图像中可见，不在画布分析中显示" },
-    "Duplicate": { "zh": "复制" },
-    "Duplicate selected annotation(s)": { "zh": "复制选中的标注" },
-    "Delete": { "zh": "删除" },
-    "Scale Bar": { "zh": "比例尺" },
-    "Enable Scale Bar": { "zh": "启用比例尺" },
-    "Custom / Manual": { "zh": "自定义 / 手动" },
-    "Preset:": { "zh": "预设:" },
-    "Px Size:": { "zh": "像素大小:" },
-    "Length:": { "zh": "长度:" },
-    "Pos:": { "zh": "位置:" },
-    "Bottom Right": { "zh": "右下角" },
-    "Bottom Left": { "zh": "左下角" },
-    "Top Right": { "zh": "右上角" },
-    "Top Left": { "zh": "左上角" },
-    "Bar Thickness": { "zh": "比例尺粗细" },
-    "Font Size": { "zh": "字体大小" }
-,
-    "Red Channel:": {
-        "zh": "红色通道:"
+    "Rectangle Tool": {
+        "zh": "矩形工具"
     },
-    "Green Channel:": {
-        "zh": "绿色通道:"
+    "Circle Tool": {
+        "zh": "圆形工具"
     },
-    "Blue Channel:": {
-        "zh": "蓝色通道:"
+    "Ellipse Tool": {
+        "zh": "椭圆工具"
+    },
+    "Polygon Tool": {
+        "zh": "多边形工具"
+    },
+    "Fixed Size Mode": {
+        "zh": "固定大小模式"
+    },
+    "Create new annotations with a fixed size on click": {
+        "zh": "点击时创建固定大小的标注"
+    },
+    "Total Annotations: 0": {
+        "zh": "标注总数: 0"
+    },
+    "Click to change color": {
+        "zh": "点击更改颜色"
+    },
+    "Width:": {
+        "zh": "宽度:"
+    },
+    "Dotted": {
+        "zh": "点线"
+    },
+    "Gap:": {
+        "zh": "间距:"
+    },
+    "Dash Length": {
+        "zh": "虚线长度"
+    },
+    "Dash Gap": {
+        "zh": "虚线间距"
+    },
+    "Dot Size (Diameter)": {
+        "zh": "点大小 (直径)"
+    },
+    "Dot Spacing": {
+        "zh": "点间距"
+    },
+    "Space:": {
+        "zh": "间距:"
+    },
+    "Font Family": {
+        "zh": "字体家族"
+    },
+    "Head:": {
+        "zh": "箭头:"
+    },
+    "V-Shape": {
+        "zh": "V 形"
+    },
+    "Triangle": {
+        "zh": "三角形"
+    },
+    "Diamond": {
+        "zh": "菱形"
+    },
+    "Export Only": {
+        "zh": "仅导出"
+    },
+    "If checked, only visible in exported images, not on canvas analysis": {
+        "zh": "如果勾选，仅在导出图像中可见，不在画布分析中显示"
+    },
+    "Duplicate": {
+        "zh": "复制"
+    },
+    "Duplicate selected annotation(s)": {
+        "zh": "复制选中的标注"
+    },
+    "Delete": {
+        "zh": "删除"
+    },
+    "Enable Scale Bar": {
+        "zh": "启用比例尺"
+    },
+    "Custom / Manual": {
+        "zh": "自定义 / 手动"
+    },
+    "Preset:": {
+        "zh": "预设:"
+    },
+    "Px Size:": {
+        "zh": "像素大小:"
+    },
+    "Length:": {
+        "zh": "长度:"
+    },
+    "Bar Thickness": {
+        "zh": "比例尺粗细"
+    },
+    "Font Size": {
+        "zh": "字体大小"
     },
     "Import Images": {
         "zh": "导入图像"
@@ -1131,107 +1616,14 @@
     "Blue": {
         "zh": "蓝"
     },
-    "Export Configuration": {
-        "zh": "导出配置"
+    "Select All": {
+        "zh": "全选"
     },
-    "Select All": { "zh": "全选" },
-    "Select all ROIs and Annotations": { "zh": "选择所有 ROI 和标注" },
-    "Selected all ROIs": { "zh": "已选择所有 ROI" },
-    "Content Selection": {
-        "zh": "内容选择"
+    "Select all ROIs and Annotations": {
+        "zh": "选择所有 ROI 和标注"
     },
-    "Export Single Channels": {
-        "zh": "导出单通道"
-    },
-    "If checked, individual image files will be generated for each channel (e.g., DAPI, GFP).": {
-        "zh": "如果勾选，将为每个通道（如 DAPI, GFP）生成单独的图像文件。"
-    },
-    "Generates separate files for each channel.": {
-        "zh": "为每个通道生成单独的文件。"
-    },
-    "Export Merge Image (Composite)": {
-        "zh": "导出合并图像（合成图）"
-    },
-    "If checked, a combined multi-channel image will be generated.": {
-        "zh": "如果勾选，将生成一个合并的多通道图像。"
-    },
-    "Generates a single composite image of all visible channels.": {
-        "zh": "生成所有可见通道的单一合成图像。"
-    },
-    "Data Mode": {
-        "zh": "数据模式"
-    },
-    "Raw Data (Scientific)": {
-        "zh": "原始数据（科研用）"
-    },
-    "Best for quantification. Preserves original 16-bit pixel values.": {
-        "zh": "最适合定量分析。保留原始 16 位像素值。"
-    },
-    "Format:": {
-        "zh": "格式:"
-    },
-    "Use for:": {
-        "zh": "用途:"
-    },
-    "Note: Ignores display adjustments.": {
-        "zh": "注：忽略显示调整。"
-    },
-    "Rendered (Presentation)": {
-        "zh": "渲染图（演示用）"
-    },
-    "Best for display. Applies current brightness, contrast, and color settings.": {
-        "zh": "最适合展示。应用当前的亮度、对比度和颜色设置。"
-    },
-    "Note: 'What You See Is What You Get'.": {
-        "zh": "注：“所见即所得”。"
-    },
-    "Bit Depth:": {
-        "zh": "位深:"
-    },
-    "8-bit RGB (Standard)": {
-        "zh": "8 位 RGB (标准)"
-    },
-    "16-bit RGB (High Precision)": {
-        "zh": "16 位 RGB (高精度)"
-    },
-    "16-bit RGB preserves more intensity detail but files are larger and not all viewers support it.": {
-        "zh": "16 位 RGB 保留更多强度细节，但文件较大，且并非所有查看器都支持。"
-    },
-    "Resolution (DPI):": {
-        "zh": "分辨率 (DPI):"
-    },
-    "150 DPI (Draft/Internal)": {
-        "zh": "150 DPI (草稿/内部)"
-    },
-    "300 DPI (Standard Publication)": {
-        "zh": "300 DPI (标准出版)"
-    },
-    "400 DPI (High Detail)": {
-        "zh": "400 DPI (高细节)"
-    },
-    "600 DPI (🌟 High Quality Publication)": {
-        "zh": "600 DPI (🌟 高质量出版)"
-    },
-    "900 DPI (Ultra High Definition)": {
-        "zh": "900 DPI (超高清)"
-    },
-    "1200 DPI (Professional Print)": {
-        "zh": "1200 DPI (专业打印)"
-    },
-    "Higher DPI increases print quality and detail but also increases file size.": {
-        "zh": "更高的 DPI 会增加打印质量和细节，但也会增加文件大小。"
-    },
-    "Custom Export Path (Optional)": {
-        "zh": "自定义导出路径（可选）"
-    },
-    "Default: Project/exports": {
-        "zh": "默认: 项目/exports"
-    },
-    "Browse for export folder": {
-        "zh": "浏览导出文件夹"
-    },
-    "Folder:": {
-        "zh": "文件夹:"
+    "Selected all ROIs": {
+        "zh": "已选择所有 ROI"
     },
     "Active Channel:": {
         "zh": "当前通道:"
@@ -1247,18 +1639,6 @@
     },
     "Auto-adjust Min/Max based on 0.1% - 99.9% percentiles": {
         "zh": "基于 0.1% - 99.9% 百分位自动调整最小/最大值"
-    },
-    "Basic Adjustments": {
-        "zh": "基础调整"
-    },
-    "Min (Black Point)": {
-        "zh": "最小值 (黑点)"
-    },
-    "Max (White Point)": {
-        "zh": "最大值 (白点)"
-    },
-    "Gamma": {
-        "zh": "伽马值"
     },
     "Channel {0}": {
         "zh": "通道 {0}"
@@ -1352,5 +1732,47 @@
     },
     "Clear All": {
         "zh": "清除全部"
+    },
+    "New Sample (with Channels)": {
+        "zh": "新样本 (含通道)"
+    },
+    "<b>{0}</b> RGB TIFF (Full Color)<br><b>{1}</b> Publications, Presentations, Visual Inspection<br><i>{2}</i>": {
+        "zh": "<b>{0}</b> RGB TIFF (全彩)<br><b>{1}</b> 出版、演示、视觉检查<br><i>{2}</i>"
+    },
+    "Log Scale": {
+        "zh": "对数刻度"
+    },
+    "简体中文": {
+        "zh": "简体中文"
+    },
+    "Generic": {
+        "zh": "通用"
+    },
+    "\\n": {
+        "zh": "\\n"
+    },
+    "Loading Resources...": {
+        "zh": "正在加载资源..."
+    },
+    "FluoQuant Pro": {
+        "zh": "FluoQuant Pro"
+    },
+    "Loading GUI Components...": {
+        "zh": "正在加载 GUI 组件..."
+    },
+    "Initializing Core Modules...": {
+        "zh": "正在初始化核心模块..."
+    },
+    "RAM: 0 MB": {
+        "zh": "内存: 0 MB"
+    },
+    "Finalizing UI...": {
+        "zh": "正在完成界面设置..."
+    },
+    "  ": {
+        "zh": "  "
+    },
+    "FluoQuantPro": {
+        "zh": "FluoQuantPro"
     }
 }

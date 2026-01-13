@@ -1,10 +1,13 @@
-from PySide6.QtWidgets import (QVBoxLayout, QCheckBox, 
+from PySide6.QtWidgets import (QVBoxLayout, 
                                QLabel, QGroupBox, 
                                QComboBox, QWidget, QToolButton, QHBoxLayout,
-                               QDialog, QDialogButtonBox, QFormLayout, QLineEdit)
+                               QDialog, QDialogButtonBox, QFormLayout, QLineEdit,
+                               QFileDialog)
 from PySide6.QtCore import Qt, QSettings, QSize
 from src.gui.icon_manager import get_icon
 from src.core.language_manager import LanguageManager, tr
+from src.gui.toggle_switch import ToggleSwitch
+from src.gui.theme_manager import ThemeManager
 
 class ExportSettingsWidget(QWidget):
     """
@@ -15,7 +18,14 @@ class ExportSettingsWidget(QWidget):
         self.settings = QSettings("FluoQuantPro", "ExportSettings")
         self.init_ui()
         self.load_settings()
+        ThemeManager.instance().apply_theme(self)
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
+        ThemeManager.instance().theme_changed.connect(self.refresh_icons)
+
+    def refresh_icons(self):
+        """Refresh icons for the widget."""
+        if hasattr(self, 'btn_browse'):
+            self.btn_browse.setIcon(get_icon("folder", "folder-open"))
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -24,17 +34,31 @@ class ExportSettingsWidget(QWidget):
         self.gb_content = QGroupBox(tr("Content Selection"))
         vbox_content = QVBoxLayout()
         
-        self.chk_channels = QCheckBox(tr("Export Single Channels"))
+        # Channel Export Toggle
+        self.row_channels = QHBoxLayout()
+        self.lbl_channels = QLabel(tr("Export Single Channels"))
+        self.chk_channels = ToggleSwitch()
         self.chk_channels.setToolTip(tr("If checked, individual image files will be generated for each channel (e.g., DAPI, GFP)."))
-        vbox_content.addWidget(self.chk_channels)
+        self.row_channels.addWidget(self.lbl_channels)
+        self.row_channels.addStretch()
+        self.row_channels.addWidget(self.chk_channels)
+        vbox_content.addLayout(self.row_channels)
         
         self.lbl_channels_desc = QLabel(f"<i>{tr('Generates separate files for each channel.')}</i>")
         self.lbl_channels_desc.setProperty("role", "description")
         vbox_content.addWidget(self.lbl_channels_desc)
         
-        self.chk_merge = QCheckBox(tr("Export Merge Image (Composite)"))
+        vbox_content.addSpacing(5)
+        
+        # Merge Export Toggle
+        self.row_merge = QHBoxLayout()
+        self.lbl_merge = QLabel(tr("Export Merge Image (Composite)"))
+        self.chk_merge = ToggleSwitch()
         self.chk_merge.setToolTip(tr("If checked, a combined multi-channel image will be generated."))
-        vbox_content.addWidget(self.chk_merge)
+        self.row_merge.addWidget(self.lbl_merge)
+        self.row_merge.addStretch()
+        self.row_merge.addWidget(self.chk_merge)
+        vbox_content.addLayout(self.row_merge)
         
         self.lbl_merge_desc = QLabel(f"<i>{tr('Generates a single composite image of all visible channels.')}</i>")
         self.lbl_merge_desc.setProperty("role", "description")
@@ -47,9 +71,15 @@ class ExportSettingsWidget(QWidget):
         self.gb_mode = QGroupBox(tr("Data Mode"))
         vbox_mode = QVBoxLayout()
         
-        self.chk_raw = QCheckBox(tr("Raw Data (Scientific)"))
+        # Raw Data Toggle
+        self.row_raw = QHBoxLayout()
+        self.lbl_raw = QLabel(tr("Raw Data (Scientific)"))
+        self.chk_raw = ToggleSwitch()
         self.chk_raw.setToolTip(tr("Best for quantification. Preserves original 16-bit pixel values."))
-        vbox_mode.addWidget(self.chk_raw)
+        self.row_raw.addWidget(self.lbl_raw)
+        self.row_raw.addStretch()
+        self.row_raw.addWidget(self.chk_raw)
+        vbox_mode.addLayout(self.row_raw)
         
         self.lbl_raw_desc = QLabel(f"<b>{tr('Format:')}</b> 16-bit Grayscale TIFF<br><b>{tr('Use for:')}</b> Analysis, Quantification (ImageJ/Fiji)<br><i>{tr('Note: Ignores display adjustments.')}</i>")
         self.lbl_raw_desc.setProperty("role", "description")
@@ -58,11 +88,21 @@ class ExportSettingsWidget(QWidget):
         
         vbox_mode.addSpacing(10)
         
-        self.chk_rendered = QCheckBox(tr("Rendered (Presentation)"))
+        # Rendered Toggle
+        self.row_rendered = QHBoxLayout()
+        self.lbl_rendered = QLabel(tr("Rendered (Presentation)"))
+        self.chk_rendered = ToggleSwitch()
         self.chk_rendered.setToolTip(tr("Best for display. Applies current brightness, contrast, and color settings."))
-        vbox_mode.addWidget(self.chk_rendered)
+        self.row_rendered.addWidget(self.lbl_rendered)
+        self.row_rendered.addStretch()
+        self.row_rendered.addWidget(self.chk_rendered)
+        vbox_mode.addLayout(self.row_rendered)
         
-        self.lbl_rend_desc = QLabel(f"<b>{tr('Format:')}</b> RGB TIFF (Full Color)<br><b>{tr('Use for:')}</b> Publications, Presentations, Visual Inspection<br><i>{tr('Note: \'What You See Is What You Get\'.')}</i>")
+        format_str = tr("Format:")
+        use_for_str = tr("Use for:")
+        note_str = tr("Note: 'What You See Is What You Get'.")
+        
+        self.lbl_rend_desc = QLabel(tr("<b>{0}</b> RGB TIFF (Full Color)<br><b>{1}</b> Publications, Presentations, Visual Inspection<br><i>{2}</i>").format(format_str, use_for_str, note_str))
         self.lbl_rend_desc.setProperty("role", "description")
         self.lbl_rend_desc.setTextFormat(Qt.TextFormat.RichText)
         vbox_mode.addWidget(self.lbl_rend_desc)
@@ -107,6 +147,9 @@ class ExportSettingsWidget(QWidget):
         hbox_dpi.addStretch()
         vbox_rend_opts.addLayout(hbox_dpi)
         
+        # Line scans are now controlled by individual ROI properties in the annotation list.
+        # Global checkbox removed to avoid confusion.
+        
         vbox_mode.addWidget(self.rendered_options_widget)
         
         self.chk_rendered.toggled.connect(self.rendered_options_widget.setVisible)
@@ -118,9 +161,15 @@ class ExportSettingsWidget(QWidget):
         self.gb_ann = QGroupBox(tr("Annotations & ROIs"))
         vbox_ann = QVBoxLayout()
         
-        self.chk_include_ann = QCheckBox(tr("Include Graphic Annotations"))
+        # Include Annotations Toggle
+        self.row_ann = QHBoxLayout()
+        self.lbl_include_ann = QLabel(tr("Include Graphic Annotations"))
+        self.chk_include_ann = ToggleSwitch()
         self.chk_include_ann.setToolTip(tr("If checked, visible arrows, shapes, and text will be drawn on rendered images."))
-        vbox_ann.addWidget(self.chk_include_ann)
+        self.row_ann.addWidget(self.lbl_include_ann)
+        self.row_ann.addStretch()
+        self.row_ann.addWidget(self.chk_include_ann)
+        vbox_ann.addLayout(self.row_ann)
         
         self.lbl_ann_desc = QLabel(f"<i>{tr('Includes user-drawn annotations and synchronized ROIs.')}</i>")
         self.lbl_ann_desc.setProperty("role", "description")
@@ -159,21 +208,25 @@ class ExportSettingsWidget(QWidget):
 
     def retranslate_ui(self):
         self.gb_content.setTitle(tr("Content Selection"))
-        self.chk_channels.setText(tr("Export Single Channels"))
+        self.lbl_channels.setText(tr("Export Single Channels"))
         self.chk_channels.setToolTip(tr("If checked, individual image files will be generated for each channel (e.g., DAPI, GFP)."))
         self.lbl_channels_desc.setText(f"<i>{tr('Generates separate files for each channel.')}</i>")
-        self.chk_merge.setText(tr("Export Merge Image (Composite)"))
+        self.lbl_merge.setText(tr("Export Merge Image (Composite)"))
         self.chk_merge.setToolTip(tr("If checked, a combined multi-channel image will be generated."))
         self.lbl_merge_desc.setText(f"<i>{tr('Generates a single composite image of all visible channels.')}</i>")
         
         self.gb_mode.setTitle(tr("Data Mode"))
-        self.chk_raw.setText(tr("Raw Data (Scientific)"))
+        self.lbl_raw.setText(tr("Raw Data (Scientific)"))
         self.chk_raw.setToolTip(tr("Best for quantification. Preserves original 16-bit pixel values."))
         self.lbl_raw_desc.setText(f"<b>{tr('Format:')}</b> 16-bit Grayscale TIFF<br><b>{tr('Use for:')}</b> Analysis, Quantification (ImageJ/Fiji)<br><i>{tr('Note: Ignores display adjustments.')}</i>")
         
-        self.chk_rendered.setText(tr("Rendered (Presentation)"))
+        self.lbl_rendered.setText(tr("Rendered (Presentation)"))
         self.chk_rendered.setToolTip(tr("Best for display. Applies current brightness, contrast, and color settings."))
-        self.lbl_rend_desc.setText(f"<b>{tr('Format:')}</b> RGB TIFF (Full Color)<br><b>{tr('Use for:')}</b> Publications, Presentations, Visual Inspection<br><i>{tr('Note: \'What You See Is What You Get\'.')}</i>")
+        
+        format_str = tr("Format:")
+        use_for_str = tr("Use for:")
+        note_str = tr("Note: 'What You See Is What You Get'.")
+        self.lbl_rend_desc.setText(tr("<b>{0}</b> RGB TIFF (Full Color)<br><b>{1}</b> Publications, Presentations, Visual Inspection<br><i>{2}</i>").format(format_str, use_for_str, note_str))
         
         self.lbl_depth.setText(tr("Bit Depth:"))
         current_depth_idx = self.combo_depth.currentIndex()
@@ -197,9 +250,9 @@ class ExportSettingsWidget(QWidget):
             self.combo_dpi.addItem(text, val)
         self.combo_dpi.setCurrentIndex(current_dpi_idx)
         self.combo_dpi.setToolTip(tr("Higher DPI increases print quality and detail but also increases file size."))
-        
+
         self.gb_ann.setTitle(tr("Annotations & ROIs"))
-        self.chk_include_ann.setText(tr("Include Graphic Annotations"))
+        self.lbl_include_ann.setText(tr("Include Graphic Annotations"))
         self.chk_include_ann.setToolTip(tr("If checked, visible arrows, shapes, and text will be drawn on rendered images."))
         self.lbl_ann_desc.setText(f"<i>{tr('Includes user-drawn annotations and synchronized ROIs.')}</i>")
 
@@ -284,6 +337,7 @@ class ExportSettingsDialog(QDialog):
         self.buttons.accepted.connect(self.save_and_accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+        ThemeManager.instance().apply_theme(self)
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
 
     def retranslate_ui(self):

@@ -58,7 +58,11 @@ class CalibrationDialog(QDialog):
 
     def retranslate_ui(self):
         self.setWindowTitle(tr("Set Scale"))
-        # Update labels... (simplified for now)
+        self.lbl_dist_px_tag.setText(tr("Distance in Pixels:"))
+        self.lbl_known_dist_tag.setText(tr("Known Distance:"))
+        self.lbl_unit_tag.setText(tr("Unit of Length:"))
+        self.lbl_current_scale_tag.setText(tr("Current Scale:"))
+        self.update_preview()
         
     def update_preview(self):
         try:
