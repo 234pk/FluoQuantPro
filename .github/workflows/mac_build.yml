@@ -19,11 +19,19 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.13'
+        python-version: '3.12'
         cache: 'pip'
         
     - name: Install dependencies
       run: |
+        brew install snappy
+        export SNAPPY_PREFIX=$(brew --prefix snappy)
+        export CPPFLAGS="-I$SNAPPY_PREFIX/include"
+        export LDFLAGS="-L$SNAPPY_PREFIX/lib"
+        export C_INCLUDE_PATH="$SNAPPY_PREFIX/include"
+        export CPLUS_INCLUDE_PATH="$SNAPPY_PREFIX/include"
+        export LIBRARY_PATH="$SNAPPY_PREFIX/lib"
+        
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install --upgrade pyinstaller setuptools wheel
