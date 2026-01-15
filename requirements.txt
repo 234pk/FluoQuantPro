@@ -13,7 +13,7 @@ scikit-image>=0.22.0
 PyWavelets>=1.4.1
 matplotlib>=3.8.0
 tencentcloud-sdk-python
-tencentcloud-cls-sdk-python
+tencentcloud-cls-sdk-python @ git+https://github.com/TencentCloud/tencentcloud-cls-sdk-python.git@v1.0.4
 protobuf<4.0.0,>=3.4.0
 lz4<=3.1.2
 python-snappy<=0.6.0
