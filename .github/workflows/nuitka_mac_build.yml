@@ -25,7 +25,10 @@ jobs:
         
     - name: Install System Dependencies
       run: |
-        brew install ccache create-dmg
+        brew install ccache create-dmg snappy
+        # 为 python-snappy 设置编译环境变量
+        echo "CPPFLAGS=-I$(brew --prefix snappy)/include" >> $GITHUB_ENV
+        echo "LDFLAGS=-L$(brew --prefix snappy)/lib" >> $GITHUB_ENV
         
     - name: Install Python Dependencies
       run: |
