@@ -38,6 +38,8 @@ jobs:
         export C_INCLUDE_PATH="$SNAPPY_PREFIX/include"
         export CPLUS_INCLUDE_PATH="$SNAPPY_PREFIX/include"
         export LIBRARY_PATH="$SNAPPY_PREFIX/lib"
+        # 针对 python-snappy 源码编译的额外补丁宏定义
+        export CFLAGS="-DPy_SIZE=Py_SIZE"
         
         pip install -r requirements.txt
         pip install nuitka zstandard ordered-set dmgbuild
