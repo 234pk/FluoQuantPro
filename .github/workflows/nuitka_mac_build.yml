@@ -30,23 +30,17 @@ jobs:
     - name: Install Python Dependencies
       run: |
         python -m pip install --upgrade pip
+        python -m pip install setuptools wheel
         cd macversion
         
-        # 显式设置环境变量（可靠方法）
-        export SNAPPY_PREFIX=$(brew --prefix snappy)
-        export PKG_CONFIG_PATH="$SNAPPY_PREFIX/lib/pkgconfig"
-        export CPPFLAGS="-I$SNAPPY_PREFIX/include"
-        export LDFLAGS="-L$SNAPPY_PREFIX/lib"
-        export C_INCLUDE_PATH="$SNAPPY_PREFIX/include"
-        export CPLUS_INCLUDE_PATH="$SNAPPY_PREFIX/include"
-        export LIBRARY_PATH="$SNAPPY_PREFIX/lib"
+        # 显式设置环境变量
+        SNAPPY_PREFIX=$(brew --prefix snappy)
         
-        # 针对 Python 3.12 的编译器补丁
-        export CFLAGS="-I$SNAPPY_PREFIX/include -DPy_SIZE(obj)=(((PyVarObject*)(obj))->ob_size)"
-        export CXXFLAGS="-I$SNAPPY_PREFIX/include -DPy_SIZE(obj)=(((PyVarObject*)(obj))->ob_size)"
-        
-        # 强制不使用缓存安装修复版
-        pip install --no-cache-dir "python-snappy>=0.7.1"
+        # 终极修复：在安装命令前直接注入编译器宏，并禁用构建隔离
+        # 这样可以确保 Py_SIZE(obj) = val 在 Python 3.12 下依然被编译器允许（强制转换为成员访问）
+        CFLAGS="-I$SNAPPY_PREFIX/include -L$SNAPPY_PREFIX/lib -DPy_SIZE(obj)=(((PyVarObject*)(obj))->ob_size)" \
+        CXXFLAGS="-I$SNAPPY_PREFIX/include -L$SNAPPY_PREFIX/lib -DPy_SIZE(obj)=(((PyVarObject*)(obj))->ob_size)" \
+        pip install --no-cache-dir --no-build-isolation "python-snappy>=0.7.1"
         
         pip install -r requirements.txt
         pip install nuitka zstandard ordered-set dmgbuild
