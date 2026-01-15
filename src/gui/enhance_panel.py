@@ -47,7 +47,7 @@ class PercentageControlWidget(QWidget):
         
         h_header.addStretch()
         
-        self.lbl_value = QLabel("0%")
+        self.lbl_value = QLabel(tr("0%"))
         self.lbl_value.setProperty("role", "accent")
         self.lbl_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.lbl_value.setMinimumWidth(0) # Allow shrinking

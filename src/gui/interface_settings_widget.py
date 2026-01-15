@@ -72,6 +72,15 @@ class InterfaceSettingsWidget(QWidget):
         
         layout.addWidget(self.import_group)
 
+        # --- Privacy Settings ---
+        self.privacy_group = QGroupBox(tr("Privacy"))
+        privacy_layout = QVBoxLayout(self.privacy_group)
+        
+        self.chk_telemetry, self.lbl_telemetry = self._add_toggle_row(privacy_layout, tr("Send anonymous usage data"), "telemetry_enabled")
+        self.chk_telemetry.setToolTip(tr("Help us improve by sending anonymous usage statistics. No personal data is collected."))
+        
+        layout.addWidget(self.privacy_group)
+
         # --- Theme Settings ---
         self.theme_group = QGroupBox(tr("Theme Selection"))
         theme_layout = QVBoxLayout(self.theme_group)
@@ -113,6 +122,10 @@ class InterfaceSettingsWidget(QWidget):
         self.lbl_recursive_import.setText(tr("Import images from subfolders"))
         self.chk_recursive_import.setToolTip(tr("If checked, importing a folder will also search all subdirectories for images."))
         
+        self.privacy_group.setTitle(tr("Privacy"))
+        self.lbl_telemetry.setText(tr("Send anonymous usage data"))
+        self.chk_telemetry.setToolTip(tr("Help us improve by sending anonymous usage statistics. No personal data is collected."))
+        
         self.theme_group.setTitle(tr("Theme Selection"))
 
     def load_settings(self):
@@ -135,6 +148,9 @@ class InterfaceSettingsWidget(QWidget):
         # Import Settings
         self.chk_recursive_import.setChecked(self.settings.value("import/recursive", False, type=bool))
 
+        # Privacy Settings
+        self.chk_telemetry.setChecked(self.settings.value("telemetry/enabled", True, type=bool))
+
         # Theme Settings
         current_theme = ThemeManager.instance().get_current_theme()
         index = self.theme_combo.findData(current_theme)
@@ -155,6 +171,9 @@ class InterfaceSettingsWidget(QWidget):
         
         # Import Settings
         self.settings.setValue("import/recursive", self.chk_recursive_import.isChecked())
+
+        # Privacy Settings
+        self.settings.setValue("telemetry/enabled", self.chk_telemetry.isChecked())
 
         # Theme Settings
         new_theme = self.theme_combo.currentData()

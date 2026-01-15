@@ -94,7 +94,7 @@ class MeasurementResultTree(QTreeWidget):
         try:
             data = self.get_all_data()
             if not data:
-                Logger.warning("No data to export.")
+                Logger.warning(tr("No data to export."))
                 return
 
             # Determine all keys (headers) from data

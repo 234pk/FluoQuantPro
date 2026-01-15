@@ -198,7 +198,7 @@ class GraphicsRenderer:
         scale_ratio = PhysicalRenderStyle.get_scale_factor(dpi) * view_scale
         scale_x, scale_y = (float(w) / float(orig_w)), (float(h) / float(orig_h))
 
-        overlay = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
+        overlay = QImage(w, h, QImage.Format.Format_ARGB32)
         overlay.fill(Qt.GlobalColor.transparent)
         
         painter = QPainter(overlay)
@@ -339,7 +339,9 @@ class GraphicsRenderer:
         ov_arr = np.frombuffer(ptr, np.uint8).reshape((h, w, 4))
         
         alpha = ov_arr[..., 3].astype(np.float32) / 255.0
-        rgb_ov = ov_arr[..., :3].astype(np.float32) / 255.0
+        # QImage ARGB32 is B-G-R-A in memory on Little Endian. 
+        # We need R-G-B for the blending (assuming image is RGB).
+        rgb_ov = ov_arr[..., :3][..., ::-1].astype(np.float32) / 255.0
         
         if image.dtype != np.float32:
             img_float = image.astype(np.float32)

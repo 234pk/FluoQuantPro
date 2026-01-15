@@ -82,17 +82,6 @@ class AnnotationPanel(QWidget):
         v_ann.setSpacing(8)
         v_ann.setContentsMargins(4, 15, 4, 4)
         
-        # Visibility Toggle
-        self.row_ann_visible = QHBoxLayout()
-        self.lbl_ann_visible = QLabel(tr("Show Annotations"))
-        self.chk_ann_visible = ToggleSwitch()
-        #self.chk_ann_visible.setChecked(self.session.show_annotations)
-        self.chk_ann_visible.toggled.connect(self._toggle_annotations)
-        self.row_ann_visible.addWidget(self.lbl_ann_visible)
-        self.row_ann_visible.addStretch()
-        self.row_ann_visible.addWidget(self.chk_ann_visible)
-        v_ann.addLayout(self.row_ann_visible)
-        
         # Tool Buttons - Grid Layout (Will be populated after props are ready)
         self.tool_buttons_layout = QGridLayout()
         self.tool_buttons_layout.setSpacing(4)
@@ -832,26 +821,6 @@ class AnnotationPanel(QWidget):
         if style == 'dashed' and tool_id not in ['text', 'line_scan']:
             self.widget_dash_params.show()
 
-    def _toggle_annotations(self, visible):
-        """Toggles visibility of all ROIs."""
-        if not self.session.roi_manager:
-            return
-            
-        # Batch update visibility
-        for roi in self.session.roi_manager.get_all_rois():
-            roi.visible = visible
-            # We don't emit individual signals to avoid storm
-            
-        # Force full view update
-        # We need a way to tell views to refresh ROI items from model
-        # But UnifiedGraphicsItem listens to roi_updated? No, CanvasView connects signals.
-        # CanvasView._on_roi_updated calls item.update_from_model
-        
-        # We can emit a special signal or just iterate views
-        # For now, let's just trigger a repaint which might not be enough if items are not updated
-        # Ideally, we emit a 'batch_updated' signal from manager
-        self.session.roi_manager.project_changed.emit() # This triggers a reload in some places?
-
     # --- Scale Bar Methods (Preserved) ---
     def _update_color_button(self):
         color = self.session.scale_bar_settings.color
@@ -934,7 +903,6 @@ class AnnotationPanel(QWidget):
         self.grp_scale_bar.setTitle(tr("Scale Bar"))
         self.lbl_enabled.setText(tr("Enable"))
         self.grp_annotations.setTitle(tr("Graphic Annotations"))
-        self.lbl_ann_visible.setText(tr("Show Annotations"))
         self.btn_add_arrow.setToolTip(tr("Arrow Tool"))
         self.btn_add_text.setToolTip(tr("Text Tool"))
         self.btn_clear_ann.setToolTip(tr("Clear All Annotations"))

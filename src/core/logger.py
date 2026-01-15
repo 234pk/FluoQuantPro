@@ -51,16 +51,25 @@ class Logger:
         except Exception as e:
             print(f"[Logger] Error cleaning up old logs: {e}")
             
-        # Generate filename with timestamp
+        # Generate filenames
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = os.path.join(log_dir, f"debug_{timestamp}.log")
+        latest_log = os.path.join(log_dir, "latest.log")
+        archive_log = os.path.join(log_dir, f"debug_{timestamp}.log")
+        
+        # If latest.log exists, rename it to archive it before starting new session
+        if os.path.exists(latest_log):
+            try:
+                os.rename(latest_log, archive_log)
+            except Exception as e:
+                print(f"[Logger] Failed to archive previous log: {e}")
+                # If rename fails, we'll just append or overwrite latest.log
         
         # Configure logging
         logging.basicConfig(
             level=logging.DEBUG,
             format='%(asctime)s [%(levelname)s] [%(filename)s:%(lineno)d] %(message)s',
             handlers=[
-                logging.FileHandler(log_file, encoding='utf-8'),
+                logging.FileHandler(latest_log, encoding='utf-8'),
                 logging.StreamHandler(sys.stdout)
             ]
         )
@@ -68,9 +77,17 @@ class Logger:
         # Suppress Matplotlib font manager debug logs
         logging.getLogger('matplotlib').setLevel(logging.WARNING)
         
-        logging.info(f"Logging initialized. Log file: {log_file}")
+        logging.info(f"Logging initialized. Log file: {latest_log}")
         cls._instance = logging.getLogger("FluoQuantPro")
+        cls._log_dir = log_dir
         return cls._instance
+
+    @classmethod
+    def get_log_dir(cls):
+        """Returns the absolute path to the log directory."""
+        if not cls._instance:
+            cls.setup()
+        return cls._log_dir
 
     @staticmethod
     def log(message, level=logging.INFO):

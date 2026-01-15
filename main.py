@@ -1,8 +1,5 @@
 import os
 import sys
-from pathlib import Path
-import multiprocessing
-
 import time
 import ctypes
 import multiprocessing
@@ -11,14 +8,18 @@ matplotlib.use('QtAgg')
 import numpy as np
 import cv2
 import tifffile
+import csv
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                                QHBoxLayout, QLabel, QFileDialog, QDockWidget, QMenu, QMessageBox, QScrollArea, QFrame, QToolButton, QSizePolicy,
                                QGraphicsDropShadowEffect, QPushButton, QStackedWidget)
-from PySide6.QtGui import QAction, QDesktopServices, QColor, QPalette
-from PySide6.QtCore import Qt, QTimer, QUrl, QSettings, QSize, QPropertyAnimation, QEasingCurve, QRect, QEvent, QPoint
+from PySide6.QtGui import QAction, QDesktopServices, QColor, QPalette, QUndoStack
+from PySide6.QtCore import Qt, QTimer, QUrl, QSettings, QSize, QPropertyAnimation, QEasingCurve, QRect, QEvent, QPoint, QThread, Signal, QPointF
 
 from src.core.language_manager import LanguageManager, tr
+from src.core.workers import SceneLoaderWorker
+from src.gui.effects import HoverEffectFilter
+from src.core.telemetry import telemetry
 
 # --- Splash Helper ---
 def update_splash(text=None, progress=None, close=False):
@@ -38,111 +39,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-import time
-import ctypes
-import multiprocessing
-import matplotlib
-matplotlib.use('QtAgg')
-import numpy as np
-import cv2
-import tifffile
-
 # 更新进度
 update_splash(tr("Loading GUI Components..."), 40)
 
-from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
-                               QHBoxLayout, QLabel, QFileDialog, QDockWidget, QMenu, QMessageBox, QScrollArea, QFrame, QToolButton, QSizePolicy,
-                               QGraphicsDropShadowEffect, QPushButton, QStackedWidget)
-from PySide6.QtGui import QAction, QDesktopServices, QColor, QPalette
-from PySide6.QtCore import Qt, QTimer, QUrl, QSettings, QSize, QPropertyAnimation, QEasingCurve, QRect, QEvent, QPoint
-
-class HoverEffectFilter(QFrame):
-    """
-    Event filter to provide advanced hover/press effects for buttons:
-    - Scaling (105% hover, 98% press)
-    - Dynamic Shadows (Blur/Opacity)
-    - Elastic Animations
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._animations = {}
-        self._shadows = {}
-
-    def eventFilter(self, obj, event):
-        # Strict type checking to avoid interfering with CanvasView or other widgets
-        if type(obj) not in (QPushButton, QToolButton):
-            return False
-
-        # Only handle basic mouse/hover events for buttons
-        if not obj.isEnabled():
-            return False
-
-        if event.type() == QEvent.Type.Enter:
-            self._apply_hover_effect(obj, True)
-        elif event.type() == QEvent.Type.Leave:
-            self._apply_hover_effect(obj, False)
-        elif event.type() == QEvent.Type.MouseButtonPress:
-            self._apply_press_effect(obj, True)
-        elif event.type() == QEvent.Type.MouseButtonRelease:
-            self._apply_press_effect(obj, False)
-            
-        return False # IMPORTANT: Never return True, always let the original widget handle the event
-
-    def _apply_hover_effect(self, btn, hovering):
-        # 1. Scaling Animation - Subtler scaling
-        scale = 1.02 if hovering else 1.0
-        self._animate_geometry(btn, scale, tilt=hovering)
-        
-        # 2. Shadow Effect - Subtler shadow
-        if hovering:
-            shadow = QGraphicsDropShadowEffect(btn)
-            shadow.setBlurRadius(10) # Reduced spread
-            shadow.setOffset(0, 3) # Reduced offset
-            shadow.setColor(QColor(0, 0, 0, 40)) # Lighter shadow
-            btn.setGraphicsEffect(shadow)
-            self._shadows[btn] = shadow
-        else:
-            btn.setGraphicsEffect(None)
-            if btn in self._shadows:
-                del self._shadows[btn]
-
-    def _apply_press_effect(self, btn, pressed):
-        scale = 0.98 if pressed else 1.02
-        self._animate_geometry(btn, scale, tilt=not pressed)
-
-    def _animate_geometry(self, btn, scale_factor, tilt=False):
-        base_geo = btn.property("base_geometry")
-        if base_geo is None:
-            base_geo = btn.geometry()
-            btn.setProperty("base_geometry", base_geo)
-
-        center = base_geo.center()
-        
-        # Add very slight offset for dynamic feel
-        if tilt:
-            center += QPoint(0, -1) # Move up only 1px on hover
-            
-        new_w = int(base_geo.width() * scale_factor)
-        new_h = int(base_geo.height() * scale_factor)
-        
-        target_geo = QRect(0, 0, new_w, new_h)
-        target_geo.moveCenter(center)
-
-        anim = self._animations.get(btn)
-        if anim:
-            anim.stop()
-        else:
-            anim = QPropertyAnimation(btn, b"geometry")
-            self._animations[btn] = anim
-
-        anim.setDuration(150) # Faster transition (150ms)
-        anim.setStartValue(btn.geometry())
-        anim.setEndValue(target_geo)
-        
-        # Use smoother curves without overshoot
-        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-            
-        anim.start()
 import csv
 from src.core.logger import Logger  # Import Logger
 from src.core.data_model import Session, ImageChannel  
@@ -215,87 +114,6 @@ def get_resource_path(relative_path):
     dev_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
     return dev_path
 
-class SceneLoaderWorker(QThread):
-    # scene_id, index, data (numpy array or None), channel_def (object)
-    channel_loaded = Signal(str, int, object, object) 
-    finished_loading = Signal(str)
-
-    def __init__(self, scene_id, channel_defs):
-        super().__init__()
-        self.scene_id = scene_id
-        self.channel_defs = channel_defs
-        self._is_running = True
-        
-    def preprocess_data(self, data):
-        """
-        Pre-process data in the worker thread to save main thread CPU time.
-        Handles Max Projection for Z-stacks/Multichannel images.
-        """
-        if data is None: return None
-        
-        # Logic matched with ImageChannel.__init__
-        if data.ndim == 3:
-            # Case 1: (C, H, W) or (Z, H, W) where C/Z is small leading dimension
-            if data.shape[0] < 10: 
-                # If it's 3 or 4 channels, it might be RGB (channels-first).
-                # Keep as 3D so ImageChannel can extract the correct channel based on name.
-                if data.shape[0] in (3, 4):
-                    return data
-                # Otherwise, assume Z-stack and take Max Projection
-                return np.max(data, axis=0)
-            
-            # Case 2: (H, W, C) where C is small trailing dimension (e.g. RGB)
-            elif data.shape[2] in (3, 4):
-                # RGB/RGBA - Keep as 3D for ImageChannel to handle extraction
-                return data
-            elif data.shape[2] < 10:
-                # Multichannel -> Grayscale Max Projection
-                return np.max(data, axis=2)
-                
-        return data
-
-    def run(self):
-        Logger.info("[Worker] Started")
-        for i, ch_def in enumerate(self.channel_defs):
-            if not self._is_running: return
-            
-            data = None
-            if ch_def.path and os.path.exists(ch_def.path):
-                try:
-                    Logger.info(f"[Worker] Reading {os.path.basename(ch_def.path)}...")
-                    # Use the robust ImageLoader instead of raw tifffile
-                    from src.core.image_loader import ImageLoader
-                    data, is_rgb = ImageLoader.load_image(ch_def.path)
-                    
-                    # ImageLoader already handles 4D+ and basic dimension normalization
-                    # We still call preprocess_data for any extra user-defined logic (like Max Projection for 3D Z-stacks)
-                    if data is not None:
-                        data = self.preprocess_data(data)
-                        
-                except Exception as e:
-                    Logger.error(f"Error loading {ch_def.path}: {e}")
-            
-            if not self._is_running: return
-            
-            # Create ImageChannel object in worker thread (performs stats calculation)
-            try:
-                    Logger.info(f"[Worker] Creating ImageChannel {i}...")
-                    # Note: ImageChannel is a data class, safe to create here if no Qt parents involved
-                    ch_obj = ImageChannel(ch_def.path, ch_def.color, ch_def.channel_type, data=data, auto_contrast=False)
-                    Logger.info(f"[Worker] Emitting channel_loaded {i}")
-                    self.channel_loaded.emit(self.scene_id, i, ch_obj, ch_def)
-            except Exception as e:
-                Logger.error(f"Error creating ImageChannel in worker: {e}")
-                # Fallback to passing data if object creation fails (should not happen)
-                self.channel_loaded.emit(self.scene_id, i, data, ch_def)
-
-        Logger.info("[Worker] Finished")
-        self.finished_loading.emit(self.scene_id)
-
-    def stop(self):
-        self._is_running = False
-        self.wait()
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -320,9 +138,9 @@ class MainWindow(QMainWindow):
             width = min(width, available_geo.width())
             height = min(height, available_geo.height())
             
-            # Minimum reasonable size
-            width = max(1024, width)
-            height = max(720, height)
+            # Minimum reasonable size, but respect screen bounds
+            width = max(min(1024, available_geo.width()), width)
+            height = max(min(720, available_geo.height()), height)
             
             self.resize(width, height)
             
@@ -332,7 +150,10 @@ class MainWindow(QMainWindow):
                 available_geo.y() + (available_geo.height() - height) // 2
             )
             
-            # On small screens (e.g. 1366x768), default to maximized for better UX
+            # Set minimum size to ensure it doesn't shrink to an unusable size,
+            # but keep it low enough to fit on most screens.
+            self.setMinimumSize(800, 600)
+            
             if available_geo.width() <= 1366:
                 QTimer.singleShot(0, self.showMaximized)
         else:
@@ -371,6 +192,9 @@ class MainWindow(QMainWindow):
         # OpenCL Initialization
         self.init_opencl()
         
+        # Telemetry: Report anonymous usage
+        telemetry.report_usage("startup")
+
         # 更新进度到完成
         update_splash(tr("Finalizing UI..."), 100)
         
@@ -451,6 +275,8 @@ class MainWindow(QMainWindow):
             self.sample_list.channel_cleared.connect(self.on_channel_cleared)
         if hasattr(self.sample_list, "channel_removed"):
             self.sample_list.channel_removed.connect(self.on_channel_removed)
+        if hasattr(self.sample_list, "scene_structure_changed"):
+            self.sample_list.scene_structure_changed.connect(self.on_channel_added)
         self.sample_dock.setWidget(self.sample_list)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sample_dock)
         
@@ -1445,6 +1271,11 @@ class MainWindow(QMainWindow):
         self.action_manual.setIcon(get_icon("help", "help-browser"))
         self.action_manual.triggered.connect(self.open_manual)
         
+        self.action_open_logs = QAction(tr("Open Logs Folder"), self)
+        self.action_open_logs.setStatusTip(tr("Open the directory containing application logs"))
+        self.action_open_logs.setIcon(get_icon("folder", "folder-open"))
+        self.action_open_logs.triggered.connect(self.open_logs_folder)
+
         # Shortcuts changed to Ctrl+F1 to avoid conflict with Manual (standard F1)
         self.action_shortcuts.setShortcut("Ctrl+F1")
 
@@ -1572,6 +1403,7 @@ class MainWindow(QMainWindow):
         self.menu_help = menu_bar.addMenu(tr("Help"))
         self.menu_help.addAction(self.action_manual)
         self.menu_help.addAction(self.action_shortcuts)
+        self.menu_help.addAction(self.action_open_logs)
         self.menu_help.addSeparator()
         self.menu_help.addAction(self.action_about)
 
@@ -2059,6 +1891,15 @@ class MainWindow(QMainWindow):
         Logger.info(f"[Main] Channel removed: scene={scene_id}, ch={ch_index}")
         if self.current_scene_id == scene_id:
             # Full reload needed because channel indices shift
+            self.load_scene(scene_id, force=True)
+
+    def on_channel_added(self, scene_id):
+        """
+        Callback when a new empty channel slot is added.
+        """
+        Logger.info(f"[Main] Channel added to scene: {scene_id}")
+        if self.current_scene_id == scene_id:
+            # Force reload to show the new (empty) channel slot in adjustments etc.
             self.load_scene(scene_id, force=True)
 
     def update_window_title(self):
@@ -4152,6 +3993,15 @@ class MainWindow(QMainWindow):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(local_manual))
             else:
                 QMessageBox.warning(self, tr("Manual Not Found"), tr("Could not find manual at {0}").format(manual_path))
+
+    def open_logs_folder(self):
+        """Opens the system log directory in the file explorer."""
+        from src.core.logger import Logger
+        log_dir = Logger.get_log_dir()
+        if os.path.exists(log_dir):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(log_dir))
+        else:
+            QMessageBox.warning(self, tr("Logs Not Found"), tr("Could not find logs directory at {0}").format(log_dir))
 
     def show_about(self):
         """Shows the About dialog."""

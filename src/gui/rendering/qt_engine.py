@@ -67,6 +67,9 @@ class QtRenderEngine(IRenderEngine):
             
         # Text specific style
         font_size = style.get('font_size', 12)
+        # Ensure font_size is at least 1 to avoid QFont warning
+        if font_size <= 0:
+            font_size = 12
         font_family = style.get('font_family', 'Arial')
         color = style.get('text_color', style.get('pen_color', '#FFFFFF'))
         

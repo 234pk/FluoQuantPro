@@ -13,26 +13,22 @@ def find_untranslated_strings(root_dir, translation_file):
     tr_pattern = re.compile(r'tr\((["\'])(.*?)\1\)')
     
     # 2. Hardcoded strings in common UI methods (not wrapped in tr)
-    # This is a bit tricky, we look for methods like setText, setWindowTitle, etc.
     ui_methods = [
         'setText', 'setWindowTitle', 'setToolTip', 'setStatusTip', 
         'setPlaceholderText', 'setTabText', 'setHeaderLabels',
         'information', 'warning', 'critical', 'question', 'addItem',
         'addAction', 'QPushButton', 'QLabel', 'QAction', 'QGroupBox',
-        'QCheckBox', 'QRadioButton', 'QMenu', 'setTitle'
+        'QCheckBox', 'QRadioButton', 'QMenu', 'setTitle', 'QMessageBox'
     ]
     
-    # regex for ui_method("string") or ui_method('string')
     hardcoded_patterns = [
         re.compile(rf'{method}\(\s*(["\'])(.*?)\1\s*[,)]') 
         for method in ui_methods
     ]
 
-    # Additional pattern for tr() with variables or f-strings (harder to catch, but we can try)
-    
     results = {
-        "missing_from_json": set(), # Wrapped in tr() but not in translations.json
-        "hardcoded_no_tr": []      # Not wrapped in tr() at all
+        "missing_from_json": set(), 
+        "hardcoded_no_tr": []      
     }
 
     for root, dirs, files in os.walk(root_dir):
@@ -48,32 +44,21 @@ def find_untranslated_strings(root_dir, translation_file):
                     # Check tr() usage
                     for match in tr_pattern.finditer(content):
                         string = match.group(2)
-                        # Unescape common sequences
-                        processed_string = string.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r").replace("\\\"", "\"").replace("\\'", "'")
-                        if processed_string not in translations:
+                        if string not in translations:
                             results["missing_from_json"].add((string, file_path))
                     
                     # Check hardcoded strings (no tr)
                     for pattern in hardcoded_patterns:
                         for match in pattern.finditer(content):
-                            # Ensure it's not already wrapped in tr()
-                            # This regex is simple and might have false positives, 
-                            # but we can refine it.
                             full_match = match.group(0)
                             string = match.group(2)
                             
-                            # Skip if it contains 'tr('
                             if 'tr(' in full_match:
                                 continue
-                                
-                            # Skip empty strings or very short strings that are likely IDs
                             if len(string) < 2:
                                 continue
-                                
-                            # Skip strings that are likely internal keys (no spaces, all lowercase/caps)
                             if ' ' not in string and (string.islower() or string.isupper()):
-                                # This is a heuristic, might skip some actual UI text like "OK"
-                                if string not in ["OK", "Cancel", "Save", "Add", "Edit", "View", "Help"]:
+                                if string not in ["OK", "Cancel", "Save", "Add", "Edit", "View", "Help", "Yes", "No"]:
                                     continue
 
                             results["hardcoded_no_tr"].append({
@@ -91,10 +76,14 @@ if __name__ == "__main__":
     
     findings = find_untranslated_strings(root, trans_file)
     
-    print("\n--- Missing from translations.json (Wrapped in tr() but no translation) ---")
-    for s, f in sorted(findings["missing_from_json"]):
-        print(f"[{os.path.basename(f)}] {s}")
-        
-    print("\n--- Hardcoded strings (NOT wrapped in tr()) ---")
-    for item in findings["hardcoded_no_tr"]:
-        print(f"[{os.path.basename(item['file'])}:{item['line']}] {item['string']}  --> {item['context']}")
+    output_file = r"f:\ubuntu\IF_analyzer\FluoQuantPro\untranslated_report.txt"
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("--- Missing from translations.json (Wrapped in tr() but no translation) ---\n")
+        for s, file_path in sorted(findings["missing_from_json"]):
+            f.write(f"[{os.path.basename(file_path)}] {s}\n")
+            
+        f.write("\n--- Hardcoded strings (NOT wrapped in tr()) ---\n")
+        for item in findings["hardcoded_no_tr"]:
+            f.write(f"[{os.path.basename(item['file'])}:{item['line']}] {item['string']}  --> {item['context']}\n")
+            
+    print(f"Report written to {output_file}")

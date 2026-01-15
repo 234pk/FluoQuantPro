@@ -96,7 +96,7 @@ class RoiToolbox(QWidget):
             (self.main_window.action_clear, 3, 1),
             (self.main_window.action_undo, 4, 0),
             (self.main_window.action_redo, 4, 1),
-            (self.main_window.action_batch_select, 5, 0, 1, 2),
+            # (self.main_window.action_batch_select, 5, 0, 1, 2), # Hidden as per user request
         ]
         
         for tool_info in tools:
@@ -1096,7 +1096,7 @@ class RoiToolbox(QWidget):
             elif is_transition:
                 # 过渡模式：弹性拉伸，高度固定
                 btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                btn.setMinimumHeight(28)
+                btn.setMinimumHeight(24) # Reduced from 28
                 btn.setMaximumHeight(32)
                 btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
                 # 取消宽度限制
@@ -1105,7 +1105,7 @@ class RoiToolbox(QWidget):
             else:
                 # 舒适模式：显示文字 + 图标，更宽大
                 btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-                btn.setMinimumHeight(34)
+                btn.setMinimumHeight(30) # Reduced from 34
                 btn.setIconSize(QSize(icon_size, icon_size))
                 btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
                 btn.setMinimumWidth(0)

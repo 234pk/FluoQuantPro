@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QListWidget, QListWidgetIte
                                QLineEdit, QHBoxLayout, QToolButton, QHeaderView,
                                QSizePolicy, QColorDialog, QApplication, QToolTip,
                                QDialog, QDialogButtonBox, QGridLayout, QComboBox, QRadioButton)
-from PySide6.QtCore import Qt, Signal, QSize, QUrl, QSettings, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QUrl, QSettings, QTimer, QPoint
 from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPixmap, QIcon, QAction, QPalette
 from src.gui.icon_manager import get_icon
 from src.gui.toggle_switch import ToggleSwitch
@@ -312,6 +312,7 @@ class SampleListWidget(QWidget):
     channel_file_assigned = Signal(str, int, str) # scene_id, ch_index, file_path
     channel_cleared = Signal(str, int) # scene_id, channel_index
     channel_removed = Signal(str, int) # scene_id, channel_index
+    scene_structure_changed = Signal(str) # scene_id
 
     def __init__(self, project_model: ProjectModel, parent=None):
         super().__init__(parent)
@@ -427,7 +428,7 @@ class SampleListWidget(QWidget):
         # Enable multiple columns for button layout (Column 0: Text, Column 1: Button)
         self.tree_widget.setColumnCount(2)
         self.tree_widget.setMinimumWidth(0)
-        self.tree_widget.setMinimumHeight(100) # Ensure it doesn't collapse vertically
+        self.tree_widget.setMinimumHeight(50) # Reduced from 100
         self.tree_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         header = self.tree_widget.header()
         header.setMinimumSectionSize(10) # Allow columns to be very narrow
@@ -512,7 +513,7 @@ class SampleListWidget(QWidget):
         self.pool_list = FileListWidget()
         self.pool_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.pool_list.setMinimumWidth(0)
-        self.pool_list.setMinimumHeight(100)
+        self.pool_list.setMinimumHeight(50) # Reduced from 100
         self.pool_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.pool_list.setDragEnabled(True) # Enable dragging FROM here
         self.pool_list.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
@@ -1101,6 +1102,9 @@ class SampleListWidget(QWidget):
 
     def on_add_channel_clicked(self, scene_id):
         self.project_model.add_empty_channel(scene_id)
+        # Refresh UI and notify other components to update (e.g., Image Display)
+        self.refresh_list()
+        self.scene_structure_changed.emit(scene_id)
 
     def on_remove_channel_clicked(self, scene_id, channel_index):
         """Removes a channel slot from a scene."""
@@ -1139,7 +1143,14 @@ class SampleListWidget(QWidget):
     def tree_drag_move_event(self, event):
         if event.mimeData().hasUrls() or event.source() == self.pool_list:
             event.acceptProposedAction()
-            target_item = self.tree_widget.itemAt(event.position().toPoint())
+            pos = event.position().toPoint()
+            target_item = self.tree_widget.itemAt(pos)
+            
+            # Fuzzier hit test: if no item directly under cursor, try a point slightly to the right
+            # to account for indentation or empty space in the row.
+            if not target_item:
+                target_item = self.tree_widget.itemAt(QPoint(50, pos.y()))
+
             if not target_item:
                 if self._drag_hint_last_key is not None:
                     QToolTip.hideText()
@@ -1270,7 +1281,12 @@ class SampleListWidget(QWidget):
         if not file_paths:
             return
 
-        target_item = self.tree_widget.itemAt(event.position().toPoint())
+        pos = event.position().toPoint()
+        target_item = self.tree_widget.itemAt(pos)
+        
+        # Fuzzier hit test
+        if not target_item:
+            target_item = self.tree_widget.itemAt(QPoint(50, pos.y()))
         
         if target_item:
             item_type = target_item.data(0, Qt.ItemDataRole.UserRole + 1)
@@ -1422,6 +1438,21 @@ class SampleListWidget(QWidget):
         assigned_count = 0
         unmatched_files = []
         
+        # Optimization for single channel mode: 
+        # If scene has exactly one empty channel, assign the first valid file directly.
+        empty_channels = [i for i, ch in enumerate(scene.channels) if not ch.path]
+        if len(scene.channels) == 1 and len(empty_channels) == 1 and file_paths:
+            fpath = file_paths[0]
+            if self._check_image_channels(fpath):
+                self.project_model.update_channel_path(scene_id, empty_channels[0], fpath)
+                self.channel_file_assigned.emit(scene_id, empty_channels[0], fpath)
+                assigned_count = 1
+                file_paths = file_paths[1:] # Continue with remaining files if any
+                if not file_paths:
+                    self.refresh_list()
+                    self.scene_structure_changed.emit(scene_id)
+                    return
+
         for fpath in file_paths:
             if not self._check_image_channels(fpath):
                 continue
@@ -1480,7 +1511,7 @@ class SampleListWidget(QWidget):
             QMessageBox.warning(self, tr("Unmatched Files"), msg)
 
         self.refresh_list()
-        self.scene_selected.emit(scene_id)
+        self.scene_structure_changed.emit(scene_id)
 
     def guess_channel(self, filename):
         name_upper = filename.upper()
@@ -1907,7 +1938,7 @@ class SampleListWidget(QWidget):
                 # Refresh UI
                 self.refresh_list()
                 # Notify others if needed (e.g. if AdjustmentPanel shows channel names)
-                self.scene_selected.emit(scene_id)
+                self.scene_structure_changed.emit(scene_id)
 
     def change_channel_color(self, scene_id, ch_index):
         """Opens a color dialog to change the channel color."""
@@ -1946,7 +1977,7 @@ class SampleListWidget(QWidget):
              
         self.project_model.update_channel_name(scene_id, ch_index, new_name)
         self.refresh_list()
-        self.scene_selected.emit(scene_id)
+        self.scene_structure_changed.emit(scene_id)
 
     def update_batch_actions_state(self):
         """Updates the state of batch operation buttons based on selection."""

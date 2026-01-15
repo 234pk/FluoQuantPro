@@ -264,7 +264,10 @@ class HistogramWidget(QWidget):
         
         # Draw Min/Max Labels
         font = painter.font()
-        font.setPointSize(8)
+        font_size = 8
+        if font_size <= 0:
+            font_size = 8
+        font.setPointSize(font_size)
         font.setBold(True)
         painter.setFont(font)
         

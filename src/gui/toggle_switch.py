@@ -4,7 +4,7 @@ from PySide6.QtGui import QPainter, QColor, QBrush, QPen
 from src.gui.theme_manager import ThemeManager
 
 class ToggleSwitch(QAbstractButton):
-    def __init__(self, parent=None, track_radius=10, thumb_radius=8):
+    def __init__(self, parent=None, track_radius=8, thumb_radius=6):
         # Initialize attributes BEFORE super().__init__ in case sizeHint is called
         self._track_radius = track_radius
         self._thumb_radius = thumb_radius

@@ -5,6 +5,8 @@ from src.core.data_model import ImageChannel
 from src.core.roi_model import ROI
 from src.core.algorithms import qpath_to_mask
 from src.core.channel_config import get_rgb_mapping
+from src.core.language_manager import tr
+from src.core.logger import Logger
 
 class MeasureEngine:
     """
@@ -92,7 +94,7 @@ class MeasureEngine:
         Logger.debug(f"[MeasureEngine] measure_roi for ROI {roi.id} ({roi.label})")
         
         if not channels:
-            Logger.warning("[MeasureEngine] No channels provided for measurement")
+            Logger.warning(tr("[MeasureEngine] No channels provided for measurement"))
             return {}
             
         # 1. Rasterize ROI to Mask

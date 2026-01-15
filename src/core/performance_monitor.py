@@ -2,6 +2,7 @@ import time
 import os
 from PySide6.QtCore import QObject, QThread, Signal, QTimer, Qt
 from src.core.logger import Logger
+from src.core.language_manager import tr
 
 try:
     import psutil
@@ -47,7 +48,7 @@ class WatchdogThread(QThread):
         self.requestInterruption()
         self.quit()
         if not self.wait(500): # Wait up to 500ms
-            Logger.warning("[Performance] Watchdog thread did not stop in time, terminating...")
+            Logger.warning(tr("[Performance] Watchdog thread did not stop in time, terminating..."))
             self.terminate()
             self.wait() # Ensure it's dead
 

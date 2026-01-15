@@ -18,9 +18,10 @@ class EmptyStateWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setMinimumHeight(100) # Further reduced from 200
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(20)
+        layout.setSpacing(5) # Reduced from 10
         
         # Icon
         self.icon_label = QLabel()
@@ -40,18 +41,18 @@ class EmptyStateWidget(QWidget):
         self.subtitle_label.setObjectName("empty_subtitle")
         self.subtitle_label.setProperty("role", "subtitle")
         self.subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.subtitle_label.setWordWrap(True) # Ensure it doesn't force width
         layout.addWidget(self.subtitle_label)
         
         # Action Buttons Container
         self.btn_container = QWidget()
-        # Use a more adaptive max width based on content but allow it to shrink
         from PySide6.QtWidgets import QSizePolicy
-        self.btn_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-        self.btn_container.setMinimumWidth(300)
+        self.btn_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.btn_container.setMinimumWidth(250) # Reduced from 300
         self.btn_container.setMaximumWidth(600) 
         btn_layout = QVBoxLayout(self.btn_container)
-        btn_layout.setSpacing(12)
-        btn_layout.setContentsMargins(20, 20, 20, 20)
+        btn_layout.setSpacing(6) # Reduced from 8
+        btn_layout.setContentsMargins(5, 5, 5, 5) # Reduced from 10
         layout.addWidget(self.btn_container, 0, Qt.AlignmentFlag.AlignCenter)
         
         # New Project
@@ -60,7 +61,6 @@ class EmptyStateWidget(QWidget):
         self.btn_new.setIconSize(QSize(28, 28))
         self.btn_new.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_new.setProperty("role", "success")
-        self.btn_new.setMinimumHeight(50)
         btn_layout.addWidget(self.btn_new)
 
         # Open Project
@@ -69,20 +69,23 @@ class EmptyStateWidget(QWidget):
         self.btn_open.setIconSize(QSize(28, 28))
         self.btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_open.setProperty("role", "info")
-        self.btn_open.setMinimumHeight(50)
         btn_layout.addWidget(self.btn_open)
 
         # Separator for secondary actions
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        sep.setStyleSheet("background-color: rgba(128, 128, 128, 60); margin: 10px 0;")
-        btn_layout.addWidget(sep)
+        self.sep = QFrame()
+        self.sep.setFrameShape(QFrame.Shape.HLine)
+        self.sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self.sep.setStyleSheet("background-color: rgba(128, 128, 128, 60); margin: 2px 0;") # Reduced from 5px
+        btn_layout.addWidget(self.sep)
 
-        # Secondary Actions Row 1
-        sec_layout1 = QVBoxLayout()
-        sec_layout1.setSpacing(8)
-        btn_layout.addLayout(sec_layout1)
+        # Secondary Actions Container
+        self.sec_container = QWidget()
+        from PySide6.QtWidgets import QSizePolicy
+        self.sec_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        sec_layout1 = QVBoxLayout(self.sec_container)
+        sec_layout1.setContentsMargins(0, 0, 0, 0)
+        sec_layout1.setSpacing(6) # Reduced from 8
+        btn_layout.addWidget(self.sec_container)
 
         # Import Images
         self.btn_import = QPushButton(tr("Import Images"))
@@ -90,7 +93,6 @@ class EmptyStateWidget(QWidget):
         self.btn_import.setIconSize(QSize(24, 24))
         self.btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_import.setProperty("role", "warning")
-        self.btn_import.setMinimumHeight(40)
         sec_layout1.addWidget(self.btn_import)
         
         # Import Folder
@@ -99,7 +101,6 @@ class EmptyStateWidget(QWidget):
         self.btn_import_folder.setIconSize(QSize(24, 24))
         self.btn_import_folder.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_import_folder.setProperty("role", "warning")
-        self.btn_import_folder.setMinimumHeight(40)
         sec_layout1.addWidget(self.btn_import_folder)
         
         # Import Merge
@@ -108,7 +109,6 @@ class EmptyStateWidget(QWidget):
         self.btn_import_merge.setIconSize(QSize(24, 24))
         self.btn_import_merge.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_import_merge.setProperty("role", "warning")
-        self.btn_import_merge.setMinimumHeight(40)
         sec_layout1.addWidget(self.btn_import_merge)
         
         # Recent Projects Button
@@ -116,7 +116,6 @@ class EmptyStateWidget(QWidget):
         self.btn_recent.setIcon(get_icon("open", "document-open-recent"))
         self.btn_recent.setIconSize(QSize(24, 24))
         self.btn_recent.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_recent.setMinimumHeight(40)
         btn_layout.addWidget(self.btn_recent)
         
         # Recent Projects List Section (Keep for quick access)
@@ -128,7 +127,7 @@ class EmptyStateWidget(QWidget):
         
         self.list_recent = QListWidget()
         self.list_recent.setProperty("role", "recent")
-        self.list_recent.setMinimumHeight(60)
+        # Removed fixed minimum height to allow shrinking
         self.list_recent.setMaximumHeight(150)
         self.list_recent.hide()
         btn_layout.addWidget(self.list_recent)
@@ -151,6 +150,10 @@ class EmptyStateWidget(QWidget):
     def resizeEvent(self, event):
         """Adapt icon and font sizes based on widget dimensions."""
         super().resizeEvent(event)
+        self._update_layout_for_size()
+
+    def _update_layout_for_size(self):
+        """Internal helper to adjust layout based on current dimensions."""
         w = self.width()
         h = self.height()
         
@@ -164,73 +167,78 @@ class EmptyStateWidget(QWidget):
             icon_size = int(128 * scale)
             if h < 400:
                 icon_size = int(64 * scale)
+            if h < 200:
+                icon_size = int(32 * scale)
             icon = get_icon("import", "document-import")
             self.icon_label.setPixmap(icon.pixmap(icon_size, icon_size))
-            self.icon_label.setVisible(h > 250)
+            self.icon_label.setVisible(h > 150) # Reduced from 250
         
         # 2. Update Font Sizes
         # We use setStyleSheet to ensure it overrides any global QSS fixed sizes
         if hasattr(self, 'title_label'):
-            font_size = max(16, int(28 * scale))
+            font_size = max(14, int(28 * scale)) # Reduced min from 16
             self.title_label.setStyleSheet(f"font-size: {font_size}px; font-weight: bold;")
-            self.title_label.setVisible(h > 180)
+            self.title_label.setVisible(h > 120) # Reduced from 180
         
         if hasattr(self, 'subtitle_label'):
-            sub_font_size = max(12, int(16 * scale))
+            sub_font_size = max(10, int(16 * scale)) # Reduced min from 12
             self.subtitle_label.setStyleSheet(f"font-size: {sub_font_size}px; font-weight: normal;")
-            self.subtitle_label.setVisible(h > 120)
+            self.subtitle_label.setVisible(h > 80) # Reduced from 120
         
         # 3. Update Button Container Width and Margins
         if hasattr(self, 'btn_container'):
-            container_width = int(min(600, max(320, w * 0.45)))
+            container_width = int(min(600, max(280, w * 0.45))) # Reduced min from 320
             self.btn_container.setFixedWidth(container_width)
             
-            # Use a more relaxed height constraint - only limit if h is very small
-            # and allow the container to use more space if available.
-            if h < 600:
-                # When space is tight, hide elements instead of squashing the container
-                self.btn_container.setMaximumHeight(h - 50 if h > 100 else 50)
-            else:
-                self.btn_container.setMaximumHeight(16777215) # QWIDGETSIZE_MAX
+            # Remove hard maximum height constraint that can lead to layout loops
+            # self.btn_container.setMaximumHeight(16777215)
             
-            self.btn_container.setVisible(h > 150)
+            self.btn_container.setVisible(h > 100) # Reduced from 150
         
-        # 4. Update Button Heights and Icons
-        # Reduced base sizes slightly to prevent overcrowding on smaller screens
-        btn_height = max(32, int(48 * scale))
-        sec_btn_height = max(28, int(38 * scale))
-        icon_dim = max(20, int(24 * scale))
-        sec_icon_dim = max(18, int(20 * scale))
+        # 4. Update Secondary Actions Visibility
+        if hasattr(self, 'sec_container'):
+            # Hide secondary actions if height is small (e.g., < 450)
+            is_sec_visible = h > 450
+            self.sec_container.setVisible(is_sec_visible)
+            if hasattr(self, 'sep'):
+                self.sep.setVisible(is_sec_visible)
+
+        # 5. Update Button Heights and Icons
+        # Use setFixedHeight for scaling to avoid influencing the minimum size of the parent layout
+        btn_height = max(24, int(44 * scale)) # Reduced min from 28
+        sec_btn_height = max(22, int(36 * scale)) # Reduced min from 24
+        icon_dim = max(16, int(22 * scale)) # Reduced min from 18
+        sec_icon_dim = max(14, int(18 * scale)) # Reduced min from 16
 
         if hasattr(self, 'btn_new'):
-            self.btn_new.setMinimumHeight(btn_height)
+            self.btn_new.setFixedHeight(btn_height)
             self.btn_new.setIconSize(QSize(icon_dim, icon_dim))
         if hasattr(self, 'btn_open'):
-            self.btn_open.setMinimumHeight(btn_height)
+            self.btn_open.setFixedHeight(btn_height)
             self.btn_open.setIconSize(QSize(icon_dim, icon_dim))
         
         # Direct access is safer
         # More aggressive hiding of secondary elements when height is low
         if hasattr(self, 'btn_import'):
-            self.btn_import.setMinimumHeight(sec_btn_height)
+            self.btn_import.setFixedHeight(sec_btn_height)
             self.btn_import.setIconSize(QSize(sec_icon_dim, sec_icon_dim))
-            self.btn_import.setVisible(h > 400) 
+            self.btn_import.setVisible(h > 300) # Reduced from 350
         if hasattr(self, 'btn_import_folder'):
-            self.btn_import_folder.setMinimumHeight(sec_btn_height)
+            self.btn_import_folder.setFixedHeight(sec_btn_height)
             self.btn_import_folder.setIconSize(QSize(sec_icon_dim, sec_icon_dim))
-            self.btn_import_folder.setVisible(h > 450)
+            self.btn_import_folder.setVisible(h > 350) # Reduced from 400
         if hasattr(self, 'btn_import_merge'):
-            self.btn_import_merge.setMinimumHeight(sec_btn_height)
+            self.btn_import_merge.setFixedHeight(sec_btn_height)
             self.btn_import_merge.setIconSize(QSize(sec_icon_dim, sec_icon_dim))
-            self.btn_import_merge.setVisible(h > 500)
+            self.btn_import_merge.setVisible(h > 400) # Reduced from 450
         if hasattr(self, 'btn_recent'):
-            self.btn_recent.setMinimumHeight(sec_btn_height)
+            self.btn_recent.setFixedHeight(sec_btn_height)
             self.btn_recent.setIconSize(QSize(sec_icon_dim, sec_icon_dim))
-            self.btn_recent.setVisible(h > 350)
+            self.btn_recent.setVisible(h > 250) # Reduced from 300
             
         if hasattr(self, 'list_recent'):
-            self.list_recent.setVisible(h > 550 and self.list_recent.count() > 0)
-            self.lbl_recent.setVisible(h > 550 and self.list_recent.count() > 0)
+            self.list_recent.setVisible(h > 450 and self.list_recent.count() > 0) # Reduced from 500
+            self.lbl_recent.setVisible(h > 450 and self.list_recent.count() > 0) # Reduced from 500
 
     def retranslate_ui(self):
         # Already handled by main window for now, but good to have
@@ -276,14 +284,13 @@ class EmptyStateWidget(QWidget):
             recent = [recent] if recent else []
             
         if recent:
-            self.lbl_recent.show()
-            self.list_recent.show()
             self.list_recent.clear()
             for path in recent:
                 if path and isinstance(path, str) and os.path.exists(path):
                     item = QListWidgetItem(path)
                     item.setToolTip(path)
                     self.list_recent.addItem(item)
-        else:
-            self.lbl_recent.hide()
-            self.list_recent.hide()
+        
+        # Instead of calling show() directly, use the sizing helper
+        # which respects height constraints
+        self._update_layout_for_size()

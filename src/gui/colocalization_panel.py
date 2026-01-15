@@ -107,7 +107,7 @@ class LineScanExportDialog(QDialog):
             if len(self.x_axis) > 5:
                 lines.append("...")
                 
-            self.preview_text.setText(tr("\n").join(lines))
+            self.preview_text.setText("\n".join(lines))
             
         else:
             # Generate JSON Preview
@@ -804,7 +804,7 @@ class ColocalizationPanel(QWidget):
                             except Exception:
                                 pearson_texts.append(f"{channel_names[idx1]} vs {channel_names[idx2]}: r=N/A")
             
-            self.lbl_pearson.setText(tr("\n").join(pearson_texts) if pearson_texts else "Pearson r: --")
+            self.lbl_pearson.setText("\n".join(pearson_texts) if pearson_texts else tr("Pearson r: --"))
             
             self.ax.set_xlabel(tr("Distance (pixels)"))
             self.ax.set_ylabel(tr("Intensity (%)") if self.chk_normalize.isChecked() else tr("Intensity (Raw)"))

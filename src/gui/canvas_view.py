@@ -326,8 +326,10 @@ class CanvasView(QGraphicsView):
         font = self.font()
         font.setBold(True)
         font_size = 12
-        if font_size > 0:
-            font.setPointSize(font_size)
+        # Ensure font_size is at least 1 to avoid QFont warning
+        if font_size <= 0:
+            font_size = 12
+        font.setPointSize(font_size)
         metrics = QFontMetrics(font)
         
         text_width = metrics.horizontalAdvance(self.label_text)
@@ -1414,8 +1416,10 @@ class CanvasView(QGraphicsView):
                     font = self.font()
                     font.setBold(True)
                     font_size = 12
-                    if font_size > 0:
-                        font.setPointSize(font_size)
+                    # Ensure font_size is at least 1 to avoid QFont warning
+                    if font_size <= 0:
+                        font_size = 12
+                    font.setPointSize(font_size)
                     painter.setFont(font)
                     palette = QApplication.palette()
                     if self.is_selected:

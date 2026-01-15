@@ -248,13 +248,106 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit {
     background-color: {input_bg};
     border: 1px solid {group_border};
     border-radius: 4px;
-    padding: 4px 8px;
+    padding: 2px 6px;
     color: {text_color};
     selection-background-color: {accent_color};
     selection-color: white;
 }
+
+QSpinBox, QDoubleSpinBox {
+    padding-right: 18px; /* Space for buttons */
+}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 16px;
+    border-left: 1px solid {group_border};
+    border-bottom: 0.5px solid {group_border};
+    border-top-right-radius: 4px;
+    background-color: {button_bg};
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 16px;
+    border-left: 1px solid {group_border};
+    border-top: 0.5px solid {group_border};
+    border-bottom-right-radius: 4px;
+    background-color: {button_bg};
+}
+
+QSpinBox::up-button:hover, QSpinBox::down-button:hover,
+QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
+    background-color: {button_hover};
+}
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: none;
+    background: transparent;
+    width: 0px;
+    height: 0px;
+    min-width: 0px;
+    min-height: 0px;
+    padding: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 4px solid {text_color};
+    subcontrol-origin: padding;
+    subcontrol-position: center;
+}
+
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: none;
+    background: transparent;
+    width: 0px;
+    height: 0px;
+    min-width: 0px;
+    min-height: 0px;
+    padding: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid {text_color};
+    subcontrol-origin: padding;
+    subcontrol-position: center;
+}
+
+QSpinBox::up-arrow:hover, QDoubleSpinBox::up-arrow:hover {
+    border-bottom-color: {accent_color};
+}
+
+QSpinBox::down-arrow:hover, QDoubleSpinBox::down-arrow:hover {
+    border-top-color: {accent_color};
+}
+
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
     border: 1px solid {accent_color};
+}
+
+/* ComboBox Arrow */
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+    border-left-width: 0px;
+}
+
+QComboBox::down-arrow {
+    image: none;
+    background: transparent;
+    width: 0px;
+    height: 0px;
+    min-width: 0px;
+    min-height: 0px;
+    padding: 0px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid {text_color};
+}
+
+QComboBox::down-arrow:hover {
+    border-top-color: {accent_color};
 }
 
 /* Group Box */
