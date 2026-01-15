@@ -38,8 +38,13 @@ jobs:
         export C_INCLUDE_PATH="$SNAPPY_PREFIX/include"
         export CPLUS_INCLUDE_PATH="$SNAPPY_PREFIX/include"
         export LIBRARY_PATH="$SNAPPY_PREFIX/lib"
-        # 针对 python-snappy 源码编译的额外补丁宏定义
-        export CFLAGS="-DPy_SIZE=Py_SIZE"
+        # 针对 python-snappy 源码编译的强制补丁
+        # 将 Py_SIZE 宏重定义为可直接访问成员的格式，从而恢复其在 Python 3.12 下的可写性
+        export CFLAGS="-I$SNAPPY_PREFIX/include -DPy_SIZE(obj)=(((PyVarObject*)(obj))->ob_size)"
+        export CXXFLAGS="-I$SNAPPY_PREFIX/include -DPy_SIZE(obj)=(((PyVarObject*)(obj))->ob_size)"
+        
+        # 先单独安装修复版的 python-snappy
+        pip install "python-snappy==0.7.1"
         
         pip install -r requirements.txt
         pip install nuitka zstandard ordered-set dmgbuild
