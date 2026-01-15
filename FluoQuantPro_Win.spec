@@ -101,5 +101,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='resources/icon.png'
+    icon='resources/icon.ico'
 )
