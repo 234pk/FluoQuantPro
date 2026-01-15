@@ -30,7 +30,7 @@ jobs:
 
     - name: Build EXE
       run: |
-        python build_dist.py
+        pyinstaller --clean --noconfirm FluoQuantPro_Win.spec
 
     - name: Upload Build Logs
       uses: actions/upload-artifact@v4
