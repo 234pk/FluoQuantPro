@@ -1,8 +1,8 @@
 # FluoQuant Pro 1.1 Build Script (Nuitka)
 
-$VERSION = "3.0"
+$VERSION = "4.0"
 $ICON = "resources\icon.ico"
-$APP_NAME = "FluoQuantPro"
+$APP_NAME = "FluoQuantPro4.0"
 
 Write-Host "--- Starting FluoQuant Pro $VERSION Build Process ---" -ForegroundColor Cyan
 

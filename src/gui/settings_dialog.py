@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QDialogButtonBox)
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QDialogButtonBox, QScrollArea, QWidget)
 from src.gui.auto_save_dialog import AutoSaveSettingsWidget
 from src.gui.measurement_dialog import MeasurementSettingsWidget
 from src.gui.export_settings_dialog import ExportSettingsWidget
@@ -15,7 +15,12 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None, current_measurement_settings=None):
         super().__init__(parent)
         self.setWindowTitle(tr("Preferences"))
-        self.resize(600, 550) # Increased size slightly
+        
+        # Determine a reasonable size based on screen
+        screen = self.screen().availableGeometry()
+        width = min(650, screen.width() * 0.8)
+        height = min(700, screen.height() * 0.8)
+        self.resize(width, height)
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(10, 10, 10, 10)
@@ -43,30 +48,40 @@ class SettingsDialog(QDialog):
         
         LanguageManager.instance().language_changed.connect(self.retranslate_ui)
 
+    def _wrap_in_scroll(self, widget):
+        """Wraps a widget in a QScrollArea for screen adaptability."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(widget)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        # Ensure the scroll area doesn't have a huge minimum size
+        scroll.setMinimumHeight(100)
+        return scroll
+
     def _init_tabs(self, current_measurement_settings):
         # 1. General (Auto Save)
         self.auto_save_widget = AutoSaveSettingsWidget(self)
-        self.tabs.addTab(self.auto_save_widget, tr("General"))
+        self.tabs.addTab(self._wrap_in_scroll(self.auto_save_widget), tr("General"))
         
         # 2. Interface
         self.interface_widget = InterfaceSettingsWidget(self)
-        self.tabs.addTab(self.interface_widget, tr("Interface"))
+        self.tabs.addTab(self._wrap_in_scroll(self.interface_widget), tr("Interface"))
         
         # 3. Display Quality
         self.display_widget = DisplaySettingsWidget(self)
-        self.tabs.addTab(self.display_widget, tr("Display"))
+        self.tabs.addTab(self._wrap_in_scroll(self.display_widget), tr("Display"))
         
         # 4. Measurement
         self.measurement_widget = MeasurementSettingsWidget(self, current_measurement_settings)
-        self.tabs.addTab(self.measurement_widget, tr("Measurement"))
+        self.tabs.addTab(self._wrap_in_scroll(self.measurement_widget), tr("Measurement"))
         
         # 5. Export
         self.export_widget = ExportSettingsWidget(self)
-        self.tabs.addTab(self.export_widget, tr("Export"))
+        self.tabs.addTab(self._wrap_in_scroll(self.export_widget), tr("Export"))
         
         # 6. Language
         self.language_widget = LanguageSettingsWidget(self)
-        self.tabs.addTab(self.language_widget, tr("Language"))
+        self.tabs.addTab(self._wrap_in_scroll(self.language_widget), tr("Language"))
 
     def retranslate_ui(self):
         self.setWindowTitle(tr("Preferences"))
