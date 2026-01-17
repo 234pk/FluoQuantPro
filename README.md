@@ -12,7 +12,7 @@
 FluoQuantPro is a professional-grade quantitative analysis software specifically designed for fluorescence microscopy imaging. It is more than just an image viewer; it is a rigorous analysis platform that ensures scientific integrity through advanced processing pipelines.
 
 ### 📺 Demo Video
-Watch FluoQuantPro in action: [YouTube Demo](https://www.youtube.com/watch?v=8KVSKE3WlKM)
+Watch FluoQuantPro in action: [YouTube Demo]([https://www.youtube.com/watch?v=-01hEIgtp4Y])
 
 ### 🚀 Key Features
 - **Dual-Track Processing:** Complete separation of **Measurement Track** (raw 8/16-bit scientific data) and **Rendering Track** (visual display with GPU acceleration).
@@ -37,7 +37,7 @@ The latest version 3.0 is now available! We provide pre-compiled versions for bo
 FluoQuantPro 是一款专为荧光显微成像设计的专业级定量分析软件。它不仅是一个图像查看工具，更是一个严格遵循科学严谨性的分析平台，通过先进的处理管线确保分析结果的准确性。
 
 ### 📺 演示视频
-观看功能演示：[YouTube 演示视频](https://www.youtube.com/watch?v=8KVSKE3WlKM)
+观看功能演示：[YouTube 演示视频](https://www.youtube.com/watch?v=-01hEIgtp4Y)
 
 ### 🚀 核心特性
 - **双轨制处理：** **测量轨**（原始 8/16-bit 科学数据）与**渲染轨**（视觉展示，支持 GPU 加速）彻底分离，确保定量分析不受视觉调节影响。
