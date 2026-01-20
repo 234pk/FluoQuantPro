@@ -91,3 +91,13 @@ class Renderer:
     @staticmethod
     def draw_dashed_polyline(image: np.ndarray, pts: np.ndarray, is_closed: bool, color: Tuple[float, float, float], thickness: int, dash_length: int = 10, dash_gap: int = 5):
         return GraphicsRenderer.draw_dashed_polyline(image, pts, is_closed, color, thickness, dash_length, dash_gap)
+
+    @staticmethod
+    def clear_cache():
+        """
+        Clears all internal caches of sub-renderers.
+        """
+        if hasattr(ImageRenderer, 'clear_cache'):
+            ImageRenderer.clear_cache()
+        if hasattr(GraphicsRenderer, 'clear_cache'):
+            GraphicsRenderer.clear_cache()

@@ -219,6 +219,14 @@ class ImageChannel:
         )
         return new_ch
 
+    def clear_cache(self):
+        """Forcefully clears all rendering and enhancement caches to free memory."""
+        self._cached_enhanced_data = None
+        self._last_enhance_params = None
+        if hasattr(self, '_preview_enhance_cache'):
+            self._preview_enhance_cache.clear()
+        # Note: We do NOT clear _raw_data here as it's the core scientific signal.
+
     def update_data(self, new_data: np.ndarray):
         """Updates the raw data (e.g. after cropping)."""
         self._raw_data = new_data
@@ -265,13 +273,22 @@ class Session(QObject):
         self.undo_stack.redo()
 
     def clear(self):
-        """Resets the session state."""
+        """Resets the session state and releases resources."""
+        # Proactively clear caches for each channel to help GC
+        for ch in self.channels:
+            if hasattr(ch, 'clear_cache'):
+                ch.clear_cache()
+        
         self.channels.clear()
         self._reference_shape = None
         self.roi_manager.clear()
         # Deprecated: self.annotations.clear()
         self.is_single_channel_mode = False
         self.project_changed.emit()
+        
+        # Explicitly trigger GC if many channels were cleared
+        import gc
+        gc.collect()
 
     def load_project(self, folder: str):
         """

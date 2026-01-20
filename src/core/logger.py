@@ -65,14 +65,24 @@ class Logger:
                 # If rename fails, we'll just append or overwrite latest.log
         
         # Configure logging
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format='%(asctime)s [%(levelname)s] [%(filename)s:%(lineno)d] %(message)s',
-            handlers=[
-                logging.FileHandler(latest_log, encoding='utf-8'),
-                logging.StreamHandler(sys.stdout)
-            ]
-        )
+        # Root logger captures everything (DEBUG level)
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)
+        
+        # File Handler: DEBUG level (detailed logs for troubleshooting)
+        file_handler = logging.FileHandler(latest_log, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] [%(filename)s:%(lineno)d] %(message)s'))
+        
+        # Console Handler: INFO level (cleaner terminal output)
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+        
+        # Reset handlers to avoid duplicates on reload
+        root_logger.handlers = []
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
         
         # Suppress Matplotlib font manager debug logs
         logging.getLogger('matplotlib').setLevel(logging.WARNING)

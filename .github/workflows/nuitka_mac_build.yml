@@ -1,12 +1,10 @@
 name: Nuitka macOS Build
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main, master ]
-    paths:
-      - 'macversion/**'
-      - '.github/workflows/nuitka_mac_build.yml'
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build-macos:

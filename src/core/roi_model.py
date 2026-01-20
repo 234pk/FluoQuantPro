@@ -372,6 +372,7 @@ class RoiManager(QObject):
     roi_added = Signal(ROI)
     roi_removed = Signal(str) # ROI ID
     roi_updated = Signal(ROI)
+    rois_reset = Signal() # Signal for batch updates (e.g. loading scene)
     selection_changed = Signal()
 
     def __init__(self, undo_stack: Optional[QUndoStack] = None):
@@ -394,16 +395,17 @@ class RoiManager(QObject):
             self._add_roi_internal(roi)
         Logger.debug(f"[RoiManager.add_roi] EXIT")
 
-    def _add_roi_internal(self, roi: ROI):
+    def _add_roi_internal(self, roi: ROI, emit_signal: bool = True):
         """Internal method for adding ROI without Undo stack modification."""
         from src.core.logger import Logger
         if roi.id in self._rois:
             Logger.debug(f"[RoiManager._add_roi_internal] ROI {roi.id} already exists, skipping.")
             return
         self._rois[roi.id] = roi
-        Logger.debug(f"[RoiManager._add_roi_internal] Emitting roi_added signal for {roi.id}")
-        self.roi_added.emit(roi)
-        Logger.debug(f"[RoiManager._add_roi_internal] Done")
+        if emit_signal:
+            Logger.debug(f"[RoiManager._add_roi_internal] Emitting roi_added signal for {roi.id}")
+            self.roi_added.emit(roi)
+        # Logger.debug(f"[RoiManager._add_roi_internal] Done")
 
     def remove_roi(self, roi_id: str, undoable: bool = False):
         """Removes an ROI. Set undoable=True for user actions."""
@@ -416,13 +418,14 @@ class RoiManager(QObject):
         else:
             self._remove_roi_internal(roi_id)
 
-    def _remove_roi_internal(self, roi_id: str):
+    def _remove_roi_internal(self, roi_id: str, emit_signal: bool = True):
         """Internal method for removing ROI without Undo stack modification."""
         if roi_id in self._rois:
             del self._rois[roi_id]
             if roi_id in self._selected_ids:
                 self._selected_ids.remove(roi_id)
-            self.roi_removed.emit(roi_id)
+            if emit_signal:
+                self.roi_removed.emit(roi_id)
 
     def undo(self):
         self.undo_stack.undo()
@@ -445,7 +448,7 @@ class RoiManager(QObject):
     def get_selected_ids(self) -> List[str]:
         return list(self._selected_ids)
 
-    def clear(self, undoable: bool = False):
+    def clear(self, undoable: bool = False, emit_signal: bool = True):
         """Clears all ROIs."""
         if not self._rois:
             return
@@ -455,7 +458,12 @@ class RoiManager(QObject):
         else:
             to_remove = list(self._rois.keys())
             for rid in to_remove:
-                self._remove_roi_internal(rid)
+                self._remove_roi_internal(rid, emit_signal=emit_signal)
+            
+            if not emit_signal:
+                # If we suppressed individual signals, we might want to emit a batch signal later
+                # But here we just respect the flag.
+                pass
     
     def serialize_rois(self) -> List[dict]:
         """Serializes all ROIs to a list of dicts using full-resolution coordinates."""
@@ -492,14 +500,23 @@ class RoiManager(QObject):
 
     def deserialize_rois(self, data_list: List[dict]):
         """Restores ROIs from a list of dicts."""
-        self.clear()
+        # OPTIMIZATION: Use batch update to avoid signal storm
+        self.clear(emit_signal=False) 
+        
+        count = 0
         for data in data_list:
             try:
                 roi = ROI.from_dict(data)
-                self._add_roi_internal(roi)
+                self._add_roi_internal(roi, emit_signal=False)
+                count += 1
             except Exception as e:
                 from src.core.logger import Logger
                 Logger.error(f"Failed to deserialize ROI: {e}")
+        
+        # Emit single batch signal
+        from src.core.logger import Logger
+        Logger.info(f"[RoiManager] Batch loaded {count} ROIs. Emitting reset.")
+        self.rois_reset.emit()
 
     def select_all(self):
         """Selects all ROIs."""
@@ -585,9 +602,11 @@ class RoiManager(QObject):
             self.deserialize_rois(rois)
         elif isinstance(rois, dict):
             # Dict of ROI objects (Undo Stack)
-            self.clear()
+            # Use batch update here too
+            self.clear(emit_signal=False)
             for roi in rois.values():
-                self._add_roi_internal(roi)
+                self._add_roi_internal(roi, emit_signal=False)
+            self.rois_reset.emit()
         else:
             from src.core.logger import Logger
             Logger.warning(f"[RoiManager.set_rois] Unknown input type: {type(rois)}")

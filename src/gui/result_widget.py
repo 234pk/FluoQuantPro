@@ -661,6 +661,10 @@ class MeasurementResultWidget(QWidget):
         # Bottom Buttons
         btn_layout = QHBoxLayout()
         
+        self.btn_measure = QPushButton(tr("Measure All"))
+        # Signal will be connected in Main
+        btn_layout.addWidget(self.btn_measure)
+        
         self.btn_export = QPushButton(tr("Export Results (CSV)..."))
         self.btn_export.clicked.connect(self.export_results)
         btn_layout.addWidget(self.btn_export)

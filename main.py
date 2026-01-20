@@ -408,6 +408,7 @@ class MainWindow(QMainWindow):
         
         # 4. Measure Results Tab
         self.result_widget = MeasurementResultWidget()
+        self.result_widget.btn_measure.clicked.connect(self.measure_all_rois)
         
         # Store tabs for visibility management
         self.all_tabs_data = [
@@ -2300,6 +2301,19 @@ class MainWindow(QMainWindow):
         if not scene_data:
              return
 
+        # Update Cache Manager Early (so cleanup knows what to keep)
+        from src.core.cache_manager import SceneCacheManager
+        SceneCacheManager.instance().set_current_scene(scene_id)
+
+        # USER REQUEST: Respect performance settings for cache clearing
+        if hasattr(self, 'perf_monitor') and self.perf_monitor.auto_cleanup_enabled:
+            # Trigger a cleanup before loading a new scene to free up space
+            # This ensures we don't hit the threshold MID-loading which is slower
+            self.perf_monitor.trigger_cleanup()
+
+        # 1. Check Scene Cache FIRST
+        cached_channels = SceneCacheManager.instance().get_scene(scene_id)
+        
         self.session.clear()
 
         # Auto-detect Mode (Must be set AFTER clear, as clear() resets it)
@@ -2313,7 +2327,22 @@ class MainWindow(QMainWindow):
         self.show_view_loading(tr("Loading {0}...").format(scene_id)) # Show overlay
         self.lbl_status.setText(tr("Loading scene: {0}...").format(scene_id))
         
-        # Start Async Loader
+        # 2. If Cached, Load from Cache
+        if cached_channels:
+            Logger.info(f"[UI] Loading scene {scene_id} from Cache...")
+            for i, ch in enumerate(cached_channels):
+                # We reuse the channel object, but we might want to ensure its display settings 
+                # are up to date if they were modified in the project model? 
+                # For now, we trust the cache or the user's last session with it.
+                # However, we must call on_channel_loaded logic to attach it to session/UI
+                # We simulate the worker callback
+                self.on_channel_loaded(scene_id, i, ch, scene_data.channels[i])
+            
+            # Simulate finish
+            self.on_scene_loading_finished(scene_id)
+            return
+
+        # 3. If Not Cached, Start Async Loader
         self.loader_worker = SceneLoaderWorker(scene_id, scene_data.channels)
         self.loader_worker.channel_loaded.connect(self.on_channel_loaded)
         self.loader_worker.finished_loading.connect(self.on_scene_loading_finished)
@@ -2410,6 +2439,15 @@ class MainWindow(QMainWindow):
         if scene_id != self.current_scene_id: return
         Logger.info("[UI] Scene loading finished signal received")
         
+        # Add to Cache (Policy controlled inside Manager)
+        # We must copy the list because self.session.channels might change or be cleared later
+        from src.core.cache_manager import SceneCacheManager
+        # Note: We are storing the actual ImageChannel objects. 
+        # If session.clear() destroys them, we are in trouble.
+        # But session.clear() just clears the list reference.
+        # The objects will persist in CacheManager.
+        SceneCacheManager.instance().store_scene(scene_id, list(self.session.channels))
+
         try:
             # Final refresh: Initialize views with ALL loaded channels
             Logger.info("[UI] Final view initialization...")
@@ -3862,16 +3900,19 @@ class MainWindow(QMainWindow):
                     # 3. Calculate Pairwise Overlaps (Matrix approach)
                     # We can iterate all pairs and add significant overlaps
                     # To avoid clutter, maybe only add pairs with IoU > 0.01
-                    for i in range(len(measurable_rois)):
-                        for j in range(i + 1, len(measurable_rois)):
-                            roi1 = measurable_rois[i]
-                            roi2 = measurable_rois[j]
-                            
-                            # Quick bbox check
-                            if not roi1.path.boundingRect().intersects(roi2.path.boundingRect()):
-                                continue
+                    if self.measurement_settings.get('Overlap', False):
+                        for i in range(len(measurable_rois)):
+                            for j in range(i + 1, len(measurable_rois)):
+                                roi1 = measurable_rois[i]
+                                roi2 = measurable_rois[j]
+                                
+                                # Quick bbox check
+                                if not roi1.path.boundingRect().intersects(roi2.path.boundingRect()):
+                                    continue
 
-                            self._run_overlap_analysis(sample_name, roi1, roi2)
+                                self._run_overlap_analysis(sample_name, roi1, roi2)
+                    else:
+                        Logger.debug("[Main] Overlap analysis skipped (disabled in settings)")
                             
                 except Exception as e:
                     print(f"Error in automatic overlap analysis: {e}")

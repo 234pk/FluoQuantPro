@@ -50,6 +50,26 @@ class TencentCLSManager:
             try:
                 import time
                 import socket
+                import platform
+                import ssl
+                
+                # --- macOS SSL Fix ---
+                if platform.system() == "Darwin":
+                    try:
+                        # Attempt to use certifi if available for secure SSL on Mac
+                        import certifi
+                        os.environ['SSL_CERT_FILE'] = certifi.where()
+                    except ImportError:
+                        # Fallback: Ignore SSL verification if certifi is missing and native fails
+                        # This is not ideal for security but ensures telemetry works on Mac 
+                        # where Python often lacks a root cert bundle.
+                        try:
+                            _create_unverified_https_context = ssl._create_unverified_context
+                        except AttributeError:
+                            pass
+                        else:
+                            ssl._create_default_https_context = _create_unverified_https_context
+
                 from tencentcloud.log.logclient import LogClient
                 from tencentcloud.log.cls_pb2 import LogGroupList
 

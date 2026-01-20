@@ -219,15 +219,49 @@ class PerformanceMonitor(QObject):
     def trigger_cleanup(self, current_gb=None):
         """Forces a memory cleanup."""
         self._last_cleanup_time = time.time()
-        Logger.warning(f"[Performance] Memory threshold exceeded ({current_gb:.1f} GB). Triggering cleanup...")
+        
+        if current_gb is not None:
+            Logger.warning(f"[Performance] Memory threshold exceeded ({current_gb:.1f} GB). Triggering cleanup...")
+        else:
+            Logger.warning("[Performance] Cleanup triggered manually or by scene switch.")
+
+        import gc
+        pre_counts = gc.get_count()
         
         # 1. Clear Renderer Caches
         from src.core.renderer import Renderer
         Renderer.clear_cache()
+        Logger.info("[Performance] Renderer caches cleared.")
         
-        # 2. Python GC
-        import gc
-        gc.collect()
+        # 2. Clear Scene Cache (New Strategy)
+        try:
+            from src.core.cache_manager import SceneCacheManager
+            # If memory is tight, we should clear the cache regardless of policy
+            # But we can't easily know which one is "current" here without coupling to Main.
+            # So we ask Manager to "shrink" or "clear non-essential".
+            SceneCacheManager.instance().handle_low_memory()
+        except ImportError:
+            pass
+            
+        # 3. Clear ImageChannel Enhancement Caches
+        # We need to find all active channels. They are usually held by the Session in MainWindow.
+        try:
+            from PySide6.QtWidgets import QApplication
+            channel_count = 0
+            for widget in QApplication.topLevelWidgets():
+                if hasattr(widget, 'session') and hasattr(widget.session, 'channels'):
+                    for ch in widget.session.channels:
+                        if hasattr(ch, 'clear_cache'):
+                            ch.clear_cache()
+                            channel_count += 1
+            if channel_count > 0:
+                Logger.info(f"[Performance] Cleared caches for {channel_count} active channels.")
+        except Exception as e:
+            Logger.debug(f"[Performance] Failed to clear channel caches: {e}")
+
+        # 3. Python GC
+        collected = gc.collect()
+        Logger.info(f"[Performance] GC collected {collected} objects. Pre-counts: {pre_counts}")
         
         self.memory_threshold_exceeded.emit(current_gb or 0.0)
 

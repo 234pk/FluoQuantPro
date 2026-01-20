@@ -86,6 +86,9 @@ class CanvasView(QGraphicsView):
         self.setMouseTracking(True) # Enable Mouse Tracking for status bar info
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus) # Enable Keyboard Events
         self._scene = QGraphicsScene(self)
+        # Optimization: Disable BSP tree indexing for better performance with complex dynamic items
+        # This significantly reduces freeze time when adding/moving complex ROIs (like Magic Wand results)
+        self._scene.setItemIndexMethod(QGraphicsScene.NoIndex)
         self.setScene(self._scene)
         self._scene.selectionChanged.connect(self.on_scene_selection_changed)
         
@@ -545,6 +548,7 @@ class CanvasView(QGraphicsView):
                 self.roi_manager.roi_added.disconnect(self._on_roi_added)
                 self.roi_manager.roi_removed.disconnect(self._on_roi_removed)
                 self.roi_manager.roi_updated.disconnect(self._on_roi_updated)
+                self.roi_manager.rois_reset.disconnect(self._sync_rois) # Connect reset to sync
                 self.scene().selectionChanged.disconnect(self.on_scene_selection_changed)
             except:
                 pass
@@ -554,6 +558,7 @@ class CanvasView(QGraphicsView):
             manager.roi_added.connect(self._on_roi_added)
             manager.roi_removed.connect(self._on_roi_removed)
             manager.roi_updated.connect(self._on_roi_updated)
+            manager.rois_reset.connect(self._sync_rois) # Connect reset to sync
             self.scene().selectionChanged.connect(self.on_scene_selection_changed)
             
             # Load existing
@@ -876,32 +881,19 @@ class CanvasView(QGraphicsView):
         # but we can add custom rendering logic if needed.
         super().drawBackground(painter, rect)
 
-    def paintEvent(self, event):
-        """
-        Overridden paint event to implement tiled/progressive rendering for large images.
-        """
-        # If we are in high performance mode (violent interaction), 
-        # we might want to skip some expensive drawing or use a lower quality
-        if self._is_interaction_violent:
-            # Low quality during interaction
-            painter = QPainter(self.viewport())
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-            # Use a slightly more aggressive clipping if needed
-            super().paintEvent(event)
-            return
-
-        # Normal rendering
-        super().paintEvent(event)
 
     def _update_preview(self):
         """Helper to sync temp path item with tool state."""
-        # NEW: Skip redundant preview for Polygon tools to avoid interference with their internal real-time display
-        if self.active_tool and self.active_tool.__class__.__name__ == "PolygonSelectionTool":
-            if hasattr(self, 'temp_path_item') and self.temp_path_item:
-                self.temp_path_item.setVisible(False)
-                self.temp_path_item.setPath(QPainterPath())
-            return
+        # NEW: Skip redundant preview for Polygon/MagicWand tools to avoid interference with their internal real-time display
+        # MagicWandTool handles its own preview item (with correct scaling for downsampled data)
+        # PolygonSelectionTool handles its own preview for complex interaction
+        if self.active_tool:
+            tool_name = self.active_tool.__class__.__name__
+            if tool_name in ["PolygonSelectionTool", "MagicWandTool"]:
+                if hasattr(self, 'temp_path_item') and self.temp_path_item:
+                    self.temp_path_item.setVisible(False)
+                    self.temp_path_item.setPath(QPainterPath())
+                return
 
         path = None
         if self.active_tool:
@@ -1113,8 +1105,9 @@ class CanvasView(QGraphicsView):
                 self.pixmap_item.setPos(0, 0)
                 
                 # display_scale = display_size / full_res_size
-                # Here full_res is represented by 'w' (original array width)
-                self.display_scale = pix_w / w if w > 0 else 1.0
+                # Here full_res is represented by 'scene_w' (original width)
+                # pix_w is the downsampled width
+                self.display_scale = pix_w / scene_w if scene_w > 0 else 1.0
             else:
                 self.display_scale = 1.0
                 self.pixmap_item.setTransform(QTransform())
@@ -1201,7 +1194,12 @@ class CanvasView(QGraphicsView):
         if active:
             if not self._is_interaction_violent:
                 self._is_interaction_violent = True
-                Logger.info("[CanvasView] Interaction stability mode ENABLED (Low-res locked)")
+                
+                # Disable AA on the VIEW to improve performance and reduce flickering
+                self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+                self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+                
+                # Logger.info("[CanvasView] Interaction stability mode ENABLED (Low-res locked)")
                 self._enable_low_res_proxy()
             
             # Refresh timer (stay in low-res for at least 500ms after last violent signal)
@@ -1213,6 +1211,14 @@ class CanvasView(QGraphicsView):
         if self._is_interaction_violent:
             self._is_interaction_violent = False
             Logger.info("[CanvasView] Interaction stability mode DISABLED (High-res unlocked)")
+            
+            # Restore rendering quality based on settings
+            use_aa = True
+            if self.perf_monitor and hasattr(self.perf_monitor, 'use_antialiasing'):
+                use_aa = self.perf_monitor.use_antialiasing
+            
+            self.setRenderHint(QPainter.RenderHint.Antialiasing, use_aa)
+            self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
             
         # Ensure we are not currently interacting
         is_mouse_pressed = QApplication.mouseButtons() != Qt.MouseButton.NoButton
@@ -1507,8 +1513,9 @@ class CanvasView(QGraphicsView):
         
         for snap_scale, label in snap_scales:
             ratio = self._target_zoom / snap_scale
-            # USER REQUEST: Narrow suction range even further for a "peaceful" feel (4% -> 2.5%)
-            if 0.975 <= ratio <= 1.025:
+            # USER REQUEST: Widen detection range (1.5% -> 4%) for easier discovery,
+            # but use velocity to decide whether to "hard snap" or just "brake".
+            if 0.96 <= ratio <= 1.04:
                 dist = abs(self._target_zoom - snap_scale)
                 if dist < min_dist:
                     min_dist = dist
@@ -1516,23 +1523,32 @@ class CanvasView(QGraphicsView):
         
         if best_snap:
             snap_scale, label, ratio = best_snap
-            # If moving slowly enough, apply "magnetic" force
-            if abs(self._zoom_velocity) < 0.10:
-                # Use an even gentler non-linear suction force (0.05 -> 0.03)
-                # This makes the "pull" feel less sudden
-                suction_force = (snap_scale - self._target_zoom) * 0.03
+            
+            # 1. "Magnetic Braking": Strong viscous drag
+            # Increased damping (0.85 -> 0.60) to create a strong "sticky" feel
+            self._zoom_velocity *= 0.60
+
+            # 2. "Smart Suction": 
+            # - Relaxed velocity threshold (0.15 -> 0.35) to catch faster movements
+            # - Widened "close enough" range (1% -> 2%)
+            velocity_ok = abs(self._zoom_velocity) < 0.35
+            close_enough = 0.98 <= ratio <= 1.02
+            
+            if velocity_ok or close_enough:
+                # Suction force (Significantly increased: 0.15 -> 0.40)
+                # Provides a decisive "snap" pull
+                suction_force = (snap_scale - self._target_zoom) * 0.40
                 self._target_zoom += suction_force
                 
-                # If very close, hard snap and stop
-                # Narrowed hard snap range even further (0.5% -> 0.3%)
-                if 0.997 <= ratio <= 1.003:
+                # Hard Snap (Lock)
+                # Widened lock tolerance (0.2% -> 0.5%)
+                if 0.995 <= ratio <= 1.005: 
                     self._target_zoom = snap_scale
                     self._trigger_snap_feedback(snap_scale, label)
                     self._zoom_velocity = 0.0
                 else:
-                    # More aggressive velocity reduction when near snap point (0.92 -> 0.88)
-                    # This "calms down" the zoom as it approaches the target
-                    self._zoom_velocity *= 0.88
+                    # Aggressive braking when pulling in (0.70 -> 0.50)
+                    self._zoom_velocity *= 0.50
 
         self._zoom_velocity *= self.ZOOM_DAMPING
         if abs(self._zoom_velocity) < 0.0005:
@@ -1602,30 +1618,33 @@ class CanvasView(QGraphicsView):
         try:
             if not self.pixmap_item.pixmap() or self.pixmap_item.pixmap().isNull(): return []
             
-            # STABILITY OPTIMIZATION: Use maximumViewportSize() to avoid scrollbar-induced jitter
-            # This size is independent of whether scrollbars are currently visible.
-            view_size = self.maximumViewportSize()
+            # STABILITY OPTIMIZATION: Use widget size explicitly to ensure we fit to the VISIBLE window.
+            # maximumViewportSize() can be misleading in some layout contexts.
+            # We want the size of the area available for the view, excluding borders.
+            view_size = self.size()
+            fw = self.frameWidth()
+            available_w = max(10, view_size.width() - 2 * fw)
+            available_h = max(10, view_size.height() - 2 * fw)
             
-            # Use internal display area (viewport with padding)
-            padding = 40 
-            available_w = max(10, view_size.width() - padding)
-            available_h = max(10, view_size.height() - padding)
+            # USER FIX: Use sceneRect() instead of pixmap().rect().
+            # sceneRect() represents the logical size of the image in the view (e.g. 2048x2048),
+            # regardless of whether the underlying pixmap is downsampled for performance.
+            if not self.scene(): return []
+            scene_rect = self.scene().sceneRect()
+            if scene_rect.width() <= 0 or scene_rect.height() <= 0: return []
             
-            img_rect = self.pixmap_item.pixmap().rect()
-            if img_rect.width() <= 0 or img_rect.height() <= 0: return []
-            
-            scale_w = available_w / img_rect.width()
-            scale_h = available_h / img_rect.height()
+            scale_w = available_w / scene_rect.width()
+            scale_h = available_h / scene_rect.height()
             fit_scale = min(scale_w, scale_h)
             
-            # USER REQUEST: Prevent flickering by merging close fit modes (Threshold 0.08).
+            # USER REQUEST: Prevent flickering by merging close fit modes (Threshold 0.05).
             # If the scales are very close, only return ONE "Fit" signal to avoid jitter.
             rel_diff = abs(scale_w - scale_h) / max(1e-5, max(scale_w, scale_h))
             
             # Log for debugging flickering (Terminal #632-1008 context)
-            Logger.debug(f"[CanvasView] Snap calculation: view={view_size.width()}x{view_size.height()}, scale_w={scale_w:.4f}, scale_h={scale_h:.4f}, rel_diff={rel_diff:.4f}")
+            # Logger.debug(f"[CanvasView] Snap calculation: view={view_size.width()}x{view_size.height()}, scale_w={scale_w:.4f}, scale_h={scale_h:.4f}, rel_diff={rel_diff:.4f}")
             
-            if rel_diff < 0.08: 
+            if rel_diff < 0.05: 
                 # When they are close, only return the one that ensures the whole image fits.
                 return [(fit_scale, "Fit")]
                 

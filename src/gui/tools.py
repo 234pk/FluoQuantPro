@@ -2,7 +2,7 @@ from abc import abstractmethod
 from enum import Enum
 from typing import Optional, List, Dict, Tuple
 from PySide6.QtCore import QPointF, Qt, QObject, Signal, QRectF
-from PySide6.QtGui import QPainterPath, QColor, QPen
+from PySide6.QtGui import QPainterPath, QColor, QPen, QTransform
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsLineItem
 from src.core.algorithms import magic_wand_2d, mask_to_qpath, mask_to_qpaths
 from src.core.analysis import calculate_intensity_stats
@@ -352,22 +352,22 @@ class MagicWandTool(AbstractTool):
             
         from src.core.algorithms import mask_to_qpath
         # Use a reasonable epsilon for polygon conversion to avoid too many points
-        # USER REQUEST: Optimize handle point count for performance
-        # Increased epsilon from 1.0 to 2.5 for better default performance
-        poly_path = mask_to_qpath(mask, simplify_epsilon=2.5, smooth=False)
+        # USER REQUEST: Optimize handle point count for performance (Refer to PS)
+        # Increased epsilon from 2.5 to 3.5
+        poly_path = mask_to_qpath(mask, simplify_epsilon=3.5, smooth=False)
         
         pts = []
         # Optimization: Limit maximum number of points for converted polygons
-        # Reduced max_points from 500 to 150 to significantly improve UI responsiveness
-        max_points = 150 
+        # Reduced max_points from 150 to 100 to significantly improve UI responsiveness
+        max_points = 100 
         element_count = poly_path.elementCount()
         
         if element_count > max_points:
             # If too many points, re-simplify with even larger epsilon
-            # Increased epsilon from 2.5 to 5.0 for very complex masks
-            poly_path = mask_to_qpath(mask, simplify_epsilon=5.0, smooth=False)
+            # Increased epsilon from 5.0 to 8.0 for very complex masks
+            poly_path = mask_to_qpath(mask, simplify_epsilon=8.0, smooth=False)
             element_count = poly_path.elementCount()
-            Logger.debug(f"[MagicWandTool] Re-simplified path: {element_count} points (epsilon 5.0)")
+            Logger.debug(f"[MagicWandTool] Re-simplified path: {element_count} points (epsilon 8.0)")
 
         for i in range(poly_path.elementCount()):
             el = poly_path.elementAt(i)
@@ -411,6 +411,13 @@ class MagicWandTool(AbstractTool):
         if self.preview_item:
              path = self.get_preview_path()
              self.preview_item.setPath(path)
+             
+             # Scale preview if working on downsampled data
+             if self.display_scale < 1.0 and self.display_scale > 0:
+                 s = 1.0 / self.display_scale
+                 self.preview_item.setTransform(QTransform().scale(s, s))
+             else:
+                 self.preview_item.setTransform(QTransform())
         # --------------------------------
         
         # Force View Update for real-time feedback
@@ -512,20 +519,19 @@ class MagicWandTool(AbstractTool):
             self._reset_state()
             self.preview_changed.emit()
 
-        # Reset tool to Hand Mode to allow immediate selection of the new ROI
+        # USER REQUEST: Keep Magic Wand active for continuous selection
+        # Only ensure focus is restored to the view
         if hasattr(self.session, 'main_window') and self.session.main_window:
              mw = self.session.main_window
-             # Reset via MultiView's active view
              if hasattr(mw, 'multi_view'):
                  try:
                      view = mw.multi_view.get_active_view()
                      if view:
-                         view.set_active_tool(None)
+                         # view.set_active_tool(None) # DISABLED: Do not auto-switch to Hand Tool
                          # FORCE FOCUS back to the view to ensure keyboard events are captured
                          view.setFocus(Qt.FocusReason.OtherFocusReason)
-                         Logger.debug("[MagicWandTool] Auto-switched to Hand Tool after creation and restored focus")
                  except Exception as e:
-                     Logger.error(f"[MagicWandTool] Failed to auto-switch to Hand Tool: {e}")
+                     Logger.error(f"[MagicWandTool] Failed to restore focus: {e}")
 
     def _update_selection(self, data: np.ndarray, channel_name: Optional[str] = None):
         """Internal helper to calculate mask and path."""
@@ -542,11 +548,12 @@ class MagicWandTool(AbstractTool):
         if np.any(self.current_mask):
             # OPTIMIZATION: Dynamic Simplification based on area to reduce lag for large/complex ROIs
             area = np.sum(self.current_mask)
-            # Reduced base epsilon from 1.0 to 0.1 for smoother graphics
-            # For 100x100 (10k area) -> epsilon ~ 0.3 (was 2.0)
-            # For 1000x1000 (1M area) -> epsilon ~ 2.1 (was 11.0)
-            dynamic_epsilon = 0.1 + (area ** 0.5) / 500.0
-            dynamic_epsilon = max(0.1, min(dynamic_epsilon, 5.0)) # Clamp between 0.1 and 5.0
+            # USER REQUEST: Refer to PS to reduce points generated by Magic Wand
+            # Increased base epsilon and slope to reduce point count significantly
+            # For 100x100 (10k area) -> epsilon ~ 2.5
+            # For 1000x1000 (1M area) -> epsilon ~ 7.0
+            dynamic_epsilon = 2.0 + (area ** 0.5) / 200.0
+            dynamic_epsilon = max(1.0, min(dynamic_epsilon, 10.0)) # Clamp between 1.0 and 10.0
             
             Logger.debug(f"[MagicWandTool] Area: {area}, Dynamic Epsilon: {dynamic_epsilon:.2f}")
 

@@ -299,6 +299,9 @@
     "CY5 Magenta": {
         "zh": "CY5 洋红"
     },
+    "Cache last 5 samples": {
+        "zh": "缓存最近5个样本"
+    },
     "Caching Strategy:": {
         "zh": "缓存策略:"
     },
@@ -1273,6 +1276,24 @@
     },
     "Memory Usage": {
         "zh": "内存使用"
+    },
+    "Memory Management": {
+        "zh": "内存管理"
+    },
+    "Enable Auto Memory Cleanup": {
+        "zh": "启用自动内存清理"
+    },
+    "Automatically clears image caches when memory usage is high.": {
+        "zh": "当内存占用过高时自动清除图像缓存。"
+    },
+    "Memory Threshold (GB):": {
+        "zh": "内存阈值 (GB):"
+    },
+    "Cleanup will trigger when application memory exceeds this value.": {
+        "zh": "当应用程序内存超过此值时将触发清理。"
+    },
+    "Performance": {
+        "zh": "性能"
     },
     "Merge": {
         "zh": "合并"

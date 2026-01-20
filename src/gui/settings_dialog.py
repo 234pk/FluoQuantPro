@@ -3,6 +3,7 @@ from src.gui.auto_save_dialog import AutoSaveSettingsWidget
 from src.gui.measurement_dialog import MeasurementSettingsWidget
 from src.gui.export_settings_dialog import ExportSettingsWidget
 from src.gui.display_settings_widget import DisplaySettingsWidget
+from src.gui.performance_settings_widget import PerformanceSettingsWidget
 from src.gui.language_settings_widget import LanguageSettingsWidget
 from src.gui.interface_settings_widget import InterfaceSettingsWidget
 from src.core.language_manager import tr, LanguageManager
@@ -71,15 +72,19 @@ class SettingsDialog(QDialog):
         self.display_widget = DisplaySettingsWidget(self)
         self.tabs.addTab(self._wrap_in_scroll(self.display_widget), tr("Display"))
         
-        # 4. Measurement
+        # 4. Performance & Memory
+        self.performance_widget = PerformanceSettingsWidget(self)
+        self.tabs.addTab(self._wrap_in_scroll(self.performance_widget), tr("Performance"))
+        
+        # 5. Measurement
         self.measurement_widget = MeasurementSettingsWidget(self, current_measurement_settings)
         self.tabs.addTab(self._wrap_in_scroll(self.measurement_widget), tr("Measurement"))
         
-        # 5. Export
+        # 6. Export
         self.export_widget = ExportSettingsWidget(self)
         self.tabs.addTab(self._wrap_in_scroll(self.export_widget), tr("Export"))
         
-        # 6. Language
+        # 7. Language
         self.language_widget = LanguageSettingsWidget(self)
         self.tabs.addTab(self._wrap_in_scroll(self.language_widget), tr("Language"))
 
@@ -90,9 +95,10 @@ class SettingsDialog(QDialog):
         self.tabs.setTabText(0, tr("General"))
         self.tabs.setTabText(1, tr("Interface"))
         self.tabs.setTabText(2, tr("Display"))
-        self.tabs.setTabText(3, tr("Measurement"))
-        self.tabs.setTabText(4, tr("Export"))
-        self.tabs.setTabText(5, tr("Language"))
+        self.tabs.setTabText(3, tr("Performance"))
+        self.tabs.setTabText(4, tr("Measurement"))
+        self.tabs.setTabText(5, tr("Export"))
+        self.tabs.setTabText(6, tr("Language"))
         
         # Update Buttons
         self.buttons.button(QDialogButtonBox.Ok).setText(tr("OK"))
@@ -104,6 +110,7 @@ class SettingsDialog(QDialog):
         self.auto_save_widget.save_settings()
         self.interface_widget.save_settings()
         self.display_widget.save_settings()
+        self.performance_widget.save_settings()
         self.export_widget.save_settings()
         self.language_widget.save_settings()
         

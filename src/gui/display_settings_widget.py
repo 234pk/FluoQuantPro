@@ -104,6 +104,7 @@ class DisplaySettingsWidget(QWidget):
         self.cb_precache = QComboBox()
         self.cb_precache.addItem(tr("No Pre-caching"), "none")
         self.cb_precache.addItem(tr("Pre-cache current sample"), "current")
+        self.cb_precache.addItem(tr("Cache last 5 samples"), "recent")
         self.cb_precache.addItem(tr("Aggressive Pre-cache (All)"), "all")
         h_pre.addWidget(self.cb_precache)
         q_layout.addLayout(h_pre)
@@ -164,7 +165,8 @@ class DisplaySettingsWidget(QWidget):
         
         self.cb_precache.setItemText(0, tr("No Pre-caching"))
         self.cb_precache.setItemText(1, tr("Pre-cache current sample"))
-        self.cb_precache.setItemText(2, tr("Aggressive Pre-cache (All)"))
+        self.cb_precache.setItemText(2, tr("Cache last 5 samples"))
+        self.cb_precache.setItemText(3, tr("Aggressive Pre-cache (All)"))
         
         self.gpu_group.setTitle(tr("GPU Acceleration"))
         self.lbl_gpu_toggle.setText(tr("Enable OpenCL Acceleration"))

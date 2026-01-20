@@ -202,6 +202,13 @@ class UnifiedGraphicsItem(QGraphicsPathItem, QObject):
 
     def shape(self):
         p = self.path()
+        
+        # Optimization: For complex paths, avoid expensive stroking
+        # Stroking a 1000+ point polygon is extremely expensive and causes freezes
+        if self.roi_type in ['magic_wand', 'polygon'] and p.elementCount() > 100:
+             # For filled polygons, the path itself (fill) is sufficient for hit testing
+             return p
+             
         stroker = QPainterPathStroker()
         # USER REQUEST: Extra-wide hit area specifically for LineScan
         if self.roi_type == 'line_scan':
@@ -376,6 +383,16 @@ class UnifiedGraphicsItem(QGraphicsPathItem, QObject):
             painter.drawRect(self.boundingRect())
             return
 
+        # Handle Magic Wand / Complex Polygons with cached path
+        if self.roi_type in ['magic_wand', 'polygon'] and self.roi.path:
+            # If path is extremely complex, use cached simplification for rendering
+            # This is a rendering-only optimization, the underlying model data remains accurate
+            if self.roi.path.elementCount() > 1000 and lod < 0.5:
+                # When zoomed out, we don't need to draw every single segment
+                # We can rely on the default QPainterPath rendering, but ensure we don't
+                # do extra expensive operations here.
+                pass
+
         if self.roi_type == 'arrow':
             # Draw shaft with current pen
             painter.setPen(self.pen())
@@ -420,7 +437,12 @@ class UnifiedGraphicsItem(QGraphicsPathItem, QObject):
                 if not hasattr(self.roi, 'properties'):
                     self.roi.properties = {}
                 self.roi.properties['rotation'] = rotation
-            self._update_handles_pos()
+            
+            # CRITICAL FIX: Do NOT update handle positions during rotation interaction.
+            # The handles are children of this item, so they will rotate with it automatically.
+            # Updating them manually here (especially with mapFromScene) while the parent 
+            # transform is changing causes the "double-transform" drift/offset effect.
+            # self._update_handles_pos() 
             return # Done with rotation
 
         # 2. Update Model Points (Scene Coords) for point-based shapes
@@ -477,10 +499,13 @@ class UnifiedGraphicsItem(QGraphicsPathItem, QObject):
 
         elif t in ['rect', 'ellipse', 'circle', 'rectangle']:
             # Get current path bounding rect in local coordinates
+            # IMPORTANT: For rotated items, we must work in LOCAL coordinates
+            # mapFromScene automatically handles the inverse rotation/transform for us
             rect = self.path().boundingRect()
             lp = self.mapFromScene(scene_pos)
             
             # Resizing logic for all 8 handles + legacy flags
+            # Logic: We update the LOCAL rect based on the LOCAL mouse position
             if flag in ['top-left', 0]:
                 rect.setTopLeft(lp)
             elif flag in ['top-right']:
@@ -497,6 +522,40 @@ class UnifiedGraphicsItem(QGraphicsPathItem, QObject):
                 rect.setLeft(lp.x())
             elif flag == 'right':
                 rect.setRight(lp.x())
+            
+            # Normalize to avoid negative width/height
+            rect = rect.normalized()
+            
+            p = QPainterPath()
+            if t in ['ellipse', 'circle']:
+                 p.addEllipse(rect)
+            else:
+                 p.addRect(rect)
+            
+            self.setPath(p)
+            
+            # Update Model:
+            # STRATEGY: 
+            # 1. 'points': Store UNROTATED (Local) coordinates + Pos Offset. 
+            #    This defines the shape parameters before rotation.
+            # 2. 'path': Store ROTATED (Absolute) path.
+            #    This is for external analysis/masking.
+            # 3. View Item: Uses Unrotated Path + setRotation().
+            
+            if self.roi:
+                # 1. Update Path (Rotated Absolute for Model)
+                # Create a temporary transform that matches the item's current transform
+                transform = self.sceneTransform()
+                p_abs = transform.map(p)
+                self.roi.path = p_abs
+                
+                # 2. Update Points (Unrotated Local for Geometry Reconstruction)
+                if hasattr(self.roi, 'points') and len(self.roi.points) >= 2:
+                    # Use rect coordinates directly (Local/Unrotated)
+                    # Add item position offset if any (though usually pos is 0,0 for these items)
+                    offset = self.pos()
+                    self.roi.points[0] = rect.topLeft() + offset
+                    self.roi.points[1] = rect.bottomRight() + offset
             
             # For circle, maintain aspect ratio 1:1 using the largest dimension or average?
             # Usually, dragging a corner resizes both, dragging an edge resizes one.
@@ -516,14 +575,27 @@ class UnifiedGraphicsItem(QGraphicsPathItem, QObject):
                 path.addRect(rect.normalized())
             self.setPath(path)
             
+            # Compensate for TransformOriginPoint change to prevent jumping
+            # When we resize, the center changes. If we update the Origin to the new center
+            # without moving the item, the rotation pivot shifts, causing a visual jump.
+            new_center = rect.center()
+            
+            # Calculate where the center is currently in Scene coords (Target Scene Position)
+            scene_center_target = self.mapToScene(new_center)
+            
+            if self.transformOriginPoint() != new_center:
+                # Update Origin to keep rotation around center
+                self.setTransformOriginPoint(new_center)
+                
+                # Calculate where the center ended up with new origin (but old pos)
+                scene_center_actual = self.mapToScene(new_center)
+                
+                # Compensate position to bring center back to target
+                diff = scene_center_target - scene_center_actual
+                self.setPos(self.pos() + diff)
+            
             if self.roi:
                 # Update model path (Absolute Coords)
-                # Important: When rotated, we must map the local normalized rect to scene
-                # But a simple mapToScene(rect) might not be enough if we want to preserve rotation in the model.
-                # Actually, the model.path is usually the absolute path.
-                
-                # Create a temporary transform that matches the item's current transform
-                # to map the local path to scene coordinates correctly.
                 transform = self.sceneTransform()
                 p_abs = transform.map(path)
                 self.roi.path = p_abs
@@ -531,8 +603,13 @@ class UnifiedGraphicsItem(QGraphicsPathItem, QObject):
                 # If the shape is a simple rect/ellipse, we might also want to update points
                 # if the model uses them.
                 if hasattr(self.roi, 'points') and len(self.roi.points) >= 2:
-                    self.roi.points[0] = self.mapToScene(rect.topLeft())
-                    self.roi.points[1] = self.mapToScene(rect.bottomRight())
+                    # Update points using "Aligned Scene Center" strategy
+                    # This ensures consistency regardless of rotation, origin, or local offset.
+                    # We store the definition of an unrotated rect centered at the same scene location.
+                    w, h = rect.width(), rect.height()
+                    half = QPointF(w/2, h/2)
+                    self.roi.points[0] = scene_center_target - half
+                    self.roi.points[1] = scene_center_target + half
             
             self._update_handles_pos()
             
@@ -721,6 +798,20 @@ class UnifiedGraphicsItem(QGraphicsPathItem, QObject):
                     self.setPen(pen)
                 
                 return # Skip standard pen/brush setup below for text
+        elif t in ['rect', 'rectangle', 'ellipse', 'circle']:
+            # Reconstruct UNROTATED path from points
+            # This is critical to avoid "double rotation" because setRotation will be called below.
+            # We treat 'points' as the unrotated (local-aligned) geometry definition.
+            if self.points and len(self.points) >= 2:
+                 p = QPainterPath()
+                 r = QRectF(self.points[0], self.points[1]).normalized()
+                 if t in ['ellipse', 'circle']:
+                     p.addEllipse(r)
+                 else:
+                     p.addRect(r)
+                 self.setPath(p)
+            else:
+                 self.setPath(roi.path)
         else:
             self.setPath(roi.path)
 

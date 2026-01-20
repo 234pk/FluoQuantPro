@@ -56,6 +56,9 @@ class MeasurementSettingsWidget(QWidget):
         self.behavior_group = QGroupBox(tr("Behavior"))
         behavior_layout = QVBoxLayout()
         
+        # Overlap toggle
+        self._add_toggle_row(behavior_layout, tr("Calculate Overlap"), 'Overlap')
+        
         # Accumulate Results toggle
         row_layout = QHBoxLayout()
         self.lbl_accumulate = QLabel(tr("Accumulate Results"))
