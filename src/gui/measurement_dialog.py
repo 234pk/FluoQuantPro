@@ -37,6 +37,14 @@ class MeasurementSettingsWidget(QWidget):
         self.labels[key] = label
         return toggle
 
+    def _add_help_label(self, layout, text):
+        """Helper to add a grey help label."""
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setStyleSheet("color: #888888; font-size: 11px; margin-bottom: 5px;")
+        layout.addWidget(label)
+        return label
+
     def init_ui(self):
         layout = QVBoxLayout(self)
         
@@ -58,17 +66,21 @@ class MeasurementSettingsWidget(QWidget):
         
         # Overlap toggle
         self._add_toggle_row(behavior_layout, tr("Calculate Overlap"), 'Overlap')
+        self.lbl_overlap_help = self._add_help_label(behavior_layout, 
+            tr("Calculate spatial overlap (Intersection, IoU, etc.) between selected ROIs. Note: May increase calculation time with many ROIs."))
         
         # Accumulate Results toggle
         row_layout = QHBoxLayout()
         self.lbl_accumulate = QLabel(tr("Accumulate Results"))
         self.chk_accumulate = ToggleSwitch()
-        self.chk_accumulate.setToolTip(tr("If checked, new measurements will be appended. If unchecked, they will overwrite existing results for the same ROI."))
         self.chk_accumulate.setChecked(self.settings.get('Accumulate', True))
         row_layout.addWidget(self.lbl_accumulate)
         row_layout.addStretch()
         row_layout.addWidget(self.chk_accumulate)
         behavior_layout.addLayout(row_layout)
+        
+        self.lbl_accumulate_help = self._add_help_label(behavior_layout,
+            tr("When enabled, new measurement results will be appended to the table; when disabled, they will overwrite old results."))
         
         self.behavior_group.setLayout(behavior_layout)
         layout.addWidget(self.behavior_group)
@@ -82,6 +94,9 @@ class MeasurementSettingsWidget(QWidget):
             
         self.behavior_group.setTitle(tr("Behavior"))
         self.lbl_accumulate.setText(tr("Accumulate Results"))
+        
+        self.lbl_overlap_help.setText(tr("Calculate spatial overlap (Intersection, IoU, etc.) between selected ROIs. Note: May increase calculation time with many ROIs."))
+        self.lbl_accumulate_help.setText(tr("When enabled, new measurement results will be appended to the table; when disabled, they will overwrite old results."))
 
     def get_settings(self):
         settings = {key: chk.isChecked() for key, chk in self.checks.items()}

@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from enum import Enum
 from typing import Optional, List, Dict, Tuple
-from PySide6.QtCore import QPointF, Qt, QObject, Signal, QRectF
+from PySide6.QtCore import QPointF, Qt, QObject, Signal, QRectF, QTimer
 from PySide6.QtGui import QPainterPath, QColor, QPen, QTransform
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsLineItem
 from src.core.algorithms import magic_wand_2d, mask_to_qpath, mask_to_qpaths
@@ -260,11 +260,39 @@ class MagicWandTool(AbstractTool):
         self.current_mask = None
         self.current_path = None
 
+        # Delayed Trigger State (USER REQUEST: Prevent accidental clicks)
+        self.is_triggered = False
+        self._pending_args = None
+        self.trigger_timer = QTimer()
+        self.trigger_timer.setSingleShot(True)
+        self.trigger_timer.setInterval(150) # 150ms delay (Adjustable feel)
+        self.trigger_timer.timeout.connect(self._on_trigger_timeout)
+
     def mouse_press(self, scene_pos: QPointF, channel_index: int, context: dict = None):
         """
-        Initial click to start selection.
+        Starts the timer. Selection only starts if held for > 150ms.
         """
-        Logger.info(f"[MagicWandTool] mouse_press at {scene_pos}, channel_index={channel_index}")
+        Logger.debug(f"[MagicWandTool] mouse_press (Delayed Trigger Start)")
+        self.is_triggered = False
+        self._pending_args = (scene_pos, channel_index, context)
+        self.trigger_timer.start()
+
+    def _on_trigger_timeout(self):
+        """
+        Called when user holds mouse down long enough. Starts the actual selection.
+        """
+        if not self._pending_args:
+            return
+            
+        self.is_triggered = True
+        scene_pos, channel_index, context = self._pending_args
+        self._start_selection(scene_pos, channel_index, context)
+
+    def _start_selection(self, scene_pos: QPointF, channel_index: int, context: dict = None):
+        """
+        Original mouse_press logic, now called after delay.
+        """
+        Logger.info(f"[MagicWandTool] ACTIVATED at {scene_pos}")
         
         # --- FIX: Ensure Preview Item ---
         view = context.get('view') if context else None
@@ -384,6 +412,9 @@ class MagicWandTool(AbstractTool):
         """
         Adjusts tolerance based on horizontal drag distance.
         """
+        if not self.is_triggered:
+            return # Don't process moves if not yet activated
+
         if not self.is_dragging:
             return
 
@@ -430,6 +461,21 @@ class MagicWandTool(AbstractTool):
         """
         Commits the ROI.
         """
+        # 1. Check Timer status (Short Click Protection)
+        if self.trigger_timer.isActive():
+            self.trigger_timer.stop()
+            Logger.info("[MagicWandTool] Click too short (<150ms) - Ignored to prevent accidental full-image selection")
+            # Cleanup
+            if self.preview_item and self.preview_item.scene():
+                self.preview_item.scene().removeItem(self.preview_item)
+            self.preview_item = None
+            self._reset_state()
+            return
+
+        # 2. Check Trigger status
+        if not self.is_triggered:
+            return
+
         Logger.info(f"[MagicWandTool] mouse_release at {scene_pos}")
         if not self.is_dragging or self.current_path is None:
             Logger.debug("[MagicWandTool] No active drag or path to commit")
@@ -580,6 +626,12 @@ class MagicWandTool(AbstractTool):
         else:
             self.current_path = None
             self.current_paths = []
+
+    def on_deactivate(self):
+        """Cleanup timer on deactivation."""
+        if hasattr(self, 'trigger_timer') and self.trigger_timer.isActive():
+            self.trigger_timer.stop()
+        self._reset_state()
 
     def _reset_state(self):
         self.is_dragging = False

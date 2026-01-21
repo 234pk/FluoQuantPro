@@ -12,7 +12,7 @@ import csv
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                                QHBoxLayout, QLabel, QFileDialog, QDockWidget, QMenu, QMessageBox, QScrollArea, QFrame, QToolButton, QSizePolicy,
-                               QGraphicsDropShadowEffect, QPushButton, QStackedWidget)
+                               QGraphicsDropShadowEffect, QPushButton, QStackedWidget, QToolBar)
 from PySide6.QtGui import QAction, QDesktopServices, QColor, QPalette, QUndoStack
 from PySide6.QtCore import Qt, QTimer, QUrl, QSettings, QSize, QPropertyAnimation, QEasingCurve, QRect, QEvent, QPoint, QThread, Signal, QPointF
 
@@ -188,6 +188,7 @@ class MainWindow(QMainWindow):
         self.perf_monitor = PerformanceMonitor.instance()
         self.perf_monitor.lag_detected.connect(self.show_recovery_dialog)
         self.perf_monitor.performance_mode_changed.connect(self.on_performance_mode_changed)
+        self.perf_monitor.cleanup_started.connect(self.on_memory_cleanup_requested)
 
         # OpenCL Initialization
         self.init_opencl()
@@ -1713,6 +1714,25 @@ class MainWindow(QMainWindow):
         if not high_perf_mode:
             self.refresh_display()
 
+    def on_memory_cleanup_requested(self):
+        """
+        Handles memory cleanup request from PerformanceMonitor.
+        Releases UI-held references like UndoStack and triggers Channel cache clearing.
+        """
+        Logger.info("[Main] Memory cleanup requested. Releasing UI resources...")
+        
+        # 1. Clear Undo Stack (Releases references to commands -> data)
+        if self.undo_stack:
+            self.undo_stack.clear()
+            Logger.debug("[Main] UndoStack cleared.")
+            
+        # 2. Clear Channel Caches
+        if self.session:
+            for ch in self.session.channels:
+                if hasattr(ch, 'clear_cache'):
+                    ch.clear_cache()
+            Logger.debug(f"[Main] Cleared cache for {len(self.session.channels)} channels.")
+
     def closeEvent(self, event):
         if not self.check_unsaved_changes():
             event.ignore()
@@ -2309,7 +2329,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'perf_monitor') and self.perf_monitor.auto_cleanup_enabled:
             # Trigger a cleanup before loading a new scene to free up space
             # This ensures we don't hit the threshold MID-loading which is slower
-            self.perf_monitor.trigger_cleanup()
+            # UPDATE: Only trigger if actually needed (User request "too aggressive")
+            if SceneCacheManager.instance().should_cleanup_memory():
+                self.perf_monitor.trigger_cleanup()
 
         # 1. Check Scene Cache FIRST
         cached_channels = SceneCacheManager.instance().get_scene(scene_id)
@@ -3494,6 +3516,7 @@ class MainWindow(QMainWindow):
         if not self.session.channels:
             return
         
+        Logger.debug(f"[Main] refresh_display(fit={fit}) requested")
         # Debounce: Stop previous timer if running, update pending state, and restart
         if fit:
             self._pending_fit_view = True
@@ -3506,6 +3529,7 @@ class MainWindow(QMainWindow):
         if not self.session.channels:
             return
         
+        Logger.debug("[Main] _perform_refresh_display starting")
         # Update ALL view containers to keep them in sync
         self.update_all_view_containers()
         
@@ -3514,6 +3538,7 @@ class MainWindow(QMainWindow):
             self._pending_fit_view = False
         
         self.lbl_status.setText(tr("Ready"))
+        Logger.debug("[Main] _perform_refresh_display finished")
 
     def update_zoom_label(self, scale):
         """Updates the zoom label in the status bar."""
@@ -3638,9 +3663,11 @@ class MainWindow(QMainWindow):
 
     def fit_all_views(self):
         """Fits views on ALL view containers."""
+        Logger.debug("[Main] fit_all_views started")
         for container in self.view_containers:
             if hasattr(container, 'fit_views'):
                 container.fit_views()
+        Logger.debug("[Main] fit_all_views finished")
 
     def update_all_view_containers(self, channel_index=None):
         """Updates views on ALL view containers."""
@@ -3854,7 +3881,7 @@ class MainWindow(QMainWindow):
                 Logger.debug(f"[Main] Overlap groups cleared: sample={sample_name}")
             
             # --- AUTOMATIC OVERLAP ANALYSIS (All ROIs) ---
-            if len(measurable_rois) >= 2:
+            if len(measurable_rois) >= 2 and self.measurement_settings.get('Overlap', False):
                 print(f"DEBUG: [Main] Calculating overlap for {len(measurable_rois)} ROIs")
                 
                 # 1. Prepare data
@@ -3900,24 +3927,23 @@ class MainWindow(QMainWindow):
                     # 3. Calculate Pairwise Overlaps (Matrix approach)
                     # We can iterate all pairs and add significant overlaps
                     # To avoid clutter, maybe only add pairs with IoU > 0.01
-                    if self.measurement_settings.get('Overlap', False):
-                        for i in range(len(measurable_rois)):
-                            for j in range(i + 1, len(measurable_rois)):
-                                roi1 = measurable_rois[i]
-                                roi2 = measurable_rois[j]
-                                
-                                # Quick bbox check
-                                if not roi1.path.boundingRect().intersects(roi2.path.boundingRect()):
-                                    continue
-
-                                self._run_overlap_analysis(sample_name, roi1, roi2)
-                    else:
-                        Logger.debug("[Main] Overlap analysis skipped (disabled in settings)")
+                    for i in range(len(measurable_rois)):
+                        for j in range(i + 1, len(measurable_rois)):
+                            roi1 = measurable_rois[i]
+                            roi2 = measurable_rois[j]
                             
+                            # Quick bbox check
+                            if not roi1.path.boundingRect().intersects(roi2.path.boundingRect()):
+                                continue
+
+                            self._run_overlap_analysis(sample_name, roi1, roi2)
                 except Exception as e:
                     print(f"Error in automatic overlap analysis: {e}")
                     import traceback
                     traceback.print_exc()
+            else:
+                if len(measurable_rois) >= 2:
+                    Logger.debug("[Main] Overlap analysis skipped (disabled in settings)")
             
             # Switch to Results Tab
             self.control_tabs.setCurrentWidget(self.result_widget)

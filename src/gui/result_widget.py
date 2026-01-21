@@ -1,8 +1,9 @@
 from pathlib import Path
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem, QHeaderView, QMenu, QPushButton)
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from src.core.language_manager import tr, LanguageManager
 from src.core.logger import Logger
+from src.gui.icon_manager import get_icon
 
 class MeasurementResultTree(QTreeWidget):
     """
@@ -653,28 +654,85 @@ class MeasurementResultWidget(QWidget):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(4, 4, 4, 4)
-        self.layout.setSpacing(4)
+        self.layout.setSpacing(6)
         
         self.tree = MeasurementResultTree()
         self.layout.addWidget(self.tree, 1) # Give tree stretch factor 1
         
-        # Bottom Buttons
+        # Bottom Buttons Layout
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
         
-        self.btn_measure = QPushButton(tr("Measure All"))
+        # Button Styling & Icons
+        icon_size = QSize(20, 20)
+        
+        self.btn_measure = QPushButton()
+        self.btn_measure.setIcon(get_icon("measure"))
+        self.btn_measure.setIconSize(icon_size)
+        self.btn_measure.setMinimumHeight(32)
         # Signal will be connected in Main
-        btn_layout.addWidget(self.btn_measure)
         
-        self.btn_export = QPushButton(tr("Export Results (CSV)..."))
+        self.btn_export = QPushButton()
+        self.btn_export.setIcon(get_icon("export"))
+        self.btn_export.setIconSize(icon_size)
+        self.btn_export.setMinimumHeight(32)
         self.btn_export.clicked.connect(self.export_results)
-        btn_layout.addWidget(self.btn_export)
         
-        self.btn_clear = QPushButton(tr("Clear All Results"))
+        self.btn_clear = QPushButton()
+        self.btn_clear.setIcon(get_icon("clear"))
+        self.btn_clear.setIconSize(icon_size)
+        self.btn_clear.setMinimumHeight(32)
         self.btn_clear.clicked.connect(self.clear_results)
-        btn_layout.addWidget(self.btn_clear)
+        
+        # Add buttons with equal stretch to make them scale
+        btn_layout.addWidget(self.btn_measure, 1)
+        btn_layout.addWidget(self.btn_export, 1)
+        btn_layout.addWidget(self.btn_clear, 1)
         
         self.layout.addLayout(btn_layout)
+
+        # Responsive behavior: store keys for translation and toggling
+        self.btn_keys = {
+            self.btn_measure: "Measure All",
+            self.btn_export: "Export Results (CSV)...",
+            self.btn_clear: "Clear All Results"
+        }
         
+        # Initial text/tooltip setup
+        self.retranslate_ui()
+        
+        # Connect to language changes
+        LanguageManager.instance().language_changed.connect(self.retranslate_ui)
+
+    def retranslate_ui(self):
+        """Updates text and tooltips for all buttons."""
+        for btn, key in self.btn_keys.items():
+            btn.setToolTip(tr(self._get_tooltip_key(key)))
+        
+        # Update current text based on width
+        self._update_button_text()
+
+    def _get_tooltip_key(self, key):
+        if key == "Measure All": return "Measure all ROIs in the current image"
+        if key == "Export Results (CSV)...": return "Export all measurement results to a CSV file"
+        if key == "Clear All Results": return "Clear all measurements from this table"
+        return key
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_button_text()
+
+    def _update_button_text(self):
+        """Toggles between Icon+Text and Icon-only based on widget width."""
+        # Threshold for showing text: ~400px
+        # If width is small, we only show icons to avoid text overlap/clipping
+        show_text = self.width() >= 400
+        
+        for btn, key in self.btn_keys.items():
+            target_text = tr(key) if show_text else ""
+            if btn.text() != target_text:
+                btn.setText(target_text)
+
     def export_results(self):
         """Exports the current tree structure to a CSV file."""
         self.tree.export_csv_data()

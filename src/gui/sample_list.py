@@ -9,12 +9,11 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QListWidget, QListWidgetIte
                                QSizePolicy, QColorDialog, QApplication, QToolTip,
                                QDialog, QDialogButtonBox, QGridLayout, QComboBox, QRadioButton)
 from PySide6.QtCore import Qt, Signal, QSize, QUrl, QSettings, QTimer, QPoint
-from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPixmap, QIcon, QAction, QPalette
+from PySide6.QtGui import QColor, QDragEnterEvent, QDropEvent, QPixmap, QIcon, QAction, QPalette, QImage
 from src.gui.icon_manager import get_icon
 from src.gui.toggle_switch import ToggleSwitch
 from src.core.language_manager import LanguageManager, tr
 import tifffile
-import qimage2ndarray
 import numpy as np
 import uuid
 from src.core.project_model import ProjectModel, SceneData, ChannelDef
@@ -244,7 +243,21 @@ class FileListWidget(QListWidget):
                             else:
                                 data = np.zeros_like(data, dtype=np.uint8)
                                 
-                        return QPixmap.fromImage(qimage2ndarray.array2qimage(data, normalize=False))
+                        # Explicit QImage creation to avoid qimage2ndarray dependency
+                        if not data.flags['C_CONTIGUOUS']:
+                            data = np.ascontiguousarray(data)
+                            
+                        h_d, w_d = data.shape[:2]
+                        ch_d = 1 if data.ndim == 2 else data.shape[2]
+                        
+                        if ch_d == 3:
+                            qimg = QImage(data.data, w_d, h_d, w_d * 3, QImage.Format.Format_RGB888)
+                        elif ch_d == 4:
+                            qimg = QImage(data.data, w_d, h_d, w_d * 4, QImage.Format.Format_RGBA8888)
+                        else:
+                            qimg = QImage(data.data, w_d, h_d, w_d, QImage.Format.Format_Grayscale8)
+
+                        return QPixmap.fromImage(qimg)
                 except Exception:
                     # Fallback to OpenCV if tifffile fails
                     pass
@@ -281,7 +294,19 @@ class FileListWidget(QListWidget):
                 new_w, new_h = int(w*scale), int(h*scale)
                 img = cv2.resize(img, (new_w, new_h))
             
-            return QPixmap.fromImage(qimage2ndarray.array2qimage(img, normalize=False))
+            # Explicit conversion to QImage (RGB888)
+            if not img.flags['C_CONTIGUOUS']: img = np.ascontiguousarray(img)
+            h_t, w_t = img.shape[:2]
+            ch_t = 1 if img.ndim == 2 else img.shape[2]
+            
+            if ch_t == 3:
+                qimg = QImage(img.data, w_t, h_t, w_t * 3, QImage.Format.Format_RGB888)
+            elif ch_t == 4:
+                 qimg = QImage(img.data, w_t, h_t, w_t * 4, QImage.Format.Format_RGBA8888)
+            else:
+                 qimg = QImage(img.data, w_t, h_t, w_t, QImage.Format.Format_Grayscale8)
+
+            return QPixmap.fromImage(qimg)
 
         except Exception as e:
             # Silence errors for preview to avoid console spam

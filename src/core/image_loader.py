@@ -24,6 +24,25 @@ class ImageLoader:
         try:
             if ext in (".tif", ".tiff"):
                 raw_data = tifffile.imread(file_path)
+                
+                # FIX: Handle BGR/RGB confusion for 3-channel TIFFs (often saved by OpenCV)
+                # If it looks like a standard RGB image, verify/reload with OpenCV to ensure correct channel order.
+                if raw_data.ndim == 3 and raw_data.shape[2] == 3:
+                    try:
+                        # OpenCV loads TIFFs as BGR (swapping if necessary from file). 
+                        # This ensures consistency with how OpenCV saves them.
+                        # FIX: Use imdecode to support Unicode paths (e.g. Chinese characters) on Windows
+                        img_stream = np.fromfile(file_path, dtype=np.uint8)
+                        cv_data = cv2.imdecode(img_stream, cv2.IMREAD_UNCHANGED)
+                        
+                        if cv_data is not None and cv_data.shape == raw_data.shape and cv_data.dtype == raw_data.dtype:
+                             # Use OpenCV's BGR -> RGB conversion to be safe
+                             raw_data = cv2.cvtColor(cv_data, cv2.COLOR_BGR2RGB)
+                    except Exception as e:
+                        # Just log debug, don't scare user. It's a fallback/check anyway.
+                        # print(f"ImageLoader: OpenCV fallback for TIFF failed, using tifffile raw: {e}")
+                        pass
+
             else:
                 # Use cv2 for other formats, with support for Unicode paths
                 img_stream = np.fromfile(file_path, dtype=np.uint8)

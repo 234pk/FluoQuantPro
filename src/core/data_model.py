@@ -227,6 +227,18 @@ class ImageChannel:
             self._preview_enhance_cache.clear()
         # Note: We do NOT clear _raw_data here as it's the core scientific signal.
 
+    def unload_raw_data(self):
+        """
+        Forcefully unloads the raw data to free memory.
+        This renders the channel unusable until reloaded from disk.
+        Used by CacheManager when evicting scenes.
+        """
+        self.clear_cache()
+        if hasattr(self, '_raw_data'):
+            self._raw_data = None
+        # We also mark it as 'unloaded' if we want to track state, 
+        # but usually this object is about to be destroyed.
+
     def update_data(self, new_data: np.ndarray):
         """Updates the raw data (e.g. after cropping)."""
         self._raw_data = new_data
@@ -274,7 +286,16 @@ class Session(QObject):
 
     def clear(self):
         """Resets the session state and releases resources."""
-        # Proactively clear caches for each channel to help GC
+        # 1. Clear Undo Stack first to release any references to data/channels held in commands
+        if self.undo_stack:
+            self.undo_stack.clear()
+
+        # 2. Clear caches but DO NOT forcefully unload raw data here.
+        # The lifecycle of the raw data should be managed by the CacheManager.
+        # If we unload here, we break the caching mechanism (reloading a cached scene would fail).
+        # When Session clears a channel, it just drops its reference. 
+        # If CacheManager holds it, it stays in memory (fast switch).
+        # If CacheManager drops it (due to memory pressure), then it gets unloaded.
         for ch in self.channels:
             if hasattr(ch, 'clear_cache'):
                 ch.clear_cache()
@@ -286,7 +307,7 @@ class Session(QObject):
         self.is_single_channel_mode = False
         self.project_changed.emit()
         
-        # Explicitly trigger GC if many channels were cleared
+        # Explicitly trigger GC
         import gc
         gc.collect()
 

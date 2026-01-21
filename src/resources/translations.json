@@ -308,6 +308,9 @@
     "Calculate Pearson's Correlation (PCC) and Manders' Coefficients (M1/M2) for the entire image.": {
         "zh": "计算整个图像的 Pearson 相关系数 (PCC) 和 Manders 系数 (M1/M2)。"
     },
+    "Calculate spatial overlap (Intersection, IoU, etc.) between selected ROIs. Note: May increase calculation time with many ROIs.": {
+        "zh": "计算选中 ROI 之间的空间重叠（交集面积、IoU 等）。注意：ROI 较多时会增加计算时间。"
+    },
     "Cancel": {
         "zh": "Cancel"
     },
@@ -373,6 +376,9 @@
     },
     "Clear All Results": {
         "zh": "清除所有结果"
+    },
+    "Clear all measurements from this table": {
+        "zh": "清除表格中的所有测量结果"
     },
     "Clear Line": {
         "zh": "清除线条"
@@ -769,6 +775,9 @@
     },
     "Export Results (CSV)...": {
         "zh": "导出结果 (CSV)..."
+    },
+    "Export all measurement results to a CSV file": {
+        "zh": "将所有测量结果导出为 CSV 文件"
     },
     "Export Settings...": {
         "zh": "导出设置..."
@@ -1264,6 +1273,12 @@
     },
     "Measured": {
         "zh": "已测量"
+    },
+    "Measure All": {
+        "zh": "测量全部"
+    },
+    "Measure all ROIs in the current image": {
+        "zh": "测量当前图像中的所有选区"
     },
     "Measurement": {
         "zh": "测量"
@@ -2179,6 +2194,9 @@
     },
     "When clicking in Merge view, count will be assigned to this channel.": {
         "zh": "在合并视图中点击时，计数将分配给此通道。"
+    },
+    "When enabled, new measurement results will be appended to the table; when disabled, they will overwrite old results.": {
+        "zh": "开启时，新的测量结果将追加到表格末尾；关闭时，新的测量将覆盖旧的结果。"
     },
     "Width:": {
         "zh": "宽度:"

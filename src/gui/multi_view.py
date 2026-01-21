@@ -273,32 +273,41 @@ class MultiViewWidget(QWidget):
         Fits all views to their content.
         If force=False, only fits if the view is already close to fit-to-screen scale.
         """
-        for view in self.views.values():
-            if not force:
-                # Check if we are already zoomed in significantly
-                # We calculate what the fit-to-screen scale WOULD be
-                rect = view.scene().sceneRect()
-                if rect.width() <= 0 or rect.height() <= 0:
-                    continue
-                
-                # Get viewport size
-                v_rect = view.viewport().rect()
-                if v_rect.width() <= 0 or v_rect.height() <= 0:
-                    continue
+        Logger.debug(f"[MultiView] fit_views(force={force}) started")
+        # Disable sync during bulk fit to prevent N^2 signal storm
+        self.sync_manager.set_enabled(False)
+        try:
+            for view in self.views.values():
+                if not force:
+                    # Check if we are already zoomed in significantly
+                    # We calculate what the fit-to-screen scale WOULD be
+                    rect = view.scene().sceneRect()
+                    if rect.width() <= 0 or rect.height() <= 0:
+                        continue
                     
-                target_scale = min(v_rect.width() / rect.width(), v_rect.height() / rect.height())
-                current_scale = view.transform().m11()
+                    # Get viewport size
+                    v_rect = view.viewport().rect()
+                    if v_rect.width() <= 0 or v_rect.height() <= 0:
+                        continue
+                        
+                    target_scale = min(v_rect.width() / rect.width(), v_rect.height() / rect.height())
+                    current_scale = view.transform().m11()
+                    
+                    # If current scale is more than 5% different from fit scale, 
+                    # we assume the user has manually zoomed and we should NOT disrupt them.
+                    if abs(current_scale - target_scale) / target_scale > 0.05:
+                        Logger.debug(f"[MultiView] Skipping auto-fit for {view.view_id} (Zoomed: {current_scale:.2f} vs Fit: {target_scale:.2f})")
+                        continue
                 
-                # If current scale is more than 5% different from fit scale, 
-                # we assume the user has manually zoomed and we should NOT disrupt them.
-                if abs(current_scale - target_scale) / target_scale > 0.05:
-                    # print(f"[MultiView] Skipping auto-fit for {view.view_id} (Zoomed: {current_scale:.2f} vs Fit: {target_scale:.2f})")
-                    continue
-            
-            view.fitInView(view.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+                Logger.debug(f"[MultiView] Calling fitInView for {view.view_id}")
+                view.fitInView(view.scene().sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        finally:
+            self.sync_manager.set_enabled(True)
+            Logger.debug(f"[MultiView] fit_views finished, sync re-enabled")
 
     def render_all(self, preview=False):
         """Renders content for all views. If preview=True, downsamples for performance."""
+        Logger.debug(f"[MultiView] render_all(preview={preview}) started")
         t_render_start = time.time()
         
         # Disable sync during bulk update to prevent coordinate jumping
@@ -470,15 +479,23 @@ class MultiViewWidget(QWidget):
 
     def fit_to_width(self):
         """Fits all active views to width."""
-        for view in self.views.values():
-            if view.isVisible() and view.full_res_pixmap:
-                view.fit_to_width()
+        self.sync_manager.set_enabled(False)
+        try:
+            for view in self.views.values():
+                if view.isVisible() and view.full_res_pixmap:
+                    view.fit_to_width()
+        finally:
+            self.sync_manager.set_enabled(True)
 
     def fit_to_height(self):
         """Fits all active views to height."""
-        for view in self.views.values():
-            if view.isVisible() and view.full_res_pixmap:
-                view.fit_to_height()
+        self.sync_manager.set_enabled(False)
+        try:
+            for view in self.views.values():
+                if view.isVisible() and view.full_res_pixmap:
+                    view.fit_to_height()
+        finally:
+            self.sync_manager.set_enabled(True)
 
     def setup_layout(self):
         """Updates the grid layout based on number of channels."""

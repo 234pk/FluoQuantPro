@@ -1,9 +1,8 @@
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsPathItem, QLabel, QGraphicsItem, QApplication, QGraphicsRectItem, QGraphicsObject, QGraphicsLineItem
-from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPainterPath, QFont, QTransform, QPalette, QFontMetrics, QPainterPathStroker, QKeySequence
+from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPainterPath, QFont, QTransform, QPalette, QFontMetrics, QPainterPathStroker, QKeySequence, QImage
 from PySide6.QtCore import Qt, Signal, QRectF, QPoint, QPointF, QTimer, QObject, QLineF, QSettings, QMutex
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 import numpy as np
-import qimage2ndarray
 import cv2
 import time
 from src.core.language_manager import tr
@@ -121,6 +120,16 @@ class CanvasView(QGraphicsView):
         self.pixmap_item.setZValue(0)
         self.scene().addItem(self.pixmap_item)
         
+        # USER REQUEST: Add border to distinguish image from black background
+        self.image_border_item = QGraphicsRectItem(self.pixmap_item)
+        # USER REQUEST: Optimized border (Subtle Gray) + Dark Background
+        border_pen = QPen(QColor(80, 80, 80), 1) # Subtle gray border
+        border_pen.setCosmetic(True) # Keep 1px width regardless of zoom
+        self.image_border_item.setPen(border_pen)
+        self.image_border_item.setBrush(Qt.BrushStyle.NoBrush)
+        self.image_border_item.setZValue(0.1)
+        self.image_border_item.hide()
+        
         # Label Overlay
         self.label_text = None
         self.is_selected = False
@@ -157,8 +166,8 @@ class CanvasView(QGraphicsView):
         # EXPERIMENTAL FIX: Ensure viewport mouse tracking
         self.viewport().setMouseTracking(True)
         
-        # Black background for better fluorescence visibility
-        self.setBackgroundBrush(QBrush(Qt.GlobalColor.black))
+        # Dark Gray background (not pure black) to distinguish image boundaries
+        self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
 
         # State
         self._zoom_level = 1.0
@@ -264,6 +273,13 @@ class CanvasView(QGraphicsView):
     def _update_indicator_fade(self):
         # Existing method logic ...
         pass
+
+    # USER REQUEST: Auto-focus view on hover to enable keyboard shortcuts (Space, Ctrl) immediately
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        # Only steal focus if the window is active to avoid stealing from other apps
+        if self.window().isActiveWindow():
+             self.setFocus(Qt.FocusReason.MouseFocusReason)
 
     def show_text_input(self, scene_pos: QPointF, initial_text: str = "", callback=None):
         """Shows a text input box at the given scene position."""
@@ -1005,6 +1021,7 @@ class CanvasView(QGraphicsView):
         """
         if image is None:
             self.pixmap_item.setPixmap(QPixmap())
+            self.image_border_item.hide()
             self.pixmap_l0 = self.pixmap_l1 = self.pixmap_l2 = None
             self.full_res_pixmap = self.low_res_pixmap = None
             self.last_display_array = None
@@ -1015,6 +1032,7 @@ class CanvasView(QGraphicsView):
 
         h, w = image.shape[:2]
         self._is_using_low_res = False # Reset state for new image
+        self.pixmap_l0 = None # Initialize to avoid AttributeError if generation fails
         
         # 1. Generate Multi-level Pixmaps
         try:
@@ -1023,7 +1041,28 @@ class CanvasView(QGraphicsView):
             settings = QSettings("FluoQuantPro", "Settings")
             quality_key = settings.value("display/quality_key", "balanced")
             
-            qimg = qimage2ndarray.array2qimage(image, normalize=False)
+            # USER REQUEST: FIX Red-Blue Channel Reversal
+            # Explicitly convert to uint8 RGB and create QImage with Format_RGB888.
+            # This avoids ambiguity in qimage2ndarray or platform-specific BGR defaults.
+            if image.dtype != np.uint8:
+                img_u8 = (np.clip(image, 0, 1) * 255).astype(np.uint8)
+            else:
+                img_u8 = image
+                
+            if not img_u8.flags['C_CONTIGUOUS']:
+                img_u8 = np.ascontiguousarray(img_u8)
+                
+            h_img, w_img = img_u8.shape[:2]
+            channels = 1 if img_u8.ndim == 2 else img_u8.shape[2]
+            
+            if channels == 3:
+                qimg = QImage(img_u8.data, w_img, h_img, w_img * 3, QImage.Format.Format_RGB888)
+            elif channels == 4:
+                qimg = QImage(img_u8.data, w_img, h_img, w_img * 4, QImage.Format.Format_RGBA8888)
+            else:
+                # Grayscale
+                qimg = QImage(img_u8.data, w_img, h_img, w_img, QImage.Format.Format_Grayscale8)
+
             full_pixmap = QPixmap.fromImage(qimg)
             
             # Default: Level 0 is full resolution
@@ -1084,6 +1123,13 @@ class CanvasView(QGraphicsView):
             self.pixmap_item.setPixmap(self.pixmap_l0)
             self.pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
             
+            # USER REQUEST: Update border to match image size
+            if self.pixmap_l0:
+                self.image_border_item.setRect(QRectF(self.pixmap_l0.rect()))
+                self.image_border_item.show()
+            else:
+                self.image_border_item.hide()
+            
         except Exception as e:
             Logger.error(f"CanvasView({self.view_id}): Multi-level Pixmap generation failed: {e}", exc_info=True)
 
@@ -1094,7 +1140,7 @@ class CanvasView(QGraphicsView):
             self.scene().setSceneRect(scene_rect)
             
             scene_w = scene_rect.width()
-            pix_w = self.pixmap_l0.width()
+            pix_w = self.pixmap_l0.width() if self.pixmap_l0 else 0
             
             if pix_w > 0:
                 # Scale pixmap_item so its width (pix_w) matches scene_w
@@ -1116,7 +1162,7 @@ class CanvasView(QGraphicsView):
         else:
             self.scene().setSceneRect(0, 0, w, h)
             
-            pix_w = self.pixmap_l0.width()
+            pix_w = self.pixmap_l0.width() if self.pixmap_l0 else 0
             if pix_w > 0:
                 scale = w / pix_w
                 base_transform = QTransform().scale(scale, scale)
@@ -1149,6 +1195,7 @@ class CanvasView(QGraphicsView):
         if self._is_using_low_res:
             return
 
+        Logger.debug(f"[CanvasView:{self.view_id}] Enabling low-res proxy")
         # Disable smoothing for better performance during movement
         self.pixmap_item.setTransformationMode(Qt.TransformationMode.FastTransformation)
         
@@ -1161,6 +1208,10 @@ class CanvasView(QGraphicsView):
             transform = QTransform(self._base_pixmap_transform)
             transform.scale(scale_x, scale_y)
             self.pixmap_item.setTransform(transform)
+            
+            # Sync border to low-res pixmap size
+            self.image_border_item.setRect(QRectF(self.pixmap_l2.rect()))
+            
             self._is_using_low_res = True
 
     def _disable_low_res_proxy(self):
@@ -1171,10 +1222,15 @@ class CanvasView(QGraphicsView):
                  self.pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
             return
 
+        Logger.debug(f"[CanvasView:{self.view_id}] Disabling low-res proxy")
         if self.pixmap_l0:
             self.pixmap_item.setPixmap(self.pixmap_l0)
             self.pixmap_item.setTransform(self._base_pixmap_transform)
             self.pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+            
+            # Sync border to high-res pixmap size
+            self.image_border_item.setRect(QRectF(self.pixmap_l0.rect()))
+            
             self._is_using_low_res = False
             self.viewport().update()
 
@@ -1371,7 +1427,21 @@ class CanvasView(QGraphicsView):
             scale = min(200/w, 200/h)
             new_w, new_h = int(w*scale), int(h*scale)
             img_small = cv2.resize(img, (new_w, new_h))
-            qimg = qimage2ndarray.array2qimage(img_small, normalize=False)
+            
+            # Explicit QImage creation to avoid qimage2ndarray dependency
+            if not img_small.flags['C_CONTIGUOUS']:
+                img_small = np.ascontiguousarray(img_small)
+            
+            h_s, w_s = img_small.shape[:2]
+            ch_s = 1 if img_small.ndim == 2 else img_small.shape[2]
+            
+            if ch_s == 3:
+                qimg = QImage(img_small.data, w_s, h_s, w_s * 3, QImage.Format.Format_RGB888)
+            elif ch_s == 4:
+                qimg = QImage(img_small.data, w_s, h_s, w_s * 4, QImage.Format.Format_RGBA8888)
+            else:
+                qimg = QImage(img_small.data, w_s, h_s, w_s, QImage.Format.Format_Grayscale8)
+                
             pixmap = QPixmap.fromImage(qimg)
             self.preview_label.setPixmap(pixmap)
             self.preview_label.resize(pixmap.size())
@@ -1513,9 +1583,9 @@ class CanvasView(QGraphicsView):
         
         for snap_scale, label in snap_scales:
             ratio = self._target_zoom / snap_scale
-            # USER REQUEST: Widen detection range (1.5% -> 4%) for easier discovery,
-            # but use velocity to decide whether to "hard snap" or just "brake".
-            if 0.96 <= ratio <= 1.04:
+            # USER REQUEST: Reduce detection range (4% -> 2%) to prevent accidental snaps
+            # and prevent "return to original size" issues during fast zooming.
+            if 0.98 <= ratio <= 1.02:
                 dist = abs(self._target_zoom - snap_scale)
                 if dist < min_dist:
                     min_dist = dist
@@ -1525,30 +1595,31 @@ class CanvasView(QGraphicsView):
             snap_scale, label, ratio = best_snap
             
             # 1. "Magnetic Braking": Strong viscous drag
-            # Increased damping (0.85 -> 0.60) to create a strong "sticky" feel
-            self._zoom_velocity *= 0.60
+            # REDUCED damping (0.60 -> 0.80) to make passing through easier
+            self._zoom_velocity *= 0.80
 
             # 2. "Smart Suction": 
-            # - Relaxed velocity threshold (0.15 -> 0.35) to catch faster movements
-            # - Widened "close enough" range (1% -> 2%)
-            velocity_ok = abs(self._zoom_velocity) < 0.35
-            close_enough = 0.98 <= ratio <= 1.02
+            # - TIGHTENED velocity threshold (0.35 -> 0.15) so fast zooms skip snapping
+            # - TIGHTENED "close enough" range (2% -> 1%)
+            velocity_ok = abs(self._zoom_velocity) < 0.15
+            close_enough = 0.99 <= ratio <= 1.01
             
             if velocity_ok or close_enough:
-                # Suction force (Significantly increased: 0.15 -> 0.40)
-                # Provides a decisive "snap" pull
-                suction_force = (snap_scale - self._target_zoom) * 0.40
+                # Suction force (REDUCED: 0.40 -> 0.20) for gentler pull
+                suction_force = (snap_scale - self._target_zoom) * 0.20
                 self._target_zoom += suction_force
                 
                 # Hard Snap (Lock)
-                # Widened lock tolerance (0.2% -> 0.5%)
-                if 0.995 <= ratio <= 1.005: 
+                # TIGHTENED lock tolerance (0.5% -> 0.2%)
+                if 0.998 <= ratio <= 1.002: 
+                    if not self._is_snapped:
+                        Logger.debug(f"[CanvasView:{self.view_id}] SNAPPED to {label} at {snap_scale:.4f}")
                     self._target_zoom = snap_scale
                     self._trigger_snap_feedback(snap_scale, label)
                     self._zoom_velocity = 0.0
                 else:
-                    # Aggressive braking when pulling in (0.70 -> 0.50)
-                    self._zoom_velocity *= 0.50
+                    # Braking when pulling in (0.50 -> 0.60)
+                    self._zoom_velocity *= 0.60
 
         self._zoom_velocity *= self.ZOOM_DAMPING
         if abs(self._zoom_velocity) < 0.0005:
@@ -1642,7 +1713,7 @@ class CanvasView(QGraphicsView):
             rel_diff = abs(scale_w - scale_h) / max(1e-5, max(scale_w, scale_h))
             
             # Log for debugging flickering (Terminal #632-1008 context)
-            # Logger.debug(f"[CanvasView] Snap calculation: view={view_size.width()}x{view_size.height()}, scale_w={scale_w:.4f}, scale_h={scale_h:.4f}, rel_diff={rel_diff:.4f}")
+            Logger.debug(f"[CanvasView:{self.view_id}] Snap calculation: view={available_w}x{available_h}, scale_w={scale_w:.4f}, scale_h={scale_h:.4f}, rel_diff={rel_diff:.4f}")
             
             if rel_diff < 0.05: 
                 # When they are close, only return the one that ensures the whole image fits.
@@ -1735,6 +1806,17 @@ class CanvasView(QGraphicsView):
         QTimer.singleShot(max(0, int(duration_ms)), self.stop_flash)
 
     def fitInView(self, *args, **kwargs):
+        v_rect = self.viewport().rect()
+        Logger.debug(f"[CanvasView:{self.view_id}] fitInView started. Viewport size: {v_rect.width()}x{v_rect.height()}")
         super().fitInView(*args, **kwargs)
         t = self.transform()
+        Logger.debug(f"[CanvasView:{self.view_id}] fitInView finished, scale={t.m11():.4f}")
         self.zoom_changed.emit(t.m11(), t.m22(), QPointF())
+
+    def setTransform(self, *args, **kwargs):
+        # Logger.debug(f"[CanvasView:{self.view_id}] setTransform")
+        super().setTransform(*args, **kwargs)
+
+    def centerOn(self, *args, **kwargs):
+        # Logger.debug(f"[CanvasView:{self.view_id}] centerOn")
+        super().centerOn(*args, **kwargs)

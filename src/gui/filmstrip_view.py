@@ -11,6 +11,7 @@ from src.gui.canvas_view import CanvasView
 from src.gui.sync_manager import SyncManager
 from src.gui.empty_state import EmptyStateWidget
 from src.core.language_manager import tr
+from src.core.logger import Logger
 
 class FilmstripWidget(QWidget):
     """
@@ -406,7 +407,11 @@ class FilmstripWidget(QWidget):
                     view = self.views[view_id]
                     view.update_image(display_img, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
                     # Ensure thumbnail shows full image
-                    view.fitInView(view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+                    self.sync_manager.set_enabled(False)
+                    try:
+                        view.fitInView(view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+                    finally:
+                        self.sync_manager.set_enabled(True)
                 
                 # Render for main view (higher res) and cache for merge
                 main_img = Renderer.render_channel(ch, target_shape=main_target_shape)
@@ -500,12 +505,34 @@ class FilmstripWidget(QWidget):
         pass
 
     def fit_views(self, force=True):
-        """Fits the main view to its viewport."""
-        if self.main_view:
-            self.main_view.fitInView(self.main_view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-        # Thumbnails are already fitted by Renderer.render_channel and CanvasView.update_image with scene_rect
-        for thumb in self.views.values():
-            thumb.fitInView(thumb.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        """Fits all views (main and thumbnails) to their content."""
+        Logger.debug(f"[Filmstrip] fit_views(force={force}) started")
+        self.sync_manager.set_enabled(False)
+        try:
+            # 1. Main View
+            if self.main_view and self.main_view.isVisible():
+                if force:
+                    Logger.debug("[Filmstrip] Calling fitInView for Main View")
+                    self.main_view.fitInView(self.main_view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+                else:
+                    # Same logic as MultiView for skipping if zoomed
+                    rect = self.main_view.scene().sceneRect()
+                    v_rect = self.main_view.viewport().rect()
+                    if rect.width() > 0 and v_rect.width() > 0:
+                        target_scale = min(v_rect.width() / rect.width(), v_rect.height() / rect.height())
+                        current_scale = self.main_view.transform().m11()
+                        if abs(current_scale - target_scale) / target_scale <= 0.05:
+                            Logger.debug("[Filmstrip] Calling fitInView for Main View")
+                            self.main_view.fitInView(self.main_view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+            # 2. Thumbnails (Always force fit for thumbnails)
+            for view_id, view in self.views.items():
+                if view != self.main_view:
+                    Logger.debug(f"[Filmstrip] Calling fitInView for thumbnail {view_id}")
+                    view.fitInView(view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        finally:
+            self.sync_manager.set_enabled(True)
+            Logger.debug("[Filmstrip] fit_views finished")
 
     def update_scale_bar(self, settings):
         """Updates scale bar on all views."""
@@ -573,7 +600,12 @@ class FilmstripWidget(QWidget):
             composite = (composite * 255).astype(np.uint8)
             view = self.views["Merge"]
             view.update_image(composite, scene_rect=QRectF(0.0, 0.0, float(w), float(h)))
-            view.fitInView(view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            
+            self.sync_manager.set_enabled(False)
+            try:
+                view.fitInView(view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            finally:
+                self.sync_manager.set_enabled(True)
         else:
             black = np.zeros((target_shape[0], target_shape[1], 3), dtype=np.uint8)
             view = self.views["Merge"]

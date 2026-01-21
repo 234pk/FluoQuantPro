@@ -52,6 +52,32 @@ class WatchdogThread(QThread):
             self.terminate()
             self.wait() # Ensure it's dead
 
+class MemoryCleanupWorker(QThread):
+    """
+    Background worker for heavy memory cleanup tasks (GC, OS Trim).
+    """
+    cleanup_done = Signal(int, tuple) # collected_count, pre_counts
+
+    def run(self):
+        import gc
+        pre_counts = gc.get_count()
+        collected = gc.collect()
+
+        # OS Level Trim (Windows)
+        import sys
+        if sys.platform == 'win32':
+             try:
+                 import ctypes
+                 # -1, -1 tells Windows to minimize the working set
+                 ctypes.windll.kernel32.SetProcessWorkingSetSize(
+                     ctypes.windll.kernel32.GetCurrentProcess(), 
+                     -1, -1
+                 )
+             except Exception:
+                 pass
+        
+        self.cleanup_done.emit(collected, pre_counts)
+
 class PerformanceMonitor(QObject):
     """
     Central performance management system.
@@ -72,6 +98,9 @@ class PerformanceMonitor(QObject):
     memory_status_updated = Signal(float, float, str) # current_mb, percent, display_text
     memory_threshold_exceeded = Signal(float) # current_gb
     
+    cleanup_started = Signal() # Signal emitted when cleanup begins, allowing UI to release references (e.g. UndoStack)
+    cleanup_finished = Signal() # Signal emitted when async cleanup completes
+
     def __init__(self):
         super().__init__()
         self._is_stopping = False # Flag to prevent multiple stops
@@ -138,68 +167,102 @@ class PerformanceMonitor(QObject):
         # Monitor Memory
         self._check_memory()
         
+    def _get_current_memory_mb(self):
+        """Returns the current memory usage of the application in MB."""
+        current_mb = 0.0
+        try:
+            # 1. Try to get process memory via psutil
+            if HAS_PSUTIL:
+                try:
+                    process = psutil.Process()
+                    try:
+                        mem_info = process.memory_full_info()
+                        current_mb = getattr(mem_info, 'uss', mem_info.rss) / (1024 * 1024)
+                    except (AttributeError, psutil.AccessDenied, psutil.NoSuchProcess):
+                        mem_info = process.memory_info()
+                        current_mb = mem_info.rss / (1024 * 1024)
+                except Exception:
+                    pass
+
+            # 2. Fallback to platform-specific metrics
+            if current_mb < 0.1:
+                # Only log this once to avoid spam
+                if not getattr(self, '_fallback_logged', False):
+                    Logger.debug("[Performance] psutil failed or missing. Attempting platform fallback.")
+                    self._fallback_logged = True
+                    
+                import sys
+                if sys.platform == 'darwin':
+                    try:
+                        import resource
+                        current_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+                    except:
+                        pass
+                elif sys.platform == 'win32':
+                    # Windows Fallback using ctypes
+                    try:
+                        import ctypes
+                        from ctypes import wintypes
+                        
+                        # Define SIZE_T for compatibility
+                        if hasattr(wintypes, 'SIZE_T'):
+                            SIZE_T = wintypes.SIZE_T
+                        else:
+                            SIZE_T = ctypes.c_size_t
+
+                        class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+                            _fields_ = [
+                                ('cb', wintypes.DWORD),
+                                ('PageFaultCount', wintypes.DWORD),
+                                ('PeakWorkingSetSize', SIZE_T),
+                                ('WorkingSetSize', SIZE_T),
+                                ('QuotaPeakPagedPoolUsage', SIZE_T),
+                                ('QuotaPagedPoolUsage', SIZE_T),
+                                ('QuotaPeakNonPagedPoolUsage', SIZE_T),
+                                ('QuotaNonPagedPoolUsage', SIZE_T),
+                                ('PagefileUsage', SIZE_T),
+                                ('PeakPagefileUsage', SIZE_T),
+                                ('PrivateUsage', SIZE_T),
+                            ]
+                            
+                        p = ctypes.windll.kernel32.GetCurrentProcess()
+                        mem_struct = PROCESS_MEMORY_COUNTERS_EX()
+                        mem_struct.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS_EX)
+                        if ctypes.windll.psapi.GetProcessMemoryInfo(p, ctypes.byref(mem_struct), ctypes.sizeof(mem_struct)):
+                            # Use PrivateUsage for more accurate app memory
+                            current_mb = mem_struct.PrivateUsage / (1024 * 1024)
+                    except Exception as e:
+                        # Logger.debug(f"Windows memory fallback failed: {e}")
+                        pass
+                    
+            if current_mb < 0.1:
+                current_mb = 1.0 # Minimum value
+                
+        except Exception:
+            current_mb = 0.0
+            
+        return current_mb
+
     def _check_memory(self):
         """Checks current memory usage and triggers cleanup if needed."""
-        current_mb = 0.0
+        current_mb = self._get_current_memory_mb()
         sys_percent = 0.0
-        current_gb = 0.0
+        current_gb = current_mb / 1024.0
 
         try:
-            # 1. Try to get system-wide memory percentage (requires psutil)
+            # Try to get system-wide memory percentage
             if HAS_PSUTIL:
                 try:
                     sys_percent = psutil.virtual_memory().percent
                 except:
                     pass
-
-            # 2. Try to get process memory
-            if HAS_PSUTIL:
-                try:
-                    # Using psutil.Process() without PID is more robust for current process
-                    process = psutil.Process()
-                    
-                    # memory_full_info() provides USS which is more accurate but might be slower
-                    # we use it as primary source if available
-                    try:
-                        # USS is supported on Windows, Linux, and macOS (with psutil)
-                        mem_info = process.memory_full_info()
-                        current_mb = getattr(mem_info, 'uss', mem_info.rss) / (1024 * 1024)
-                    except (AttributeError, psutil.AccessDenied, psutil.NoSuchProcess):
-                        # Fallback to RSS if USS is not available or access denied
-                        mem_info = process.memory_info()
-                        current_mb = mem_info.rss / (1024 * 1024)
-                except Exception as e:
-                    Logger.debug(f"[Performance] psutil memory check failed: {e}")
-
-            # 3. Fallback to platform-specific metrics if psutil failed or is missing
-            if current_mb < 0.1:
-                import sys
-                if sys.platform == 'darwin':
-                    # Mac specific: try getting memory via resource module
-                    try:
-                        import resource
-                        # On macOS, ru_maxrss is in bytes.
-                        current_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
-                    except:
-                        pass
-                elif sys.platform == 'win32':
-                    # On Windows without psutil, we don't have a simple standard library way 
-                    # but we could potentially use ctypes for GlobalMemoryStatusEx if needed.
-                    # For now, if current_mb is still 0, we'll use a fallback value.
-                    pass
             
-            # 4. Final safety check and UI update
+            # Final safety check and UI update
             if current_mb < 0.1 and not HAS_PSUTIL:
                 self.memory_status_updated.emit(0, 0, "RAM: N/A")
                 return
             
-            if current_mb < 0.1:
-                current_mb = 1.0 # Minimum value to indicate it's working
-                
-            current_gb = current_mb / 1024.0
-            
             # USER REQUEST: Clarify that the percentage is SYSTEM RAM, not APP RAM
-            # Display format: App: XXX MB | Sys: XX%
             display_text = f"App: {current_mb:.1f}MB"
             if sys_percent > 0:
                 display_text += f" (Sys: {sys_percent:.0f}%)"
@@ -211,59 +274,78 @@ class PerformanceMonitor(QObject):
                 # Rate limit cleanup to once every 30 seconds
                 if time.time() - getattr(self, '_last_cleanup_time', 0) > 30:
                     self.trigger_cleanup(current_gb)
+                else:
+                    # Debug log to explain why we are not cleaning up despite high memory
+                    # Only log occasionally (e.g. if > 10s passed since check) to avoid spamming debug log
+                    pass 
+            elif current_gb > self.memory_threshold_gb:
+                # Memory is high, but auto-cleanup is DISABLED or Missing
+                # Log this state once in a while so we know why it's not triggering
+                if time.time() - getattr(self, '_last_debug_log_time', 0) > 60:
+                    Logger.debug(f"[Performance] Memory High ({current_gb:.1f}GB) but Auto-Cleanup is {getattr(self, 'auto_cleanup_enabled', 'Missing')}.")
+                    self._last_debug_log_time = time.time()
+
                     
         except Exception as e:
             Logger.error(f"[Performance] Memory check failed: {e}")
             self.memory_status_updated.emit(0, 0, "RAM: Error")
 
     def trigger_cleanup(self, current_gb=None):
-        """Forces a memory cleanup."""
+        """Forces a memory cleanup (Async)."""
+        # Prevent multiple concurrent cleanups
+        if hasattr(self, '_cleanup_worker') and self._cleanup_worker is not None and self._cleanup_worker.isRunning():
+            return
+
         self._last_cleanup_time = time.time()
         
+        # Store start memory for comparison later
+        self._cleanup_start_mb = self._get_current_memory_mb()
+        self._cleanup_current_gb = current_gb
+        
         if current_gb is not None:
-            Logger.warning(f"[Performance] Memory threshold exceeded ({current_gb:.1f} GB). Triggering cleanup...")
+            Logger.warning(f"[Performance] Memory threshold exceeded ({current_gb:.1f} GB). Triggering async cleanup...")
         else:
             Logger.warning("[Performance] Cleanup triggered manually or by scene switch.")
 
-        import gc
-        pre_counts = gc.get_count()
+        # 1. Sync Phase: Clear UI/App Caches (Must be done on Main Thread)
+        self.cleanup_started.emit()
         
-        # 1. Clear Renderer Caches
         from src.core.renderer import Renderer
         Renderer.clear_cache()
         Logger.info("[Performance] Renderer caches cleared.")
         
-        # 2. Clear Scene Cache (New Strategy)
         try:
             from src.core.cache_manager import SceneCacheManager
-            # If memory is tight, we should clear the cache regardless of policy
-            # But we can't easily know which one is "current" here without coupling to Main.
-            # So we ask Manager to "shrink" or "clear non-essential".
             SceneCacheManager.instance().handle_low_memory()
         except ImportError:
             pass
             
-        # 3. Clear ImageChannel Enhancement Caches
-        # We need to find all active channels. They are usually held by the Session in MainWindow.
-        try:
-            from PySide6.QtWidgets import QApplication
-            channel_count = 0
-            for widget in QApplication.topLevelWidgets():
-                if hasattr(widget, 'session') and hasattr(widget.session, 'channels'):
-                    for ch in widget.session.channels:
-                        if hasattr(ch, 'clear_cache'):
-                            ch.clear_cache()
-                            channel_count += 1
-            if channel_count > 0:
-                Logger.info(f"[Performance] Cleared caches for {channel_count} active channels.")
-        except Exception as e:
-            Logger.debug(f"[Performance] Failed to clear channel caches: {e}")
+        # 2. Async Phase: GC and OS Trim
+        self._cleanup_worker = MemoryCleanupWorker()
+        self._cleanup_worker.cleanup_done.connect(self._on_cleanup_done)
+        self._cleanup_worker.start()
 
-        # 3. Python GC
-        collected = gc.collect()
-        Logger.info(f"[Performance] GC collected {collected} objects. Pre-counts: {pre_counts}")
+    def _on_cleanup_done(self, collected, pre_counts):
+        """Called when background cleanup finishes."""
+        import sys
+        Logger.info(f"[Performance] Async GC collected {collected} objects. Pre-counts: {pre_counts}")
+        if sys.platform == 'win32':
+             Logger.info("[Performance] Windows Working Set trimmed (Async).")
+
+        self.cleanup_finished.emit()
+        self.memory_threshold_exceeded.emit(self._cleanup_current_gb or 0.0)
         
-        self.memory_threshold_exceeded.emit(current_gb or 0.0)
+        # Check effectiveness
+        end_mb = self._get_current_memory_mb()
+        dropped_mb = getattr(self, '_cleanup_start_mb', end_mb) - end_mb
+        
+        if dropped_mb < 50 and (end_mb / 1024.0) > self.memory_threshold_gb:
+            Logger.warning(f"[Performance] Cleanup ineffective (Dropped {dropped_mb:.1f} MB). Backing off for 60s.")
+            self._last_cleanup_time = time.time() + 60
+            
+        # Clean up worker reference
+        self._cleanup_worker.deleteLater()
+        self._cleanup_worker = None
 
     def set_memory_settings(self, enabled, threshold_gb):
         """Updates memory monitoring settings."""
