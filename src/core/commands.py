@@ -366,7 +366,8 @@ class CropCommand(QUndoCommand):
         # Capture state if first run
         if not self.old_channels:
             for i, ch in enumerate(self.session.channels):
-                self.old_channels.append((i, copy.deepcopy(ch.raw_data)))
+                # Use .copy() instead of deepcopy for numpy arrays (faster and sufficient)
+                self.old_channels.append((i, ch.raw_data.copy()))
         
         # Perform Crop
         x, y, w, h = self.rect
@@ -390,7 +391,8 @@ class CropCommand(QUndoCommand):
                      # Let's try basic slicing
                      cropped = ch.raw_data[y:y+h, x:x+w]
             
-            ch.raw_data = np.ascontiguousarray(cropped)
+            # Use update_data to correctly set private _raw_data and update shape/dtype
+            ch.update_data(np.ascontiguousarray(cropped))
             ch.stats = calculate_channel_stats(cropped)
             
         self.session.data_changed.emit()
@@ -400,7 +402,8 @@ class CropCommand(QUndoCommand):
         for i, old_data in self.old_channels:
             if i < len(self.session.channels):
                 ch = self.session.channels[i]
-                ch.raw_data = old_data
+                # Use update_data to correctly restore raw data and properties
+                ch.update_data(old_data)
                 ch.stats = calculate_channel_stats(old_data)
                 
         self.session.data_changed.emit()

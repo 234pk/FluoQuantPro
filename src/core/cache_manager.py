@@ -38,20 +38,24 @@ class SceneCacheManager(QObject):
 
         Logger.debug(f"[Cache] set_current_scene: {scene_id}. Memory High: {is_memory_high}. Policy: {policy}")
 
-        # Logic Update based on User Feedback:
-        # 1. If Memory is High: Force cleanup of non-current scenes regardless of policy.
-        #    This prevents OOM and addresses "memory keeps rising" issue.
-        # 2. If Memory is Low (Healthy): Keep caches (Soft Limit). 
-        #    Even if policy is "current", we don't aggressively clear if we have plenty of RAM.
-        #    This improves switching performance without penalty.
+        # Logic Update based on User Feedback (Aggressive Cleanup):
+        # The user explicitly requested that raw data be removed "promptly after switching".
+        # So if the policy is "current" (default), we MUST clear other scenes immediately.
+        # We no longer retain them for "fast switching" if it risks accumulation.
         
-        if is_memory_high:
+        if policy == "current":
+            # Strict mode: Only keep the current scene.
+            # This satisfies "timely removal" and "not accumulating".
+            Logger.info(f"[Cache] Policy is 'current'. Enforcing immediate cleanup of background scenes.")
+            self.clear_all_except(scene_id)
+        
+        elif is_memory_high:
+             # For other policies (recent/all), only clear if memory is high
              Logger.info(f"[Cache] High memory detected while switching to {scene_id}. Triggering LRU cleanup.")
              self.handle_low_memory()
         else:
-             # Memory is fine. Retain cache for fast switching.
-             # We might log this for debugging user confusion.
-             Logger.debug(f"[Cache] Memory healthy. Retaining background scenes for fast switching.")
+             # Memory is fine and policy allows caching (recent/all).
+             Logger.debug(f"[Cache] Memory healthy. Retaining background scenes per policy '{policy}'.")
 
     def should_cleanup_memory(self) -> bool:
         try:
@@ -183,6 +187,13 @@ class SceneCacheManager(QObject):
             return channels
         return None
         
+    def remove_scene(self, scene_id: str):
+        """Explicitly removes a specific scene from cache (e.g. when deleted by user)."""
+        if scene_id in self._cache:
+            Logger.info(f"[Cache] Explicit removal of scene {scene_id}")
+            self._free_channels(self._cache[scene_id])
+            del self._cache[scene_id]
+            
     def clear_all_except(self, keep_id: str):
         """Removes all scenes except the specified one."""
         current_keys = list(self._cache.keys())

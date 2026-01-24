@@ -165,6 +165,7 @@ class MainWindow(QMainWindow):
         # Undo Stack
         from PySide6.QtGui import QUndoStack
         self.undo_stack = QUndoStack(self)
+        self.undo_stack.setUndoLimit(10) # Limit history to prevent memory accumulation
         
         # Data Models
         self.session = Session(undo_stack=self.undo_stack)
@@ -1409,99 +1410,177 @@ class MainWindow(QMainWindow):
         self.menu_help.addSeparator()
         self.menu_help.addAction(self.action_about)
 
-        # --- USER REQUEST: Add Undo/Redo Buttons near Menu Bar ---
-        # We use a corner widget or a small toolbar at the top right of the menu bar area
+        # --- USER REQUEST: Add Shortcuts to Sidebar Top ---
+        from PySide6.QtWidgets import QSizePolicy, QScrollArea
         
-        # Create a container widget for the menu-aligned buttons
-        self.menu_actions_widget = QWidget()
-        menu_actions_layout = QHBoxLayout(self.menu_actions_widget)
-        menu_actions_layout.setContentsMargins(10, 0, 10, 0)
-        menu_actions_layout.setSpacing(4)
+        class ShortcutPanel(QWidget):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setMinimumWidth(0) # Allow shrinking to zero
+                
+                # Create scroll area for shortcuts
+                self.scroll_area = QScrollArea()
+                self.scroll_area.setWidgetResizable(True)
+                self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+                self.scroll_area.setContentsMargins(0, 0, 0, 0)
+                
+                # Set thin scrollbar style
+                self.scroll_area.setStyleSheet("""
+                    QScrollBar:vertical {
+                        width: 6px;
+                        background: transparent;
+                        margin: 0px;
+                    }
+                    QScrollBar::handle:vertical {
+                        background: rgba(128, 128, 128, 100);
+                        min-height: 20px;
+                        border-radius: 3px;
+                    }
+                    QScrollBar::handle:vertical:hover {
+                        background: rgba(128, 128, 128, 150);
+                    }
+                    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                        height: 0px;
+                    }
+                    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                        background: none;
+                    }
+                """)
+                
+                # Container widget for shortcuts
+                self.container = QWidget()
+                self.layout = QVBoxLayout(self.container)
+                self.layout.setContentsMargins(0, 4, 0, 4)
+                self.layout.setSpacing(4)
+                self.layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+                
+                # Set container as scroll area's widget
+                self.scroll_area.setWidget(self.container)
+                
+                # Add scroll area to main layout
+                main_layout = QVBoxLayout(self)
+                main_layout.setContentsMargins(0, 0, 0, 0)
+                main_layout.setSpacing(0)
+                main_layout.addWidget(self.scroll_area)
+                
+                self.buttons = []
+                self.separators = []
+            
+            def add_button(self, action, row=1, is_custom=False, icon=None, tooltip=None, callback=None):
+                btn = QToolButton()
+                btn.setProperty("skip_hover", True) # Disable global geometry animation
+                
+                if action:
+                    btn.setDefaultAction(action)
+                if icon:
+                    btn.setIcon(icon)
+                if tooltip:
+                    btn.setToolTip(tooltip)
+                if callback:
+                    btn.clicked.connect(callback)
+                    
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                btn.setFixedSize(36, 36) # Match SidebarButton size
+                btn.setIconSize(QSize(20, 20)) # Match SidebarButton icon size
 
-        # Undo/Redo Group
-        btn_undo = QToolButton()
-        btn_undo.setObjectName("undo_btn")
-        btn_undo.setDefaultAction(self.action_undo)
-        btn_undo.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_undo.setIconSize(QSize(20, 20))
-        btn_undo.setFixedSize(28, 28)
-        menu_actions_layout.addWidget(btn_undo)
+                import sys
+                is_mac = sys.platform == "darwin"
+                radius = "6px" if is_mac else "4px"
+                
+                # Add a stable CSS hover effect
+                btn.setStyleSheet(f"""
+                    QToolButton {{
+                        border: none;
+                        border-radius: {radius};
+                        background: transparent;
+                    }}
+                    QToolButton:hover {{
+                        background-color: rgba(128, 128, 128, 40);
+                    }}
+                    QToolButton:pressed {{
+                        background-color: rgba(128, 128, 128, 80);
+                    }}
+                """)
+                
+                # Ignore row parameter, everything is vertical now
+                self.layout.addWidget(btn, 0, Qt.AlignmentFlag.AlignHCenter)
+                
+                self.buttons.append(btn)
+                return btn
+                
+            def add_separator(self, row=1):
+                sep = QFrame()
+                sep.setFrameShape(QFrame.HLine) # Changed to horizontal line for vertical layout
+                sep.setFrameShadow(QFrame.Plain)
+                sep.setFixedHeight(1)
+                sep.setFixedWidth(20) # Narrower line for sidebar
+                sep.setStyleSheet("background-color: palette(mid); margin: 2px 0;")
+                
+                self.layout.addWidget(sep, 0, Qt.AlignmentFlag.AlignHCenter)
+                self.separators.append(sep)
 
-        btn_redo = QToolButton()
-        btn_redo.setObjectName("redo_btn")
-        btn_redo.setDefaultAction(self.action_redo)
-        btn_redo.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_redo.setIconSize(QSize(20, 20))
-        btn_redo.setFixedSize(28, 28)
-        menu_actions_layout.addWidget(btn_redo)
-        
-        # Fit Width (Refresh) Button
-        self.btn_fit = QToolButton()
-        self.btn_fit.setObjectName("fit_btn")
-        # Connect to a custom lambda to both refresh display and fit width
-        self.btn_fit.clicked.connect(lambda: (self.refresh_display(), self.on_fit_to_width()))
-        self.btn_fit.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.btn_fit.setIconSize(QSize(20, 20))
-        self.btn_fit.setFixedSize(28, 28)
-        self.btn_fit.setToolTip(tr("Refresh Display and Fit Width"))
-        # Change icon to a refresh/reload style if available, otherwise use fit_width
-        self.btn_fit.setIcon(get_icon("refresh", "view-refresh")) 
-        menu_actions_layout.addWidget(self.btn_fit)
-        
-        # Export Button (Requested by User)
-        btn_export = QToolButton()
-        btn_export.setObjectName("export_btn")
-        btn_export.setDefaultAction(self.action_export_images)
-        btn_export.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_export.setIconSize(QSize(20, 20))
-        btn_export.setFixedSize(28, 28)
-        menu_actions_layout.addWidget(btn_export)
-        
-        # Add a small vertical separator
-        sep1 = QFrame()
-        sep1.setObjectName("menu_sep")
-        sep1.setFrameShape(QFrame.VLine)
-        sep1.setFrameShadow(QFrame.Plain) # Use plain for cleaner look
-        sep1.setFixedWidth(1)
-        menu_actions_layout.addWidget(sep1)
-        
-        # Save Button
-        btn_save = QToolButton()
-        btn_save.setObjectName("save_btn")
-        btn_save.setDefaultAction(self.action_save_project)
-        btn_save.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_save.setIconSize(QSize(20, 20))
-        btn_save.setFixedSize(28, 28)
-        menu_actions_layout.addWidget(btn_save)
+            def resizeEvent(self, event):
+                 super().resizeEvent(event)
+                 w = self.width()
+                 
+                 # Adaptive spacing and sizing
+                 spacing = 4
+                 self.layout.setSpacing(spacing)
+                 
+                 # Scaling buttons based on width - matching SidebarButton behavior
+                 # But ensure minimum size for usability
+                 btn_size = 36
+                 icon_size = 20
+                 
+                 if w < 36 and w > 0:
+                     scale = w / 36.0
+                     btn_size = max(int(36 * scale), 24) # Minimum 24px for usability
+                     icon_size = max(int(20 * scale), 14) # Minimum 14px for icons
+                 
+                 for btn in self.buttons:
+                     btn.setFixedSize(btn_size, btn_size)
+                     btn.setIconSize(QSize(icon_size, icon_size))
 
-        # Settings Button
-        btn_settings = QToolButton()
-        btn_settings.setObjectName("settings_btn")
-        btn_settings.setDefaultAction(self.action_settings)
-        btn_settings.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_settings.setIconSize(QSize(20, 20))
-        btn_settings.setFixedSize(28, 28)
-        menu_actions_layout.addWidget(btn_settings)
-
-        # View Mode Toggle Group
-        menu_actions_layout.addSpacing(10)
+        self.menu_actions_widget = ShortcutPanel(self)
         
-        btn_grid = QToolButton()
-        btn_grid.setDefaultAction(self.action_grid_view)
-        btn_grid.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_grid.setIconSize(QSize(20, 20))
-        btn_grid.setFixedSize(28, 28)
-        menu_actions_layout.addWidget(btn_grid)
+        # Row 1 Buttons
+        self.menu_actions_widget.add_button(self.action_new_project, row=1)
+        self.menu_actions_widget.add_button(self.action_open_project, row=1)
+        self.menu_actions_widget.add_button(self.action_save_project, row=1)
+        self.menu_actions_widget.add_separator(row=1)
+        self.menu_actions_widget.add_button(self.action_undo, row=1)
+        self.menu_actions_widget.add_button(self.action_redo, row=1)
         
-        btn_filmstrip = QToolButton()
-        btn_filmstrip.setDefaultAction(self.action_filmstrip_view)
-        btn_filmstrip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn_filmstrip.setIconSize(QSize(20, 20))
-        btn_filmstrip.setFixedSize(28, 28)
-        menu_actions_layout.addWidget(btn_filmstrip)
+        # Row 2 Buttons
+        self.btn_fit = self.menu_actions_widget.add_button(None, row=2, 
+                                                         icon=get_icon("refresh", "view-refresh"),
+                                                         tooltip=tr("Refresh Display and Fit Width"),
+                                                         callback=lambda: (self.refresh_display(), self.on_fit_to_width()))
+        
+        self.menu_actions_widget.add_button(self.action_export_images, row=2)
+        self.menu_actions_widget.add_button(self.action_settings, row=2)
+        self.menu_actions_widget.add_separator(row=2)
+        self.menu_actions_widget.add_button(self.action_grid_view, row=2)
+        self.menu_actions_widget.add_button(self.action_filmstrip_view, row=2)
 
-        # Add to MenuBar as a Corner Widget (Right side)
-        menu_bar.setCornerWidget(self.menu_actions_widget, Qt.Corner.TopRightCorner)
+        # Style the shortcuts widget for narrow sidebar
+        self.menu_actions_widget.setObjectName("shortcut_header")
+        self.menu_actions_widget.setStyleSheet("""
+            #shortcut_header {
+                background-color: transparent;
+                border-top: 1px solid palette(mid);
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+        """)
+
+        # Move to the VERY RIGHT narrow sidebar strip (where tab icons are)
+        if hasattr(self, 'control_tabs'):
+            self.control_tabs.set_sidebar_bottom_widget(self.menu_actions_widget)
+        elif hasattr(self, 'sample_list'):
+            self.sample_list.set_shortcut_header(self.menu_actions_widget)
 
 
     def setup_auto_save(self):
@@ -1879,6 +1958,13 @@ class MainWindow(QMainWindow):
         If the deleted scene is the current one, clear the view.
         """
         Logger.info(f"[Main] Scene deleted: {scene_id}")
+        
+        # Explicitly remove from cache to free memory
+        try:
+            from src.core.cache_manager import SceneCacheManager
+            SceneCacheManager.instance().remove_scene(scene_id)
+        except Exception as e:
+            Logger.error(f"[Main] Failed to remove scene {scene_id} from cache: {e}")
         
         # If the deleted scene was the current one
         if self.current_scene_id == scene_id:

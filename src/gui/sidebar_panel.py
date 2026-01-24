@@ -189,12 +189,9 @@ class RightSidebarControlPanel(QWidget):
         self.sidebar_frame.setObjectName("SidebarFrame")
         self.sidebar_vbox = QVBoxLayout(self.sidebar_frame)
         import sys
-        if sys.platform == "darwin":
-            self.sidebar_vbox.setContentsMargins(2, 6, 2, 6)
-            self.sidebar_vbox.setSpacing(6)
-        else:
-            self.sidebar_vbox.setContentsMargins(0, 10, 0, 10)
-            self.sidebar_vbox.setSpacing(4)
+        # Unified sidebar spacing for all platforms (Mac-style)
+        self.sidebar_vbox.setContentsMargins(2, 6, 2, 6)
+        self.sidebar_vbox.setSpacing(6)
         self.sidebar_vbox.setAlignment(Qt.AlignTop)
         
         # 2. Content Stack
@@ -214,6 +211,30 @@ class RightSidebarControlPanel(QWidget):
         self.btn_collapse.setFixedSize(36, 32)
         self.btn_collapse.clicked.connect(self.toggle_collapse)
         self.sidebar_vbox.addWidget(self.btn_collapse, 0, Qt.AlignCenter)
+
+        # Bottom Widget Placeholder
+        self._bottom_widget = None
+
+    def set_sidebar_bottom_widget(self, widget):
+        """Adds a widget to the bottom of the narrow sidebar strip (above collapse button)."""
+        if hasattr(self, "_sidebar_bottom_widget") and self._sidebar_bottom_widget:
+            self.sidebar_vbox.removeWidget(self._sidebar_bottom_widget)
+            self._sidebar_bottom_widget.setParent(None)
+            
+        self._sidebar_bottom_widget = widget
+        if widget:
+            # Insert before the collapse button
+            self.sidebar_vbox.insertWidget(self.sidebar_vbox.count() - 1, widget)
+
+    def set_bottom_widget(self, widget):
+        """Adds a widget at the very bottom of the entire panel."""
+        if self._bottom_widget:
+            self.outer_vbox.removeWidget(self._bottom_widget)
+            self._bottom_widget.setParent(None)
+            
+        self._bottom_widget = widget
+        if widget:
+            self.outer_vbox.addWidget(widget)
 
     def add_tab(self, key, widget, label):
         btn = SidebarButton(key, label, self)
