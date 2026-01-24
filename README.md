@@ -215,6 +215,30 @@ FluoQuantPro 尊重用户隐私。软件包含一个可选的匿名使用统计�
 | **ROI与测量** | 标准工具。复杂分析需组合多步操作。背景扣除通常需手动计算。 | **增强魔棒**（精准、平滑、可转多边形）。**流线型测量**，结果自动累加。内置共定位分析与一键导出。 |
 | **科学性保障** | 灵活性高，但对用户要求高，易产生误操作（如测量处理后的图像）。 | **数据完整性第一**：测量引擎始终读取原始数据的 `RawIntDen`（像素总和），从底层逻辑保障结果的可重复性。 |
 
+### 🔬 Scientific Rigor: RGB Processing Logic
+**Why ImageJ's "Weighted Average" is dangerous for quantification**
+
+When converting RGB images to grayscale, **ImageJ (Fiji)** defaults to a **Weighted Average** formula designed for human vision perception, not signal fidelity:
+$$Gray = 0.299 \times Red + 0.587 \times Green + 0.114 \times Blue$$
+*   **The Risk**: For a DAPI-stained (Blue) sample, this formula reduces the signal to **11.4%** of its original intensity, while artificially boosting Green signals. This introduces significant bias in quantitative analysis.
+
+**FluoQuantPro's Approach: Semantic Extraction**
+FluoQuantPro uses a **Schema-First** strategy rooted in biological intent:
+*   **Known Channels (e.g., DAPI)**: The engine extracts only the specific channel component (e.g., Blue) defined in the schema. **100% of the raw signal is preserved.**
+*   **Unknown/Mixed Channels**: Uses **Max Projection** ($\max(R, G, B)$) instead of weighted averaging. This ensures that the strongest signal peak is retained regardless of its color, preventing data loss due to visual weighting.
+
+### 🔬 科学性保障：RGB 处理底层逻辑
+**为何 ImageJ 的“加权平均”会破坏定量数据？**
+
+**ImageJ (Fiji)** 在将 RGB 转换为灰度时，默认使用基于人眼视觉的**加权平均公式**：
+$$Gray = 0.299 \times Red + 0.587 \times Green + 0.114 \times Blue$$
+*   **风险**：对于 DAPI（蓝色）染色样本，该公式会将原始信号强度压缩至 **11.4%**，同时人为放大绿色分量。这会导致定量分析出现严重偏差。
+
+**FluoQuantPro 的方案：语义提取**
+FluoQuantPro 采用基于生物学意图的**预设优先 (Schema-First)** 策略：
+*   **已知通道 (如 DAPI)**：直接提取预设对应的颜色分量（如蓝色通道）。**100% 保留原始信号数据**。
+*   **未知/混合通道**：采用**最大值投影 (Max Projection)** ($\max(R, G, B)$) 而非加权平均。这确保了无论信号是什么颜色，其峰值强度都能被完整保留，避免了视觉权重的干扰。
+
 ## 七、 总结
 FluoQuantPro 不仅仅是一个图像查看器，它是一个为严谨科研工作流程打造的集成化分析平台。通过将尖端的性能优化、人性化的交互设计、专业的数据分析工具和高度可定制化的界面相结合，它旨在显著提升研究人员在荧光图像定量分析工作中的效率、准确性和愉悦感。
 
