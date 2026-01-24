@@ -24,7 +24,8 @@ class MeasurementResultTree(QTreeWidget):
             'Max': 5,
             'BgMean': 6,
             'CorrectedMean': 7,
-            'Status': 8
+            'CorrectedIntDen': 8,
+            'Status': 9
         }
         
         self.setHeaderLabels([tr(k) for k in self.columns_map.keys()])
@@ -34,7 +35,7 @@ class MeasurementResultTree(QTreeWidget):
         # Adjust column widths
         header = self.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents) # Item Name
-        for i in range(1, 9):
+        for i in range(1, 10):
             header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
             
         # Context Menu
@@ -101,7 +102,12 @@ class MeasurementResultTree(QTreeWidget):
             # Determine all keys (headers) from data
             keys = []
             # Preset order for common keys
-            preset_order = ['Sample', 'ROI_Label', 'ROI_ID', 'Channel', 'Area', 'Status', 'Overlap_Entry_ID']
+            preset_order = [
+                'Sample', 'ROI_Label', 'ROI_ID', 'Channel', 'Area', 
+                'Mean', 'IntDen', 'CorrectedMean', 'CorrectedIntDen',
+                'Min', 'Max', 'BgMean',
+                'Status', 'Overlap_Entry_ID'
+            ]
             
             # Add present preset keys
             for k in preset_order:

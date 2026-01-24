@@ -461,6 +461,9 @@
     "CorrectedMean": {
         "zh": "校正后的平均值"
     },
+    "CorrectedIntDen": {
+        "zh": "校正积分密度"
+    },
     "Could not find logs directory at {0}": {
         "zh": "无法在 {0} 找到日志目录"
     },

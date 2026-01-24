@@ -25,7 +25,40 @@ FluoQuantPro is a high-performance, open-source image analysis software tailored
 
 The core design philosophy is **"Dual-Track Processing"**: strict separation between the **Measurement Data Track** (based on raw scientific data) and the **Rendering Display Track** (used for visual adjustment). This means users can freely adjust brightness, contrast, and color to optimize visualization, while the underlying pixel values used for quantitative analysis (e.g., intensity measurement, colocalization) remain unchanged, fundamentally guaranteeing the rigor and reproducibility of scientific data.
 
-## II. Core Functions & Features
+## II. Scientific Validation & Rigor
+FluoQuantPro is designed with scientific accuracy as the top priority. We have implemented rigorous validation to ensure data integrity and reproducibility.
+
+### 1. Data Integrity —— ✅ Passed
+*   **Checkpoint:** Does the software incorrectly use the displayed image (often compressed to 8-bit or contrast-adjusted) for calculation?
+*   **Evidence:**
+    *   In `MeasureEngine`, measurements are performed directly on `image_data.raw_data`.
+    *   `ImageLoader` explicitly uses `cv2.IMREAD_UNCHANGED`, ensuring 16-bit or 32-bit floating-point raw data is preserved.
+*   **Conclusion:** Adjusting contrast, brightness, or pseudo-colors on screen has **zero impact** on the physical reality of the measurement results.
+
+> **Scientific Note: RGB Processing Logic**
+> *   **The FluoQuantPro Way:** Uses a **Schema-First** strategy. For known channels (e.g., DAPI), it extracts the specific component (e.g., Blue), preserving 100% of the raw signal. For unknown channels, it uses **Max Projection** ($\max(R, G, B)$) to retain peak intensity.
+> *   **The Common Pitfall (e.g., ImageJ Default):** Uses weighted average ($0.299R + 0.587G + 0.114B$) for grayscale conversion. This can reduce DAPI signal to **11.4%** of its original intensity, introducing significant bias.
+
+### 2. Spatial Accuracy —— ✅ Passed
+*   **Checkpoint:** Do ROI coordinates drift or misalign when zooming or downsampling for display?
+*   **Evidence:**
+    *   `CanvasView` uses "Full-Resolution Scene Coordinates". Even for large images (e.g., 20GB), ROI coordinates always correspond 1:1 to original pixels.
+    *   `qpath_to_mask` uses the original image dimensions (`channels[0].shape`) to generate masks, not the screen screenshot dimensions.
+*   **Conclusion:** Regardless of view scaling, ROI selection always precisely corresponds to the physical pixels in the raw data.
+
+### 3. Quantification Logic (Edge Handling) —— ✅ Passed
+*   **Checkpoint:** How are pixels at ROI edges handled? Is there numerical bias due to anti-aliasing?
+*   **Evidence:**
+    *   In `algorithms.py`, `qpath_to_mask` explicitly sets `painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)`.
+*   **Expert Comment:** This is a critical detail. In fluorescence intensity quantification, binary masks (all or nothing) must be used. Enabling anti-aliasing would cause edge pixels to be "weighted averaged," artificially lowering the Mean Intensity of edge regions. The software correctly disables it.
+
+### 4. Statistical Robustness —— ✅ Passed
+*   **Checkpoint:** Does numerical overflow occur when processing high-bit-depth images (e.g., 16-bit accumulation)?
+*   **Evidence:**
+    *   Colocalization analysis (`calculate_pcc`) and intensity integration are forced to `float64` double-precision floating-point numbers.
+*   **Conclusion:** Even when calculating the Integrated Density of an entire 16-bit image, no data overflow errors will occur.
+
+## III. Core Functions & Features
 
 ### 1. High-Performance Rendering & Interaction Engine
 FluoQuantPro features an advanced built-in rendering optimization algorithm, ensuring smooth operation even when processing ultra-large multi-channel images (e.g., over 10,000 pixels).
@@ -72,7 +105,17 @@ A complete set of Region of Interest (ROI) tools is provided for target identifi
 *   **Complete Import/Export:** Supports importing various scientific image formats. The current view (including all ROIs and annotations) can be exported as high-resolution (up to 1200 DPI) PNG or TIFF images, realizing true **"What You See Is What You Get"**.
 *   **Undo/Redo & Persistence:** Supports multi-step undo/redo. Manual project save forces retention of all ROIs; options are available to control auto-saving of measurement data when switching samples or closing.
 
-## III. Quick Start Guide
+## IV. Comparison with ImageJ (Fiji)
+
+| Feature | ImageJ (Fiji) | FluoQuantPro |
+| :--- | :--- | :--- |
+| **Import & Channels** | **"Blind Loading" Mode**: Loads files as generic pixel blocks (RGB/Stack) first. User must manually "Split Channels" and assign biological meaning (e.g., "Channel 1 is DAPI") post-loading. | **"Semantic Loading" Mode (Schema-First)**: User assigns a file to a specific biological channel (e.g., "DAPI"). The engine uses this **biological intent** to intelligently extract the relevant signal (e.g., automatically extracting the Blue component from RGB) during loading. |
+| **Design Philosophy** | **"Toolbox"**: Powerful but scattered parts, suitable for deep customization. | **"Integrated Instrument"**: Fine-tuned for fluorescence quantitative analysis, pursuing out-of-the-box usability and smooth workflow. |
+| **Image Adjustment** | When adjusting Brightness/Contrast, clicking "Apply" directly modifies pixel values, risking data tampering. | **"Dual-Track" Architecture**: Display adjustment is completely separated from raw data. Adjustments are only for visualization and **never change** the underlying data used for quantitative analysis. |
+| **ROI & Measurement** | Standard tools. Complex analysis requires combining multiple steps. Background subtraction usually requires manual calculation. | **Enhanced Magic Wand** (precise, smooth, convertible to polygon). **Streamlined Measurement**, results accumulate automatically. Built-in co-localization analysis and one-click export. |
+| **Scientific Rigor** | High flexibility, but high requirements for users, prone to misoperation (e.g., measuring processed images). | **Data Integrity First**: The measurement engine always reads the `RawIntDen` (pixel sum) of the raw data, guaranteeing the reproducibility of results from the underlying logic. |
+
+## V. Quick Start Guide
 
 ### 1. Basic Workflow
 1.  **New/Open Project:** Use the "File" menu to create a new project or open an existing `.fluo` file.
@@ -93,22 +136,21 @@ A complete set of Region of Interest (ROI) tools is provided for target identifi
 *   **Efficient Magic Wand:** When selecting cells continuously, no need to click the toolbar repeatedly; just select one target and immediately click the next.
 *   **Theme Switching:** Use **Ctrl+T / Cmd+T** to find the best theme. The Eye-Care theme is recommended for long analysis sessions.
 
-## IV. System Requirements & Installation
+## VI. System Requirements & Installation
 *   **OS:** Windows 10/11 or macOS 11.0 (Big Sur) and above.
 *   **Memory:** 8 GB recommended; 16 GB recommended for large images/datasets.
 *   **Storage:** At least 500 MB available space.
 *   **Graphics:** OpenGL-compatible graphics card for better rendering performance.
 
-## V. Privacy & Data Security
+## VII. Privacy & Data Security
 FluoQuantPro respects user privacy. It includes an optional anonymous usage statistics feature to help developers improve the product.
 *   **Collected Content:** Only strictly anonymous info: random instance ID, OS type/version, software version, Python version/arch. **Never collects PII, file paths, image content, or measurement data.**
 *   **User Control:** Enabled by default. You can disable **"Send Anonymous Usage Data"** at any time in **"Settings" -> "Interface" -> "Privacy"**.
 *   **Data Usage:** Solely for macro-level software improvement analysis.
 
-## VI. Conclusion
-FluoQuantPro is not just an image viewer; it is an integrated analysis platform built for rigorous scientific workflows. By combining cutting-edge performance, user-friendly interaction, professional analysis tools, and a highly customizable interface, it aims to significantly improve efficiency, accuracy, and enjoyment for researchers in fluorescence image quantitative analysis.
-
-We hope this manual helps you make the most of FluoQuantPro. For questions or feedback, please contact us via project channels.
+## VIII. Citation
+If you use FluoQuantPro in your research, please cite it as:
+**FluoQuantPro Development Team**. (2026). *FluoQuantPro: A High-Performance Fluorescence Image Analysis Tool (Version 3.0)*. https://github.com/234pk/FluoQuantPro
 
 ## Disclaimer
 This software is a research tool. Users are responsible for the scientific validity and accuracy of their data analysis results. The developers assume no liability for any data or research losses directly or indirectly caused by the use of this software.
@@ -125,7 +167,40 @@ FluoQuantPro 是一款专为生物医学和荧光显微成像研究设计的高�
 
 软件的核心设计理念是**“双轨制处理”**：严格区分**测量数据轨道**（基于原始科学数据）与**渲染显示轨道**（用于可视化调整）。这意味着用户可以自由调整图像的亮度、对比度和色彩以优化视觉效果，而用于定量分析（如强度测量、共定位分析）的底层像素值始终保持不变，从根本上保证了科研数据的严谨性和可重复性。
 
-## 二、 核心功能与特性
+## 二、 科学性验证与严谨性
+FluoQuantPro 将科学准确性视为首要任务。我们实施了严格的验证机制，以确保数据的完整性和可重复性。
+
+### 1. 数据完整性 (Data Integrity) —— ✅ 通过
+*   **审查点**：软件是否错误地使用了屏幕上显示的图像（通常被压缩为 8-bit 或经过对比度调整）进行计算？
+*   **代码证据**：
+    *   在 `MeasureEngine` 中，测量直接针对 `image_data.raw_data` 进行。
+    *   `ImageLoader` 显式使用了 `cv2.IMREAD_UNCHANGED`，确保 16-bit 或 32-bit 浮点原始数据被完整保留。
+*   **结论**：您在屏幕上调节对比度、亮度甚至伪彩颜色，完全**不影响**测量结果的物理真实性。
+
+> **科学性说明：RGB 处理底层逻辑**
+> *   **FluoQuantPro 的方案 (预设优先)**：对于已知通道（如 DAPI），直接提取对应的颜色分量（如蓝色），**100% 保留原始信号**。对于未知通道，采用**最大值投影** ($\max(R, G, B)$) 确保保留峰值强度。
+> *   **常见误区 (如 ImageJ 默认)**：采用基于人眼的加权平均 ($0.299R + 0.587G + 0.114B$) 转换灰度。这会导致 DAPI（蓝色）信号强度仅剩原始值的 **11.4%**，带来严重的数据偏差。
+
+### 2. 空间映射精度 (Spatial Accuracy) —— ✅ 通过
+*   **审查点**：在缩放（Zoom）或大图降采样（Downsampling）显示时，ROI 坐标是否会发生漂移或错位？
+*   **代码证据**：
+    *   `CanvasView` 采用了“全分辨率场景坐标系” (Full-Resolution Scene Coordinates)。即便是显示 20GB 的大图，ROI 的坐标始终与原始像素 1:1 对应。
+    *   `qpath_to_mask` 生成掩膜时，直接使用原始图像的尺寸 (`channels[0].shape`)，而非屏幕截图尺寸。
+*   **结论**：无论视图如何缩放，ROI 圈选的像素始终精准对应原始数据中的物理像素。
+
+### 3. 边缘处理与量化逻辑 (Quantification Logic) —— ✅ 通过
+*   **审查点**：ROI 边缘的像素如何处理？是否存在抗锯齿（Anti-aliasing）导致的数值偏差？
+*   **代码证据**：
+    *   `algorithms.py` 中 `qpath_to_mask` 明确设置了 `painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)`。
+*   **专家点评**：这是一个非常关键的细节。在荧光强度定量中，必须使用二值化掩膜（全选或全不选）。开启抗锯齿会导致边缘像素被“加权平均”，从而人为降低边缘区域的平均荧光强度（Mean Intensity）。软件正确地关闭了它。
+
+### 4. 统计学鲁棒性 (Statistical Robustness) —— ✅ 通过
+*   **审查点**：在处理高位深图像（如 16-bit 累加）时，是否会发生数值溢出？
+*   **代码证据**：
+    *   共定位分析 (`calculate_pcc`) 和强度积分均强制转换为了 `float64` 双精度浮点数。
+*   **结论**：即使计算整张 16-bit 图片的积分密度（Integrated Density），也不会出现数据溢出错误。
+
+## 三、 核心功能与特性
 
 ### 1. 高性能图像渲染与交互引擎
 FluoQuantPro 内置了先进的渲染优化算法，确保即使处理超大尺寸（如10,000像素以上）的多通道图像也能流畅操作。
@@ -172,7 +247,17 @@ FluoQuantPro 内置了先进的渲染优化算法，确保即使处理超大尺�
 *   **完整的导入导出：** 支持导入多种格式的科学图像，并可将当前视图（包含所有ROI和标注）以高分辨率（最高1200 DPI）导出为PNG、TIFF等格式，真正实现“**所见即所得**”。
 *   **撤销/重做与持久化：** 支持多步撤销/重做操作。项目手动保存时会强制保留所有ROI；软件也提供选项，控制是否在切换样本或关闭时自动保存测量相关数据。
 
-## 三、 快速入门指南
+## 四、 与 ImageJ (Fiji) 的对比
+
+| 功能环节 | ImageJ (Fiji) | FluoQuantPro |
+| :--- | :--- | :--- |
+| **导入与通道** | **“盲读取”模式**：先将文件作为通用像素块（RGB/堆栈）读入。用户必须在读取后手动“拆分通道”并赋予其生物学意义（如“通道1是DAPI”）。 | **“语义读取”模式（预设优先）**：用户将文件指定给特定的生物学通道（如“DAPI”）。引擎根据这一**生物学意图**，在读取时智能提取源文件中对应的信号数据（如自动提取RGB中的蓝色分量）。 |
+| **设计理念** | **“工具箱”**：功能强大但零件散落，适合深度定制。 | **“一体化仪器”**：为荧光定量分析精心调校，追求开箱即用与流程顺畅。 |
+| **图像调整** | 调整亮度/对比度时，若点击“Apply”会直接修改像素值，存在数据被篡改的风险。 | **“双轨制”架构**：显示调整与原始数据完全分离。调整只为看清，**绝不改变**定量分析所用的底层数据。 |
+| **ROI与测量** | 标准工具。复杂分析需组合多步操作。背景扣除通常需手动计算。 | **增强魔棒**（精准、平滑、可转多边形）。**流线型测量**，结果自动累加。内置共定位分析与一键导出。 |
+| **科学性保障** | 灵活性高，但对用户要求高，易产生误操作（如测量处理后的图像）。 | **数据完整性第一**：测量引擎始终读取原始数据的 `RawIntDen`（像素总和），从底层逻辑保障结果的可重复性。 |
+
+## 五、 快速入门指南
 
 ### 1. 基本工作流程
 1.  **新建/打开项目：** 通过“文件”菜单创建新项目或打开已有的 `.fluo` 项目文件。
@@ -193,66 +278,21 @@ FluoQuantPro 内置了先进的渲染优化算法，确保即使处理超大尺�
 *   **魔棒工具高效使用：** 在连续选取细胞时，无需反复点击工具栏，选取一个目标后直接点击下一个即可。
 *   **主题切换：** 使用快捷键 **Ctrl+T** / **Cmd+T** 探索最适合您工作环境的主题，护眼主题尤其适合长时间分析。
 
-## 四、 系统要求与安装
+## 六、 系统要求与安装
 *   **操作系统：** Windows 10/11 或 macOS 11.0 (Big Sur) 及以上版本。
 *   **内存：** 建议 8 GB 或以上，处理大图或大量样本时推荐 16 GB。
 *   **存储空间：** 至少 500 MB 可用空间。
 *   **显卡：** 支持 OpenGL 的显卡将能获得更好的渲染性能。
 
-## 五、 隐私与数据安全
+## 七、 隐私与数据安全
 FluoQuantPro 尊重用户隐私。软件包含一个可选的匿名使用统计功能，用于帮助开发者了解软件使用情况以改进产品。
 *   **收集内容：** 仅收集完全匿名的信息，包括随机生成的软件实例ID、操作系统类型和版本、软件版本、Python版本和架构。**绝不收集任何个人身份信息、文件路径、图像内容或测量数据**。
 *   **用户控制：** 该功能默认开启，但您可以在 “设置” -> “界面” -> “隐私” 中，随时关闭 “**发送匿名使用数据**” 选项。
 *   **数据用途：** 所有数据仅用于宏观的软件改进分析。
 
-## VI. Comparison with ImageJ (Fiji)
-
-| Feature | ImageJ (Fiji) | FluoQuantPro |
-| :--- | :--- | :--- |
-| **Import & Channels** | **"Blind Loading" Mode**: Loads files as generic pixel blocks (RGB/Stack) first. User must manually "Split Channels" and assign biological meaning (e.g., "Channel 1 is DAPI") post-loading. | **"Semantic Loading" Mode (Schema-First)**: User assigns a file to a specific biological channel (e.g., "DAPI"). The engine uses this **biological intent** to intelligently extract the relevant signal (e.g., automatically extracting the Blue component from RGB) during loading. |
-| **Design Philosophy** | **"Toolbox"**: Powerful but scattered parts, suitable for deep customization. | **"Integrated Instrument"**: Fine-tuned for fluorescence quantitative analysis, pursuing out-of-the-box usability and smooth workflow. |
-| **Image Adjustment** | When adjusting Brightness/Contrast, clicking "Apply" directly modifies pixel values, risking data tampering. | **"Dual-Track" Architecture**: Display adjustment is completely separated from raw data. Adjustments are only for visualization and **never change** the underlying data used for quantitative analysis. |
-| **ROI & Measurement** | Standard tools. Complex analysis requires combining multiple steps. Background subtraction usually requires manual calculation. | **Enhanced Magic Wand** (precise, smooth, convertible to polygon). **Streamlined Measurement**, results accumulate automatically. Built-in co-localization analysis and one-click export. |
-| **Scientific Rigor** | High flexibility, but high requirements for users, prone to misoperation (e.g., measuring processed images). | **Data Integrity First**: The measurement engine always reads the `RawIntDen` (pixel sum) of the raw data, guaranteeing the reproducibility of results from the underlying logic. |
-
-## 六、 与 ImageJ (Fiji) 的对比
-
-| 功能环节 | ImageJ (Fiji) | FluoQuantPro |
-| :--- | :--- | :--- |
-| **导入与通道** | **“盲读取”模式**：先将文件作为通用像素块（RGB/堆栈）读入。用户必须在读取后手动“拆分通道”并赋予其生物学意义（如“通道1是DAPI”）。 | **“语义读取”模式（预设优先）**：用户将文件指定给特定的生物学通道（如“DAPI”）。引擎根据这一**生物学意图**，在读取时智能提取源文件中对应的信号数据（如自动提取RGB中的蓝色分量）。 |
-| **设计理念** | **“工具箱”**：功能强大但零件散落，适合深度定制。 | **“一体化仪器”**：为荧光定量分析精心调校，追求开箱即用与流程顺畅。 |
-| **图像调整** | 调整亮度/对比度时，若点击“Apply”会直接修改像素值，存在数据被篡改的风险。 | **“双轨制”架构**：显示调整与原始数据完全分离。调整只为看清，**绝不改变**定量分析所用的底层数据。 |
-| **ROI与测量** | 标准工具。复杂分析需组合多步操作。背景扣除通常需手动计算。 | **增强魔棒**（精准、平滑、可转多边形）。**流线型测量**，结果自动累加。内置共定位分析与一键导出。 |
-| **科学性保障** | 灵活性高，但对用户要求高，易产生误操作（如测量处理后的图像）。 | **数据完整性第一**：测量引擎始终读取原始数据的 `RawIntDen`（像素总和），从底层逻辑保障结果的可重复性。 |
-
-### 🔬 Scientific Rigor: RGB Processing Logic
-**Why ImageJ's "Weighted Average" is dangerous for quantification**
-
-When converting RGB images to grayscale, **ImageJ (Fiji)** defaults to a **Weighted Average** formula designed for human vision perception, not signal fidelity:
-$$Gray = 0.299 \times Red + 0.587 \times Green + 0.114 \times Blue$$
-*   **The Risk**: For a DAPI-stained (Blue) sample, this formula reduces the signal to **11.4%** of its original intensity, while artificially boosting Green signals. This introduces significant bias in quantitative analysis.
-
-**FluoQuantPro's Approach: Semantic Extraction**
-FluoQuantPro uses a **Schema-First** strategy rooted in biological intent:
-*   **Known Channels (e.g., DAPI)**: The engine extracts only the specific channel component (e.g., Blue) defined in the schema. **100% of the raw signal is preserved.**
-*   **Unknown/Mixed Channels**: Uses **Max Projection** ($\max(R, G, B)$) instead of weighted averaging. This ensures that the strongest signal peak is retained regardless of its color, preventing data loss due to visual weighting.
-
-### 🔬 科学性保障：RGB 处理底层逻辑
-**为何 ImageJ 的“加权平均”会破坏定量数据？**
-
-**ImageJ (Fiji)** 在将 RGB 转换为灰度时，默认使用基于人眼视觉的**加权平均公式**：
-$$Gray = 0.299 \times Red + 0.587 \times Green + 0.114 \times Blue$$
-*   **风险**：对于 DAPI（蓝色）染色样本，该公式会将原始信号强度压缩至 **11.4%**，同时人为放大绿色分量。这会导致定量分析出现严重偏差。
-
-**FluoQuantPro 的方案：语义提取**
-FluoQuantPro 采用基于生物学意图的**预设优先 (Schema-First)** 策略：
-*   **已知通道 (如 DAPI)**：直接提取预设对应的颜色分量（如蓝色通道）。**100% 保留原始信号数据**。
-*   **未知/混合通道**：采用**最大值投影 (Max Projection)** ($\max(R, G, B)$) 而非加权平均。这确保了无论信号是什么颜色，其峰值强度都能被完整保留，避免了视觉权重的干扰。
-
-## 七、 总结
-FluoQuantPro 不仅仅是一个图像查看器，它是一个为严谨科研工作流程打造的集成化分析平台。通过将尖端的性能优化、人性化的交互设计、专业的数据分析工具和高度可定制化的界面相结合，它旨在显著提升研究人员在荧光图像定量分析工作中的效率、准确性和愉悦感。
-
-我们希望这份说明书能帮助您更好地利用 FluoQuantPro 的强大功能。如有任何问题或反馈，欢迎通过项目渠道与我们联系。
+## 八、 引用
+如果您在研究中使用了 FluoQuantPro，请使用以下格式进行引用：
+**FluoQuantPro Development Team**. (2026). *FluoQuantPro: A High-Performance Fluorescence Image Analysis Tool (Version 3.0)*. https://github.com/234pk/FluoQuantPro
 
 ## 免责声明
 本软件为科研工具，使用者应对其数据分析结果的科学性和准确性负责。开发者不对因使用本软件直接或间接导致的任何数据或研究损失承担责任。

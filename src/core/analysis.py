@@ -195,6 +195,9 @@ class MeasureEngine:
             
             stats[f"{ch_name}_BgMean"] = float(bg_val)
             stats[f"{ch_name}_CorrectedMean"] = float(stats[f"{ch_name}_Mean"] - bg_val)
+            # Scientific Metric: Corrected Total Cell Fluorescence (CTCF) equivalent
+            # Corrected IntDen = Raw IntDen - (ROI Pixel Count * Background Mean)
+            stats[f"{ch_name}_CorrectedIntDen"] = float(stats[f"{ch_name}_IntDen"] - (stats['PixelCount'] * bg_val))
             
         return stats
 

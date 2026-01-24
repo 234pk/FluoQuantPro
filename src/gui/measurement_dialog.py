@@ -18,6 +18,7 @@ class MeasurementSettingsWidget(QWidget):
             'Max': True,
             'BgMean': False,
             'CorrectedMean': False,
+            'CorrectedIntDen': True,
             'Accumulate': True
         }
         self.init_ui()
@@ -54,7 +55,7 @@ class MeasurementSettingsWidget(QWidget):
         
         self.checks = {}
         self.labels = {}
-        for key in ['Area', 'Mean', 'IntDen', 'Min', 'Max', 'BgMean', 'CorrectedMean']:
+        for key in ['Area', 'Mean', 'IntDen', 'Min', 'Max', 'BgMean', 'CorrectedMean', 'CorrectedIntDen']:
             self._add_toggle_row(group_layout, tr(key), key)
             
         self.group.setLayout(group_layout)
