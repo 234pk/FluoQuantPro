@@ -205,6 +205,16 @@ FluoQuantPro 尊重用户隐私。软件包含一个可选的匿名使用统计�
 *   **用户控制：** 该功能默认开启，但您可以在 “设置” -> “界面” -> “隐私” 中，随时关闭 “**发送匿名使用数据**” 选项。
 *   **数据用途：** 所有数据仅用于宏观的软件改进分析。
 
+## VI. Comparison with ImageJ (Fiji)
+
+| Feature | ImageJ (Fiji) | FluoQuantPro |
+| :--- | :--- | :--- |
+| **Import & Channels** | **"Blind Loading" Mode**: Loads files as generic pixel blocks (RGB/Stack) first. User must manually "Split Channels" and assign biological meaning (e.g., "Channel 1 is DAPI") post-loading. | **"Semantic Loading" Mode (Schema-First)**: User assigns a file to a specific biological channel (e.g., "DAPI"). The engine uses this **biological intent** to intelligently extract the relevant signal (e.g., automatically extracting the Blue component from RGB) during loading. |
+| **Design Philosophy** | **"Toolbox"**: Powerful but scattered parts, suitable for deep customization. | **"Integrated Instrument"**: Fine-tuned for fluorescence quantitative analysis, pursuing out-of-the-box usability and smooth workflow. |
+| **Image Adjustment** | When adjusting Brightness/Contrast, clicking "Apply" directly modifies pixel values, risking data tampering. | **"Dual-Track" Architecture**: Display adjustment is completely separated from raw data. Adjustments are only for visualization and **never change** the underlying data used for quantitative analysis. |
+| **ROI & Measurement** | Standard tools. Complex analysis requires combining multiple steps. Background subtraction usually requires manual calculation. | **Enhanced Magic Wand** (precise, smooth, convertible to polygon). **Streamlined Measurement**, results accumulate automatically. Built-in co-localization analysis and one-click export. |
+| **Scientific Rigor** | High flexibility, but high requirements for users, prone to misoperation (e.g., measuring processed images). | **Data Integrity First**: The measurement engine always reads the `RawIntDen` (pixel sum) of the raw data, guaranteeing the reproducibility of results from the underlying logic. |
+
 ## 六、 与 ImageJ (Fiji) 的对比
 
 | 功能环节 | ImageJ (Fiji) | FluoQuantPro |
